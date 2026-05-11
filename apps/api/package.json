@@ -11,8 +11,8 @@
     "db:generate": "prisma generate --schema prisma/schema.prisma",
     "db:migrate": "prisma migrate dev --schema prisma/schema.prisma",
     "db:deploy": "prisma migrate deploy --schema prisma/schema.prisma",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
-    "lint": "tsc -p tsconfig.json --noEmit"
+    "typecheck": "prisma generate --schema prisma/schema.prisma && tsc -p tsconfig.json --noEmit",
+    "lint": "prisma generate --schema prisma/schema.prisma && tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
     "@nestjs/common": "^10.4.15",

@@ -14,6 +14,8 @@ jobs:
   check:
     name: Check
     runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: postgresql://picup:picup_password@localhost:5432/picup?schema=public
 
     steps:
       - name: Checkout
