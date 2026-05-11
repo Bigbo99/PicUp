@@ -1,0 +1,210 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  guest
+  user
+  admin
+}
+
+enum UserStatus {
+  pending
+  active
+  disabled
+}
+
+enum ImageJobStatus {
+  queued
+  running
+  retrying
+  succeeded
+  failed
+  refunded
+}
+
+model User {
+  id           String         @id @default(uuid()) @db.Uuid
+  email        String?        @unique @db.VarChar(255)
+  passwordHash String?        @map("password_hash")
+  role         UserRole       @default(guest)
+  status       UserStatus     @default(active)
+  isGuest      Boolean        @default(true) @map("is_guest")
+  emailVerifiedAt DateTime?   @map("email_verified_at")
+  createdAt    DateTime       @default(now()) @map("created_at")
+  updatedAt    DateTime       @updatedAt @map("updated_at")
+  files        FileRecord[]
+  jobs         ImageJob[]
+  auditLogs    AuditLog[]
+  identities    ExternalIdentity[]
+  emailChallenges EmailAuthChallenge[]
+  wechatSessions WechatLoginSession[]
+
+  @@index([role, status])
+  @@map("users")
+}
+
+model EmailAuthChallenge {
+  id           String    @id @default(uuid()) @db.Uuid
+  email        String    @db.VarChar(255)
+  mode         String    @db.VarChar(32)
+  passwordHash String?   @map("password_hash")
+  codeHash     String    @map("code_hash")
+  attempts     Int       @default(0)
+  expiresAt    DateTime  @map("expires_at")
+  consumedAt   DateTime? @map("consumed_at")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  userId       String?   @map("user_id") @db.Uuid
+  user         User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([email, createdAt])
+  @@index([expiresAt])
+  @@map("email_auth_challenges")
+}
+
+model ExternalIdentity {
+  id             String   @id @default(uuid()) @db.Uuid
+  userId         String   @map("user_id") @db.Uuid
+  provider       String   @db.VarChar(32)
+  providerUserId String   @map("provider_user_id") @db.VarChar(160)
+  unionId        String?  @map("union_id") @db.VarChar(160)
+  profile        Json?
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerUserId])
+  @@index([userId])
+  @@index([provider, unionId])
+  @@map("external_identities")
+}
+
+model WechatLoginSession {
+  id          String    @id @default(uuid()) @db.Uuid
+  state       String    @unique @db.VarChar(120)
+  status      String    @default("pending") @db.VarChar(32)
+  qrCodeUrl   String    @map("qr_code_url")
+  userId      String?   @map("user_id") @db.Uuid
+  expiresAt   DateTime  @map("expires_at")
+  confirmedAt DateTime? @map("confirmed_at")
+  consumedAt  DateTime? @map("consumed_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+  user        User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([status, expiresAt])
+  @@map("wechat_login_sessions")
+}
+
+model PaymentOrder {
+  id              String    @id @default(uuid()) @db.Uuid
+  userId          String?   @map("user_id") @db.Uuid
+  provider        String    @default("wechat") @db.VarChar(32)
+  externalOrderId String?   @unique @map("external_order_id") @db.VarChar(160)
+  status          String    @default("pending") @db.VarChar(32)
+  amountCents     Int       @map("amount_cents")
+  currency        String    @default("CNY") @db.VarChar(12)
+  metadata        Json?
+  paidAt          DateTime? @map("paid_at")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  @@index([userId, createdAt])
+  @@index([status, createdAt])
+  @@map("payment_orders")
+}
+
+model FileRecord {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String?  @map("user_id") @db.Uuid
+  url       String
+  mimeType  String   @map("mime_type") @db.VarChar(120)
+  size      Int
+  width     Int?
+  height    Int?
+  createdAt DateTime @default(now()) @map("created_at")
+  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([userId, createdAt])
+  @@map("files")
+}
+
+model ImageJob {
+  id               String         @id @default(uuid()) @db.Uuid
+  userId           String?        @map("user_id") @db.Uuid
+  mode             String         @db.VarChar(32)
+  provider         String         @db.VarChar(32)
+  model            String         @db.VarChar(120)
+  template         String         @db.VarChar(80)
+  prompt           String
+  imageIds         Json           @map("image_ids")
+  aspectRatio      String         @map("aspect_ratio") @db.VarChar(24)
+  quality          String         @db.VarChar(24)
+  status           ImageJobStatus @default(queued)
+  selectedProvider String         @map("selected_provider") @db.VarChar(32)
+  selectedModel    String         @map("selected_model") @db.VarChar(120)
+  finalPrompt      String         @map("final_prompt")
+  inputFiles       Json           @map("input_files")
+  outputImages     Json           @default("[]") @map("output_images")
+  textOutputs      Json           @default("[]") @map("text_outputs")
+  error            Json?
+  creditsReserved  Int            @default(1) @map("credits_reserved")
+  createdAt        DateTime       @default(now()) @map("created_at")
+  updatedAt        DateTime       @updatedAt @map("updated_at")
+  completedAt      DateTime?      @map("completed_at")
+  user             User?          @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([userId, createdAt])
+  @@index([status, createdAt])
+  @@map("image_jobs")
+}
+
+model ModelConfig {
+  id                 String   @id @default(uuid()) @db.Uuid
+  provider           String   @db.VarChar(32)
+  model              String   @db.VarChar(120)
+  displayName        String   @map("display_name") @db.VarChar(120)
+  description        String
+  enabled            Boolean  @default(true)
+  priority           Int      @default(100)
+  maxInputImages     Int      @default(1) @map("max_input_images")
+  supportedRatios    Json     @map("supported_ratios")
+  supportedQualities Json     @map("supported_qualities")
+  costCredits        Int      @default(1) @map("cost_credits")
+  createdAt          DateTime @default(now()) @map("created_at")
+  updatedAt          DateTime @updatedAt @map("updated_at")
+
+  @@unique([provider, model])
+  @@index([provider, enabled, priority])
+  @@map("model_configs")
+}
+
+model AppSetting {
+  key       String   @id @db.VarChar(120)
+  value     Json
+  updatedBy String?  @map("updated_by") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("app_settings")
+}
+
+model AuditLog {
+  id        String   @id @default(uuid()) @db.Uuid
+  actorId   String?  @map("actor_id") @db.Uuid
+  action    String   @db.VarChar(120)
+  target    String   @db.VarChar(120)
+  before    Json?
+  after     Json?
+  createdAt DateTime @default(now()) @map("created_at")
+  actor     User?    @relation(fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([actorId, createdAt])
+  @@index([target, createdAt])
+  @@map("audit_logs")
+}

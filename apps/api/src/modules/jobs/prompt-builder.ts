@@ -1,0 +1,17 @@
+import type { ImageTemplate } from '@picup/shared';
+
+const templateInstructions: Record<ImageTemplate, string> = {
+  replace_text: '任务类型：改字。保持原图构图、字体风格、光影和背景尽量不变，只修改用户指定文字。',
+  remove_object: '任务类型：去除物体。移除指定元素，并自然补全背景，不留下明显痕迹。',
+  add_object: '任务类型：添加元素。把新元素自然融入原图，匹配透视、光影和材质。',
+  replace_background: '任务类型：换背景。保留主体，替换背景并保持边缘自然。',
+  product: '任务类型：商品图优化。突出商品主体，提升电商质感，画面干净专业。',
+  style: '任务类型：风格化。保留主体和构图，转换为用户要求的视觉风格。',
+  poster_text: '任务类型：海报文字调整。优化文字层级、排版和可读性。',
+  enhance: '任务类型：清晰增强。提升细节、清晰度和整体观感，避免过度锐化。',
+  freeform: '任务类型：自由编辑。准确执行用户自然语言指令。'
+};
+
+export function buildFinalPrompt(template: ImageTemplate, prompt: string) {
+  return `${templateInstructions[template]}\n用户需求：${prompt.trim()}\n输出要求：生成可直接下载使用的高质量图片。`;
+}

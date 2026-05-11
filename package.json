@@ -1,0 +1,19 @@
+{
+  "name": "picup",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "concurrently --kill-others-on-fail -n web,api,worker -c cyan,green,magenta \"pnpm --filter @picup/web dev\" \"pnpm --filter @picup/api dev\" \"pnpm --filter @picup/api dev:worker\"",
+    "build": "pnpm --filter @picup/shared build && pnpm --filter @picup/api build && pnpm --filter @picup/web build",
+    "start:web": "pnpm --filter @picup/web start",
+    "start:api": "pnpm --filter @picup/api start",
+    "start:worker": "pnpm --filter @picup/api start:worker",
+    "lint": "pnpm --filter @picup/web lint && pnpm --filter @picup/api lint",
+    "typecheck": "pnpm --filter @picup/shared build && pnpm --filter @picup/api typecheck && pnpm --filter @picup/web typecheck"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2",
+    "typescript": "^5.7.3"
+  },
+  "packageManager": "pnpm@10.30.0"
+}
