@@ -79,7 +79,11 @@ export class AuthService {
   }
 
   logout(res: Response) {
-    res.clearCookie(sessionCookieName, this.cookieOptions());
+    res.cookie(sessionCookieName, '', {
+      ...this.clearCookieOptions(),
+      maxAge: 0,
+      expires: new Date(0)
+    });
     return { ok: true };
   }
 
@@ -184,7 +188,7 @@ export class AuthService {
   async startWechatAuth(): Promise<WechatAuthStartResponse> {
     const state = randomBytes(24).toString('base64url');
     const expiresAt = new Date(Date.now() + wechatSessionTtlMs);
-    const apiPublicUrl = process.env.API_PUBLIC_URL?.trim() || 'http://localhost:4000';
+    const apiPublicUrl = process.env.API_PUBLIC_URL?.trim() || process.env.WEB_PUBLIC_URL?.trim() || 'http://localhost:4000';
     const callbackUrl = `${apiPublicUrl.replace(/\/$/, '')}/api/auth/wechat/callback`;
     const qrCodeUrl = this.buildWechatQrUrl(state, callbackUrl);
     const session = await this.prisma.wechatLoginSession.create({
@@ -345,6 +349,11 @@ export class AuthService {
       path: '/',
       maxAge: sessionTtlSeconds * 1000
     };
+  }
+
+  private clearCookieOptions() {
+    const { maxAge: _maxAge, ...options } = this.cookieOptions();
+    return options;
   }
 
   private readToken(req: AuthenticatedRequest) {

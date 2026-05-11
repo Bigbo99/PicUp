@@ -20,6 +20,6 @@ export async function ensureStorage(): Promise<StoragePaths> {
 }
 
 export function publicMediaUrl(kind: 'inputs' | 'outputs', filename: string) {
-  const base = process.env.MEDIA_PUBLIC_BASE_URL ?? 'http://localhost:4000/media';
+  const base = process.env.MEDIA_PUBLIC_BASE_URL ?? '/media';
   return `${base}/${kind}/${filename}`;
 }
