@@ -69,7 +69,7 @@ services:
     ports:
       - "${API_PUBLISH_PORT:-${API_PORT:-4000}}:4000"
     volumes:
-      - picup_storage:/app/storage
+      - ./storage:/app/storage
     depends_on:
       redis:
         condition: service_healthy
@@ -88,7 +88,7 @@ services:
     env_file:
       - .env
     volumes:
-      - picup_storage:/app/storage
+      - ./storage:/app/storage
     depends_on:
       redis:
         condition: service_healthy
@@ -100,6 +100,5 @@ services:
         condition: service_started
 
 volumes:
-  picup_storage:
   postgres_data:
   redis_data:
