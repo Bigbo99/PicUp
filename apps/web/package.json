@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start -H 0.0.0.0 -p 3000",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "lint": "next lint || tsc -p tsconfig.json --noEmit"
+    "lint": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
     "@picup/shared": "workspace:*",
