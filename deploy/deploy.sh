@@ -1,9 +1,12 @@
 #!/bin/bash
 # PicUp production deploy script (pull prebuilt image, no local build)
 # Usage:
-#   APP_IMAGE=crpi-xxxx.cn-hangzhou.personal.cr.aliyuncs.com/namespace/picup:latest bash deploy/deploy.sh
+#   APP_IMAGE=crpi-xxxx.cn-hangzhou.personal.cr.aliyuncs.com/namespace/picup:latest ACR_REGISTRY=crpi-xxxx.cn-hangzhou.personal.cr.aliyuncs.com ACR_USERNAME=your_user ACR_PASSWORD=your_password bash deploy/deploy.sh
 # or:
 #   export APP_IMAGE=crpi-xxxx.cn-hangzhou.personal.cr.aliyuncs.com/namespace/picup:sha-xxxxxxx
+#   export ACR_REGISTRY=crpi-xxxx.cn-hangzhou.personal.cr.aliyuncs.com
+#   export ACR_USERNAME=your_user
+#   export ACR_PASSWORD=your_password
 #   bash deploy/deploy.sh
 
 set -euo pipefail
@@ -37,6 +40,10 @@ if [ -z "${APP_IMAGE:-}" ]; then
   echo "Example: APP_IMAGE=crpi-xxxx.cn-hangzhou.personal.cr.aliyuncs.com/namespace/picup:latest bash deploy/deploy.sh"
   exit 1
 fi
+if [ -z "${ACR_REGISTRY:-}" ] || [ -z "${ACR_USERNAME:-}" ] || [ -z "${ACR_PASSWORD:-}" ]; then
+  echo "ERROR: ACR_REGISTRY / ACR_USERNAME / ACR_PASSWORD must be set for private ACR pulls"
+  exit 1
+fi
 echo "OK: APP_IMAGE=$APP_IMAGE"
 
 echo ""
@@ -59,6 +66,7 @@ mkdir -p storage/inputs storage/outputs
 
 echo ""
 echo "[4/7] Pull prebuilt image..."
+echo "$ACR_PASSWORD" | docker login "$ACR_REGISTRY" --username "$ACR_USERNAME" --password-stdin >/dev/null
 docker compose pull migrate api web worker
 
 echo ""

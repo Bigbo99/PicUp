@@ -125,6 +125,9 @@ jobs:
           SERVER_PORT: ${{ secrets.SERVER_PORT }}
           SERVER_USER: ${{ secrets.SERVER_USER }}
           SERVER_APP_DIR: ${{ secrets.SERVER_APP_DIR }}
+          ACR_REGISTRY: ${{ secrets.ACR_REGISTRY }}
+          ACR_USERNAME: ${{ secrets.ACR_USERNAME }}
+          ACR_PASSWORD: ${{ secrets.ACR_PASSWORD }}
           ACR_IMAGE: ${{ secrets.ACR_IMAGE }}
           IMAGE_TAG: ${{ needs.build_and_push.outputs.image_tag }}
         run: |
@@ -136,6 +139,7 @@ jobs:
             git fetch origin main
             git checkout main
             git pull --ff-only origin main
+            echo '${ACR_PASSWORD}' | docker login '${ACR_REGISTRY}' --username '${ACR_USERNAME}' --password-stdin
             export APP_IMAGE='${ACR_IMAGE}:${IMAGE_TAG}'
             docker compose pull migrate api web worker
             docker compose up -d --no-build --force-recreate
