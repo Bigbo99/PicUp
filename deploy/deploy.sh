@@ -1,9 +1,9 @@
 #!/bin/bash
 # PicUp production deploy script (pull prebuilt image, no local build)
 # Usage:
-#   APP_IMAGE=dockerhub_user/picup:latest bash deploy/deploy.sh
+#   APP_IMAGE=crpi-xxxx.cn-hangzhou.personal.cr.aliyuncs.com/namespace/picup:latest bash deploy/deploy.sh
 # or:
-#   export APP_IMAGE=dockerhub_user/picup:sha-xxxxxxx
+#   export APP_IMAGE=crpi-xxxx.cn-hangzhou.personal.cr.aliyuncs.com/namespace/picup:sha-xxxxxxx
 #   bash deploy/deploy.sh
 
 set -euo pipefail
@@ -34,7 +34,7 @@ fi
 
 if [ -z "${APP_IMAGE:-}" ]; then
   echo "ERROR: APP_IMAGE is empty"
-  echo "Example: APP_IMAGE=dockerhub_user/picup:latest bash deploy/deploy.sh"
+  echo "Example: APP_IMAGE=crpi-xxxx.cn-hangzhou.personal.cr.aliyuncs.com/namespace/picup:latest bash deploy/deploy.sh"
   exit 1
 fi
 echo "OK: APP_IMAGE=$APP_IMAGE"

@@ -276,7 +276,7 @@ REDIS_URL=redis://localhost:6379
 2. 类型检查
 3. Lint
 4. 构建
-5. 在 GitHub Runner 构建镜像并推送到 Docker Hub
+5. 在 GitHub Runner 构建镜像并推送到阿里云 ACR
 6. SSH 到服务器，执行 `git pull` + `docker compose pull` + `docker compose up -d --no-build`
 7. 清理未使用镜像和历史构建缓存，减少服务器磁盘占用
 
@@ -288,13 +288,15 @@ SERVER_USER
 SERVER_SSH_KEY
 SERVER_APP_DIR
 SERVER_PORT
-DOCKERHUB_USERNAME
-DOCKERHUB_TOKEN
-DOCKERHUB_IMAGE
+ACR_REGISTRY
+ACR_USERNAME
+ACR_PASSWORD
+ACR_IMAGE
 ```
 
 其中 `SERVER_PORT` 可选，默认使用 `22`。
-`DOCKERHUB_IMAGE` 示例：`your-dockerhub-username/picup`（不带 tag）。
+`ACR_REGISTRY` 示例：`YOUR_REGISTRY`  
+`ACR_IMAGE` 示例：`YOUR_REGISTRY/YOUR_NAMESPACE/picup`
 
 服务器首次部署：
 
@@ -303,8 +305,8 @@ git clone git@github.com:Bigbo99/PicUp.git YOUR_SERVER_APP_DIR
 cd YOUR_SERVER_APP_DIR
 cp .env.example .env
 nano .env
-export APP_IMAGE=your-dockerhub-username/picup:latest
-docker compose pull --ignore-buildable migrate api web worker
+export APP_IMAGE=YOUR_REGISTRY/YOUR_NAMESPACE/picup:latest
+docker compose pull migrate api web worker
 docker compose up -d --no-build
 ```
 
