@@ -276,8 +276,9 @@ REDIS_URL=redis://localhost:6379
 2. 类型检查
 3. Lint
 4. 构建
-5. SSH 到服务器
-6. 在服务器执行 `git pull` 和 `docker compose up -d --build`
+5. 在 GitHub Runner 构建镜像并推送到 Docker Hub
+6. SSH 到服务器，执行 `git pull` + `docker compose pull` + `docker compose up -d --no-build`
+7. 清理未使用镜像和历史构建缓存，减少服务器磁盘占用
 
 需要在 GitHub 仓库中配置 Actions Secrets：
 
@@ -287,9 +288,13 @@ SERVER_USER
 SERVER_SSH_KEY
 SERVER_APP_DIR
 SERVER_PORT
+DOCKERHUB_USERNAME
+DOCKERHUB_TOKEN
+DOCKERHUB_IMAGE
 ```
 
 其中 `SERVER_PORT` 可选，默认使用 `22`。
+`DOCKERHUB_IMAGE` 示例：`your-dockerhub-username/picup`（不带 tag）。
 
 服务器首次部署：
 
@@ -298,7 +303,9 @@ git clone git@github.com:Bigbo99/PicUp.git /opt/PicUp
 cd /opt/PicUp
 cp .env.example .env
 nano .env
-docker compose up -d --build
+export APP_IMAGE=your-dockerhub-username/picup:latest
+docker compose pull --ignore-buildable migrate api web worker
+docker compose up -d --no-build
 ```
 
 ## 宝塔面板部署（Docker + Nginx 反代）
