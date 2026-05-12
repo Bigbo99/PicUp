@@ -51,10 +51,13 @@ services:
       dockerfile: Dockerfile
       args:
         NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-}
+        API_INTERNAL_URL: http://api:4000
     restart: unless-stopped
     command: ["node", "apps/web/node_modules/next/dist/bin/next", "start", "apps/web", "-H", "0.0.0.0", "-p", "3000"]
     env_file:
       - .env
+    environment:
+      API_INTERNAL_URL: http://api:4000
     ports:
       - "${WEB_PUBLISH_PORT:-${WEB_PORT:-3000}}:3000"
     depends_on:

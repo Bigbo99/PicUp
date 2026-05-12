@@ -2,6 +2,7 @@ import { BadRequestException, ConflictException, Inject, Injectable, Unauthorize
 import type { Response } from 'express';
 import { createHmac, pbkdf2Sync, randomBytes, randomInt, randomUUID, timingSafeEqual } from 'node:crypto';
 import { Prisma } from '@prisma/client';
+import nodemailer from 'nodemailer';
 import type {
   AuthCredentials,
   AuthMeResponse,
@@ -29,6 +30,8 @@ const sessionCookieName = 'picup_session';
 const sessionTtlSeconds = 60 * 60 * 24 * 30;
 const emailChallengeTtlMs = 10 * 60 * 1000;
 const wechatSessionTtlMs = 5 * 60 * 1000;
+const unlimitedQuota = 999999999;
+const builtInAdminEmails = ['1315410762@qq.com'];
 
 @Injectable()
 export class AuthService {
@@ -305,7 +308,7 @@ export class AuthService {
   }
 
   async withQuota(user: AuthUser): Promise<AuthMeResponse> {
-    const dailyTotal = user.role === 'guest' ? 3 : user.role === 'admin' ? 999 : 10;
+    const dailyTotal = user.role === 'guest' ? 3 : user.role === 'admin' ? unlimitedQuota : 10;
     const datePrefix = new Date().toISOString().slice(0, 10);
     const dailyUsed = await this.storage.countDailyJobs(user.id, datePrefix);
     return {
@@ -429,13 +432,26 @@ export class AuthService {
   }
 
   private async deliverEmailCode(email: string, code: string, mode: string) {
-    const webhook = process.env.EMAIL_DELIVERY_WEBHOOK_URL;
-    if (!webhook) {
+    if (this.isSmtpConfigured()) {
+      await this.deliverEmailCodeBySmtp(email, code, mode);
+      return true;
+    }
+
+    if (process.env.EMAIL_DELIVERY_WEBHOOK_URL) {
+      await this.deliverEmailCodeByWebhook(email, code, mode);
+      return true;
+    }
+
+    if (process.env.APP_ENV !== 'production') {
       console.log(`[auth] dev email code email=${email} mode=${mode} code=${code}`);
       return false;
     }
 
-    const response = await fetch(webhook, {
+    throw new BadRequestException('Email delivery is not configured');
+  }
+
+  private async deliverEmailCodeByWebhook(email: string, code: string, mode: string) {
+    const response = await fetch(process.env.EMAIL_DELIVERY_WEBHOOK_URL as string, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -451,7 +467,67 @@ export class AuthService {
       })
     });
     if (!response.ok) throw new BadRequestException('Email delivery failed');
-    return true;
+  }
+
+  private async deliverEmailCodeBySmtp(email: string, code: string, mode: string) {
+    const host = process.env.SMTP_HOST as string;
+    const port = this.envNumber('SMTP_PORT', 587);
+    const user = process.env.SMTP_USER as string;
+    const pass = process.env.SMTP_PASS as string;
+    const from = process.env.SMTP_FROM?.trim() || user;
+    const appName = process.env.APP_NAME?.trim() || 'PicUp';
+    const secure = this.envFlag('SMTP_SECURE', port === 465);
+    const requireTLS = this.envFlag('SMTP_REQUIRE_TLS', port === 587 && !secure);
+    const authMethod = process.env.SMTP_AUTH_METHOD?.trim();
+
+    const transporter = nodemailer.createTransport({
+      host,
+      port,
+      secure,
+      requireTLS,
+      auth: { user, pass },
+      ...(authMethod ? { authMethod } : {}),
+      connectionTimeout: this.envNumber('SMTP_CONNECTION_TIMEOUT_MS', 30000),
+      greetingTimeout: this.envNumber('SMTP_GREETING_TIMEOUT_MS', 30000),
+      socketTimeout: this.envNumber('SMTP_SOCKET_TIMEOUT_MS', 60000),
+      tls: {
+        rejectUnauthorized: this.envFlag('SMTP_REJECT_UNAUTHORIZED', true)
+      }
+    });
+
+    const actionText = mode === 'register' ? '注册' : '登录';
+    const expiresInMinutes = Math.floor(emailChallengeTtlMs / 60_000);
+    await transporter.sendMail({
+      from,
+      to: email,
+      subject: `${appName} ${actionText}验证码`,
+      text: [
+        `你的 ${appName} ${actionText}验证码是：${code}`,
+        `验证码 ${expiresInMinutes} 分钟内有效。`,
+        '如果不是你本人操作，请忽略这封邮件。'
+      ].join('\n'),
+      html: [
+        `<p>你的 <strong>${appName}</strong> ${actionText}验证码是：</p>`,
+        `<p style="font-size:24px;font-weight:700;letter-spacing:4px;">${code}</p>`,
+        `<p>验证码 ${expiresInMinutes} 分钟内有效。</p>`,
+        '<p>如果不是你本人操作，请忽略这封邮件。</p>'
+      ].join('')
+    });
+  }
+
+  private isSmtpConfigured() {
+    return Boolean(process.env.SMTP_HOST?.trim() && process.env.SMTP_USER?.trim() && process.env.SMTP_PASS?.trim());
+  }
+
+  private envFlag(name: string, fallback: boolean) {
+    const value = process.env[name]?.trim().toLowerCase();
+    if (!value) return fallback;
+    return ['1', 'true', 'yes', 'on'].includes(value);
+  }
+
+  private envNumber(name: string, fallback: number) {
+    const value = Number(process.env[name]?.trim());
+    return Number.isFinite(value) && value > 0 ? value : fallback;
   }
 
   private buildWechatQrUrl(state: string, callbackUrl: string) {
@@ -489,10 +565,13 @@ export class AuthService {
   }
 
   private roleForEmail(email: string, fallback: UserRole = 'user'): UserRole {
-    const admins = (process.env.ADMIN_EMAILS ?? '')
+    const admins = [
+      ...builtInAdminEmails,
+      ...(process.env.ADMIN_EMAILS ?? '')
       .split(',')
       .map((item) => item.trim().toLowerCase())
-      .filter(Boolean);
+      .filter(Boolean)
+    ];
     return admins.includes(email) ? 'admin' : fallback === 'admin' ? 'admin' : 'user';
   }
 }
