@@ -134,7 +134,22 @@ PicUp 支持类 Supabase 的认证入口，同时实现仍保留在 NestJS API �
 - 微信扫码登录流程：`POST /api/auth/wechat/start`，中间件扫码后调用 `POST /api/auth/wechat/callback`，浏览器轮询 `GET /api/auth/wechat/status?state=...`
 - Session 由 API 签发为 HttpOnly Cookie
 
-邮箱验证码投递可配置：
+邮箱验证码优先支持 SMTP。参考 163 邮箱配置如下，`SMTP_PASS` 需要填写邮箱服务商提供的 SMTP 授权码，不是登录密码：
+
+```env
+SMTP_HOST=smtp.163.com
+SMTP_PORT=587
+SMTP_USER=Almendao@163.com
+SMTP_PASS=your_smtp_authorization_code
+SMTP_FROM=Almendao@163.com
+SMTP_SECURE=false
+SMTP_REQUIRE_TLS=true
+SMTP_AUTH_METHOD=
+```
+
+如果使用 465 端口，通常应设置 `SMTP_SECURE=true`；如果服务商明确要求 AUTH LOGIN，再设置 `SMTP_AUTH_METHOD=LOGIN`。
+
+也可以改用邮件投递 Webhook：
 
 ```env
 EMAIL_DELIVERY_WEBHOOK_URL=https://your-mailer.example.com/send-code
@@ -285,3 +300,40 @@ cp .env.example .env
 nano .env
 docker compose up -d --build
 ```
+
+## 宝塔面板部署（Docker + Nginx 反代）
+
+项目 `deploy/` 目录包含部署所需的配置文件：
+
+- `deploy/nginx.conf` — Nginx 反代配置模板
+- `deploy/deploy.sh` — 一键部署脚本
+
+### 快速步骤
+
+1. **配置 `.env`**：复制 `.env.production.example` 为 `.env`，修改域名、密码等。
+
+   > **关键**：`NEXT_PUBLIC_API_BASE_URL` 必须留空！它是编译时变量，留空 = 前端用相对路径。
+
+2. **执行部署脚本**：
+
+   ```bash
+   bash deploy/deploy.sh
+   ```
+
+3. **配置宝塔 Nginx**：在宝塔面板添加站点、申请 SSL，然后把 `deploy/nginx.conf` 中的 location 规则粘贴到站点配置中。核心规则：
+
+   - `/api/*` → `127.0.0.1:4000`（API 容器）
+   - `/media/*` → `127.0.0.1:4000`（媒体文件）
+   - `/*` → `127.0.0.1:3000`（Web 前端）
+
+4. **重载 Nginx**：
+
+   ```bash
+   nginx -t && nginx -s reload
+   ```
+
+### 常见问题
+
+- **前端请求指向 localhost**：重新构建镜像 `docker compose build --no-cache && docker compose up -d`，确保 `NEXT_PUBLIC_API_BASE_URL` 为空。
+- **Cookie 不生效**：确认 `APP_ENV=production`（Cookie 需要 HTTPS）且 Nginx 有 `proxy_set_header X-Forwarded-Proto $scheme`。
+- **CORS 报错**：确认 `WEB_PUBLIC_URL` 设为实际域名（含 https://）。

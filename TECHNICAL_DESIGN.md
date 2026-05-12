@@ -80,6 +80,14 @@ Email registration stores the password hash only in the challenge until the emai
 Operational settings:
 
 ```env
+SMTP_HOST=
+SMTP_PORT=587
+SMTP_USER=
+SMTP_PASS=
+SMTP_FROM=
+SMTP_SECURE=false
+SMTP_REQUIRE_TLS=true
+SMTP_AUTH_METHOD=
 EMAIL_DELIVERY_WEBHOOK_URL=
 EMAIL_DELIVERY_WEBHOOK_SECRET=
 WECHAT_SCAN_URL_TEMPLATE=

@@ -66,6 +66,8 @@ export default function HomePage() {
   const [aspectRatio, setAspectRatio] = useState('1:1');
   const [quality, setQuality] = useState<ImageQuality>('1K');
   const [jobId, setJobId] = useState<string | null>(null);
+  const [viewingJob, setViewingJob] = useState<ImageJobRecord | null>(null);
+  const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const meQuery = useQuery({ queryKey: ['me'], queryFn: getMe });
@@ -129,6 +131,7 @@ export default function HomePage() {
     mutationFn: createImageJob,
     onSuccess: (result) => {
       setJobId(result.jobId);
+      setViewingJob(null);
       setError(null);
       historyQuery.refetch();
       meQuery.refetch();
@@ -145,6 +148,8 @@ export default function HomePage() {
   });
 
   const currentJob = jobQuery.data;
+  const previewJob = viewingJob ?? currentJob ?? null;
+  const isViewingHistory = Boolean(viewingJob);
   const canSubmit = prompt.trim().length > 0
     && !createJobMutation.isPending
     && !uploadMutation.isPending
@@ -182,8 +187,15 @@ export default function HomePage() {
     });
   }
 
+  function viewHistoryJob(job: ImageJobRecord) {
+    setJobId(job.id);
+    setViewingJob(job);
+    setIsHistoryOpen(false);
+  }
+
   function continueFrom(job: ImageJobRecord) {
     setJobId(job.id);
+    setViewingJob(null);
     setTemplate(job.template);
     setPrompt(job.prompt);
     setProvider(job.provider);
@@ -191,7 +203,12 @@ export default function HomePage() {
     setAspectRatio(job.aspectRatio);
     setQuality(normalizeResolution(job.quality));
     setUploaded(job.inputFiles);
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+    setIsHistoryOpen(false);
+  }
+
+  function returnToLatest() {
+    setViewingJob(null);
+    if (currentJob) setJobId(currentJob.id);
   }
 
   return (
@@ -227,8 +244,8 @@ export default function HomePage() {
               </button>
             )}
             <button
-              className="inline-flex min-h-11 cursor-pointer items-center gap-2 rounded-lg border border-line bg-white px-3 text-sm font-semibold text-ink transition-colors hover:border-teal-600 hover:text-teal-700"
-              onClick={() => document.getElementById('history')?.scrollIntoView({ behavior: 'smooth' })}
+              className="inline-flex min-h-11 cursor-pointer items-center gap-2 rounded-lg border border-line bg-white px-3 text-sm font-semibold text-ink transition-colors hover:border-teal-600 hover:text-teal-700 lg:hidden"
+              onClick={() => setIsHistoryOpen(true)}
             >
               <History size={18} aria-hidden />
               历史
@@ -237,7 +254,7 @@ export default function HomePage() {
         </div>
       </header>
 
-      <div className="mx-auto grid max-w-[1500px] gap-3 px-3 py-3 sm:gap-4 sm:px-6 sm:py-4 lg:grid-cols-[380px_minmax(0,1fr)]">
+      <div className="mx-auto grid max-w-[1720px] gap-3 px-3 py-3 sm:gap-4 sm:px-6 sm:py-4 lg:grid-cols-[380px_minmax(0,1fr)_320px] xl:grid-cols-[400px_minmax(0,1fr)_340px]">
         <section className="rounded-lg border border-line bg-white p-4 shadow-panel lg:sticky lg:top-20 lg:max-h-[calc(100vh-6rem)] lg:overflow-auto">
           <div className="mb-4">
             <h1 className="text-2xl font-bold leading-tight">上传参考图，描述你想要的结果</h1>
@@ -396,16 +413,53 @@ export default function HomePage() {
           </button>
         </section>
 
-        <section className="grid gap-4">
-          <ResultPanel uploaded={uploaded} job={currentJob ?? null} loading={Boolean(jobId && jobQuery.isFetching && !currentJob)} />
-          <HistoryPanel jobs={historyQuery.data ?? []} onSelect={continueFrom} />
+        <section className="min-w-0">
+          <ResultPanel
+            uploaded={isViewingHistory ? previewJob?.inputFiles ?? [] : uploaded}
+            job={previewJob}
+            loading={Boolean(jobId && jobQuery.isFetching && !previewJob)}
+            isViewingHistory={isViewingHistory}
+            onContinueEdit={previewJob ? () => continueFrom(previewJob) : undefined}
+            onReturnLatest={isViewingHistory ? returnToLatest : undefined}
+          />
         </section>
+
+        <HistoryPanel
+          jobs={historyQuery.data ?? []}
+          activeJobId={previewJob?.id ?? null}
+          onView={viewHistoryJob}
+          onContinue={continueFrom}
+          variant="sidebar"
+        />
       </div>
+
+      <HistoryDrawer
+        open={isHistoryOpen}
+        jobs={historyQuery.data ?? []}
+        activeJobId={previewJob?.id ?? null}
+        onClose={() => setIsHistoryOpen(false)}
+        onView={viewHistoryJob}
+        onContinue={continueFrom}
+      />
     </main>
   );
 }
 
-function ResultPanel({ uploaded, job, loading }: { uploaded: UploadedFileRecord[]; job: ImageJobRecord | null; loading: boolean }) {
+function ResultPanel({
+  uploaded,
+  job,
+  loading,
+  isViewingHistory,
+  onContinueEdit,
+  onReturnLatest
+}: {
+  uploaded: UploadedFileRecord[];
+  job: ImageJobRecord | null;
+  loading: boolean;
+  isViewingHistory: boolean;
+  onContinueEdit?: () => void;
+  onReturnLatest?: () => void;
+}) {
   const output = job?.outputImages[0];
   const isWorking = job?.status === 'queued' || job?.status === 'running' || job?.status === 'retrying' || loading;
   const [lightbox, setLightbox] = useState<LightboxState | null>(null);
@@ -426,11 +480,31 @@ function ResultPanel({ uploaded, job, loading }: { uploaded: UploadedFileRecord[
     <section className="rounded-lg border border-line bg-white p-3 shadow-panel sm:p-4">
       <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h2 className="text-xl font-bold">图片预览</h2>
-          <p className="mt-1 text-sm text-muted">左侧显示全部参考图，右侧显示模型结果；点击图片可放大查看。</p>
+          <div className="flex flex-wrap items-center gap-2">
+            <h2 className="text-xl font-bold">{isViewingHistory ? '正在查看历史任务' : '当前任务预览'}</h2>
+            {isViewingHistory && (
+              <span className="rounded-full bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-700">
+                未覆盖当前编辑
+              </span>
+            )}
+          </div>
+          <p className="mt-1 text-sm text-muted">
+            {isViewingHistory
+              ? '历史查看只切换预览区，点击继续编辑才会载入左侧参数。'
+              : '左侧显示全部参考图，右侧显示模型结果；点击图片可放大查看。'}
+          </p>
         </div>
         {job && <StatusBadge status={job.status} />}
       </div>
+
+      {isViewingHistory && job && (
+        <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-3">
+          <p className="line-clamp-2 text-sm font-semibold text-amber-900">{job.prompt}</p>
+          <p className="mt-1 text-xs text-amber-700">
+            {new Date(job.createdAt).toLocaleString()} · {job.selectedProvider} · {normalizeResolution(job.quality)}
+          </p>
+        </div>
+      )}
 
       <div className="grid gap-3 sm:gap-4 lg:grid-cols-2">
         <PreviewBox
@@ -467,11 +541,19 @@ function ResultPanel({ uploaded, job, loading }: { uploaded: UploadedFileRecord[
           </a>
           <button
             className="inline-flex min-h-11 cursor-pointer items-center justify-center gap-2 rounded-lg border border-line bg-white px-4 font-semibold text-ink transition-colors hover:border-teal-600 hover:text-teal-700"
-            onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
+            onClick={onContinueEdit}
           >
             <RefreshCw size={18} aria-hidden />
             继续编辑
           </button>
+          {onReturnLatest && (
+            <button
+              className="inline-flex min-h-11 cursor-pointer items-center justify-center rounded-lg border border-line bg-white px-4 font-semibold text-ink transition-colors hover:border-teal-600 hover:text-teal-700"
+              onClick={onReturnLatest}
+            >
+              返回当前任务
+            </button>
+          )}
         </div>
       )}
 
@@ -686,11 +768,31 @@ function StatusBadge({ status }: { status: ImageJobRecord['status'] }) {
   );
 }
 
-function HistoryPanel({ jobs, onSelect }: { jobs: ImageJobRecord[]; onSelect: (job: ImageJobRecord) => void }) {
+function HistoryPanel({
+  jobs,
+  activeJobId,
+  onView,
+  onContinue,
+  variant
+}: {
+  jobs: ImageJobRecord[];
+  activeJobId: string | null;
+  onView: (job: ImageJobRecord) => void;
+  onContinue: (job: ImageJobRecord) => void;
+  variant: 'sidebar' | 'drawer';
+}) {
   return (
-    <section id="history" className="rounded-lg border border-line bg-white p-4 shadow-panel">
-      <div className="mb-4 flex items-center justify-between">
-        <h2 className="text-xl font-bold">最近任务</h2>
+    <section
+      id="history"
+      className={`rounded-lg border border-line bg-white p-4 shadow-panel ${
+        variant === 'sidebar' ? 'hidden lg:sticky lg:top-20 lg:block lg:max-h-[calc(100vh-6rem)] lg:overflow-hidden' : ''
+      }`}
+    >
+      <div className="mb-4 flex items-center justify-between gap-3">
+        <div>
+          <h2 className="text-xl font-bold">历史任务</h2>
+          <p className="mt-1 text-xs text-muted">点击查看，不覆盖编辑</p>
+        </div>
         <span className="text-sm text-muted">{jobs.length} 条</span>
       </div>
       {jobs.length === 0 ? (
@@ -698,14 +800,20 @@ function HistoryPanel({ jobs, onSelect }: { jobs: ImageJobRecord[]; onSelect: (j
           生成任务会出现在这里。
         </div>
       ) : (
-        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+        <div className={`${variant === 'sidebar' ? 'max-h-[calc(100vh-11rem)] overflow-y-auto pr-1' : ''} grid gap-3`}>
           {jobs.map((job) => (
-            <button
+            <article
               key={job.id}
-              className="cursor-pointer rounded-lg border border-line bg-white p-3 text-left transition-colors hover:border-teal-600"
-              onClick={() => onSelect(job)}
+              className={`rounded-lg border bg-white p-3 transition-colors ${
+                activeJobId === job.id ? 'border-teal-600 ring-2 ring-teal-100' : 'border-line hover:border-teal-600'
+              }`}
             >
-              <div className="mb-3 aspect-[4/3] overflow-hidden rounded-md bg-slate-100">
+              <button
+                className="block w-full cursor-pointer text-left"
+                onClick={() => onView(job)}
+                aria-label={`查看历史任务：${job.prompt}`}
+              >
+                <div className="mb-3 aspect-[4/3] overflow-hidden rounded-md bg-slate-100">
                 {job.outputImages[0]?.url || job.inputFiles[0]?.url ? (
                   // eslint-disable-next-line @next/next/no-img-element
                   <img
@@ -716,13 +824,92 @@ function HistoryPanel({ jobs, onSelect }: { jobs: ImageJobRecord[]; onSelect: (j
                 ) : (
                   <div className="flex h-full items-center justify-center text-sm text-muted">等待结果</div>
                 )}
+                </div>
+                <p className="line-clamp-2 text-sm font-semibold leading-5">{job.prompt}</p>
+                <p className="mt-1 text-xs text-muted">{job.selectedProvider} / {job.status} / {normalizeResolution(job.quality)}</p>
+              </button>
+              <div className="mt-3 grid grid-cols-2 gap-2">
+                <button
+                  className="inline-flex min-h-10 cursor-pointer items-center justify-center gap-1.5 rounded-lg border border-line bg-white px-3 text-sm font-semibold transition-colors hover:border-teal-600 hover:text-teal-700"
+                  onClick={() => onView(job)}
+                >
+                  <Eye size={15} aria-hidden />
+                  查看
+                </button>
+                <button
+                  className="inline-flex min-h-10 cursor-pointer items-center justify-center gap-1.5 rounded-lg bg-teal-600 px-3 text-sm font-semibold text-white transition-colors hover:bg-teal-700"
+                  onClick={() => onContinue(job)}
+                >
+                  <RefreshCw size={15} aria-hidden />
+                  编辑
+                </button>
               </div>
-              <p className="truncate text-sm font-semibold">{job.prompt}</p>
-              <p className="mt-1 text-xs text-muted">{job.selectedProvider} / {job.status} / {normalizeResolution(job.quality)}</p>
-            </button>
+            </article>
           ))}
         </div>
       )}
     </section>
+  );
+}
+
+function HistoryDrawer({
+  open,
+  jobs,
+  activeJobId,
+  onClose,
+  onView,
+  onContinue
+}: {
+  open: boolean;
+  jobs: ImageJobRecord[];
+  activeJobId: string | null;
+  onClose: () => void;
+  onView: (job: ImageJobRecord) => void;
+  onContinue: (job: ImageJobRecord) => void;
+}) {
+  useEffect(() => {
+    if (!open) return;
+    const originalOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.body.style.overflow = originalOverflow;
+      window.removeEventListener('keydown', onKeyDown);
+    };
+  }, [onClose, open]);
+
+  if (!open) return null;
+
+  return (
+    <div className="fixed inset-0 z-50 bg-slate-950/45 lg:hidden" role="dialog" aria-modal="true" aria-label="历史任务">
+      <button className="absolute inset-0 h-full w-full cursor-default" onClick={onClose} aria-label="关闭历史任务" />
+      <div className="absolute inset-x-0 bottom-0 max-h-[86dvh] overflow-hidden rounded-t-2xl bg-white shadow-2xl">
+        <div className="flex min-h-14 items-center justify-between border-b border-line px-4">
+          <div>
+            <p className="font-bold">历史任务</p>
+            <p className="text-xs text-muted">点击查看，不覆盖当前编辑</p>
+          </div>
+          <button
+            className="inline-flex h-11 w-11 cursor-pointer items-center justify-center rounded-lg border border-line text-muted transition-colors hover:border-teal-600 hover:text-teal-700"
+            onClick={onClose}
+            aria-label="关闭"
+          >
+            <X size={20} aria-hidden />
+          </button>
+        </div>
+        <div className="max-h-[calc(86dvh-3.5rem)] overflow-y-auto p-3">
+          <HistoryPanel
+            jobs={jobs}
+            activeJobId={activeJobId}
+            onView={onView}
+            onContinue={onContinue}
+            variant="drawer"
+          />
+        </div>
+      </div>
+    </div>
   );
 }

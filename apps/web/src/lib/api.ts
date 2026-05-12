@@ -13,7 +13,7 @@ import type {
   WechatAuthStatusResponse
 } from '@picup/shared';
 
-/** 始终用相对路径。本地开发走 localhost:3000，线上 Nginx 反代统一转发 */
+/** 始终用相对路径。Next.js rewrites 或 Nginx 负责转发到 API 服务 */
 const API_BASE_URL = '';
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {

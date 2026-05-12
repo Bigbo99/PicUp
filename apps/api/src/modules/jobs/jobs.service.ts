@@ -164,7 +164,9 @@ export class JobsService {
   }
 
   private async ensureQuota(user: AuthUser) {
-    const dailyTotal = user.role === 'guest' ? 3 : user.role === 'admin' ? 999 : 10;
+    if (user.role === 'admin') return;
+
+    const dailyTotal = user.role === 'guest' ? 3 : 10;
     const used = await this.storage.countDailyJobs(user.id, new Date().toISOString().slice(0, 10));
     if (used >= dailyTotal) {
       throw new BadRequestException('Daily free quota has been used up');
