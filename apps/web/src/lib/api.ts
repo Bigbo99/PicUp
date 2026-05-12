@@ -56,6 +56,12 @@ export async function listImageJobs() {
   return request<ImageJobRecord[]>('/api/image/jobs?limit=20');
 }
 
+export async function deleteImageJob(id: string) {
+  return request<{ ok: boolean; jobId: string }>(`/api/image/jobs/${id}`, {
+    method: 'DELETE'
+  });
+}
+
 export async function getModels() {
   return request<ModelsResponse>('/api/models');
 }

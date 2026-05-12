@@ -1,5 +1,7 @@
 import { BadRequestException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
+import { unlink } from 'node:fs/promises';
+import { resolve } from 'node:path';
 import type {
   ImageJobCreateRequest,
   ImageJobCreateResponse,
@@ -12,6 +14,7 @@ import { RedisQueueService } from '../../common/queue/redis-queue.service';
 import { ModelsService } from '../models/models.service';
 import { ProviderRegistry } from '../providers/provider.registry';
 import { buildFinalPrompt } from './prompt-builder';
+import { ensureStorage } from '../../common/storage-paths';
 
 @Injectable()
 export class JobsService {
@@ -72,6 +75,13 @@ export class JobsService {
 
   async list(limit = 20, user?: AuthUser) {
     return this.storage.listJobs(limit, user?.id, user?.role === 'admin');
+  }
+
+  async delete(id: string, user: AuthUser) {
+    const deleted = await this.storage.deleteJob(id, user.id, user.role === 'admin');
+    if (!deleted) throw new NotFoundException('任务不存在');
+    await this.cleanupOutputFiles(deleted);
+    return { ok: true, jobId: id };
   }
 
   async processNext() {
@@ -185,5 +195,15 @@ export class JobsService {
     if (input.quality === '512') return 'gemini-3.1-flash-image-preview';
     if (input.quality === '4K' || input.template === 'product') return 'gemini-3-pro-image-preview';
     return 'gemini-3.1-flash-image-preview';
+  }
+
+  private async cleanupOutputFiles(job: ImageJobRecord) {
+    const paths = await ensureStorage();
+    await Promise.allSettled(job.outputImages.map(async (image) => {
+      const url = new URL(image.url, 'http://localhost');
+      const filename = url.pathname.split('/').pop();
+      if (!filename) return;
+      await unlink(resolve(paths.outputs, filename));
+    }));
   }
 }
