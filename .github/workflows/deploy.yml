@@ -122,8 +122,8 @@ jobs:
             git checkout main
             git pull --ff-only origin main
             export APP_IMAGE='${DOCKERHUB_IMAGE}:${IMAGE_TAG}'
-            docker compose pull --ignore-buildable migrate api web worker
-            docker compose up -d --no-build
+            docker compose pull migrate api web worker
+            docker compose up -d --no-build --force-recreate
             docker image prune -f
             docker builder prune -f --filter 'until=24h'
             docker compose ps

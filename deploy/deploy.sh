@@ -59,11 +59,11 @@ mkdir -p storage/inputs storage/outputs
 
 echo ""
 echo "[4/7] Pull prebuilt image..."
-docker compose pull --ignore-buildable migrate api web worker
+docker compose pull migrate api web worker
 
 echo ""
 echo "[5/7] Restart services (no build)..."
-docker compose up -d --no-build
+docker compose up -d --no-build --force-recreate
 
 echo ""
 echo "[6/7] Health check..."
