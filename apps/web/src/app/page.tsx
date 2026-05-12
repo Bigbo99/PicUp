@@ -30,7 +30,7 @@ import {
   type ImageTemplate,
   type UploadedFileRecord
 } from '@picup/shared';
-import { createImageJob, getImageJob, getMe, getModels, listImageJobs, logout, uploadImage } from '@/lib/api';
+import { createImageJob, deleteImageJob, getImageJob, getMe, getModels, listImageJobs, logout, uploadImage } from '@/lib/api';
 
 const FALLBACK_REFERENCE_LIMIT = 14;
 
@@ -147,6 +147,17 @@ export default function HomePage() {
     }
   });
 
+  const deleteJobMutation = useMutation({
+    mutationFn: deleteImageJob,
+    onSuccess: async (result) => {
+      if (viewingJob?.id === result.jobId) setViewingJob(null);
+      if (jobId === result.jobId) setJobId(null);
+      await queryClient.invalidateQueries({ queryKey: ['jobs'] });
+      await queryClient.invalidateQueries({ queryKey: ['job', result.jobId] });
+    },
+    onError: (err) => setError(err instanceof Error ? err.message : '删除任务失败')
+  });
+
   const currentJob = jobQuery.data;
   const previewJob = viewingJob ?? currentJob ?? null;
   const isViewingHistory = Boolean(viewingJob);
@@ -209,6 +220,12 @@ export default function HomePage() {
   function returnToLatest() {
     setViewingJob(null);
     if (currentJob) setJobId(currentJob.id);
+  }
+
+  function deleteHistoryJob(job: ImageJobRecord) {
+    const ok = window.confirm('删除后将从历史任务中移除，是否继续？');
+    if (!ok) return;
+    deleteJobMutation.mutate(job.id);
   }
 
   return (
@@ -429,6 +446,8 @@ export default function HomePage() {
           activeJobId={previewJob?.id ?? null}
           onView={viewHistoryJob}
           onContinue={continueFrom}
+          onDelete={deleteHistoryJob}
+          deletingJobId={deleteJobMutation.variables ?? null}
           variant="sidebar"
         />
       </div>
@@ -440,6 +459,8 @@ export default function HomePage() {
         onClose={() => setIsHistoryOpen(false)}
         onView={viewHistoryJob}
         onContinue={continueFrom}
+        onDelete={deleteHistoryJob}
+        deletingJobId={deleteJobMutation.variables ?? null}
       />
     </main>
   );
@@ -773,12 +794,16 @@ function HistoryPanel({
   activeJobId,
   onView,
   onContinue,
+  onDelete,
+  deletingJobId,
   variant
 }: {
   jobs: ImageJobRecord[];
   activeJobId: string | null;
   onView: (job: ImageJobRecord) => void;
   onContinue: (job: ImageJobRecord) => void;
+  onDelete: (job: ImageJobRecord) => void;
+  deletingJobId: string | null;
   variant: 'sidebar' | 'drawer';
 }) {
   return (
@@ -828,7 +853,7 @@ function HistoryPanel({
                 <p className="line-clamp-2 text-sm font-semibold leading-5">{job.prompt}</p>
                 <p className="mt-1 text-xs text-muted">{job.selectedProvider} / {job.status} / {normalizeResolution(job.quality)}</p>
               </button>
-              <div className="mt-3 grid grid-cols-2 gap-2">
+              <div className="mt-3 grid grid-cols-[1fr_1fr_40px] gap-2">
                 <button
                   className="inline-flex min-h-10 cursor-pointer items-center justify-center gap-1.5 rounded-lg border border-line bg-white px-3 text-sm font-semibold transition-colors hover:border-teal-600 hover:text-teal-700"
                   onClick={() => onView(job)}
@@ -842,6 +867,15 @@ function HistoryPanel({
                 >
                   <RefreshCw size={15} aria-hidden />
                   编辑
+                </button>
+                <button
+                  className="inline-flex min-h-10 cursor-pointer items-center justify-center rounded-lg border border-red-200 bg-white text-red-600 transition-colors hover:border-red-400 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
+                  onClick={() => onDelete(job)}
+                  disabled={deletingJobId === job.id}
+                  aria-label={`删除历史任务：${job.prompt}`}
+                  title="删除"
+                >
+                  {deletingJobId === job.id ? <Loader2 className="animate-spin" size={15} aria-hidden /> : <Trash2 size={15} aria-hidden />}
                 </button>
               </div>
             </article>
@@ -858,7 +892,9 @@ function HistoryDrawer({
   activeJobId,
   onClose,
   onView,
-  onContinue
+  onContinue,
+  onDelete,
+  deletingJobId
 }: {
   open: boolean;
   jobs: ImageJobRecord[];
@@ -866,6 +902,8 @@ function HistoryDrawer({
   onClose: () => void;
   onView: (job: ImageJobRecord) => void;
   onContinue: (job: ImageJobRecord) => void;
+  onDelete: (job: ImageJobRecord) => void;
+  deletingJobId: string | null;
 }) {
   useEffect(() => {
     if (!open) return;
@@ -906,6 +944,8 @@ function HistoryDrawer({
             activeJobId={activeJobId}
             onView={onView}
             onContinue={onContinue}
+            onDelete={onDelete}
+            deletingJobId={deletingJobId}
             variant="drawer"
           />
         </div>

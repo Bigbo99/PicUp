@@ -107,6 +107,13 @@ export class StorageService {
     return job ? this.toImageJob(job) : null;
   }
 
+  async deleteJob(id: string, userId?: string, includeAll = false) {
+    const job = await this.getJob(id, userId, includeAll);
+    if (!job) return null;
+    await this.prisma.imageJob.delete({ where: { id } });
+    return job;
+  }
+
   async listJobs(limit = 20, userId?: string, includeAll = false) {
     const jobs = await this.prisma.imageJob.findMany({
       where: includeAll || !userId ? {} : { OR: [{ userId }, { userId: null }] },

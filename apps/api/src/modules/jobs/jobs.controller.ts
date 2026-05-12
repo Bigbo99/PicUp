@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Inject, Param, Post, Query, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Inject, Param, Post, Query, Req, UseGuards } from '@nestjs/common';
 import { JobsService } from './jobs.service';
 import { CreateImageJobDto } from './dto';
 import { AuthGuard } from '../auth/auth.guard';
@@ -22,5 +22,10 @@ export class JobsController {
   @Get(':id')
   get(@Param('id') id: string, @Req() req: AuthenticatedRequest) {
     return this.jobs.get(id, req.authUser);
+  }
+
+  @Delete(':id')
+  delete(@Param('id') id: string, @Req() req: AuthenticatedRequest) {
+    return this.jobs.delete(id, req.authUser);
   }
 }
