@@ -1,0 +1,4 @@
+interface:
+  display_name: "PicUp Release"
+  short_description: "Validate locally, then ship via GitHub Actions and ACR"
+  default_prompt: "Use $picup-release-workflow to run the PicUp release path: inspect the intended diff, run the local release check script, confirm local Docker health, then commit and push so GitHub Actions builds to Aliyun ACR and the server deploys by pulling the image."
