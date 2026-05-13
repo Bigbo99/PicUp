@@ -47,6 +47,8 @@ type LightboxState = {
   index: number;
 };
 
+type MobileTab = 'create' | 'preview' | 'history' | 'account';
+
 function normalizeResolution(value: unknown): ImageQuality {
   if (value === '512' || value === '1K' || value === '2K' || value === '4K') return value;
   if (value === 'preview') return '512';
@@ -67,7 +69,7 @@ export default function HomePage() {
   const [quality, setQuality] = useState<ImageQuality>('1K');
   const [jobId, setJobId] = useState<string | null>(null);
   const [viewingJob, setViewingJob] = useState<ImageJobRecord | null>(null);
-  const [isHistoryOpen, setIsHistoryOpen] = useState(false);
+  const [mobileTab, setMobileTab] = useState<MobileTab>('create');
   const [error, setError] = useState<string | null>(null);
 
   const meQuery = useQuery({ queryKey: ['me'], queryFn: getMe });
@@ -132,6 +134,7 @@ export default function HomePage() {
     onSuccess: (result) => {
       setJobId(result.jobId);
       setViewingJob(null);
+      setMobileTab('preview');
       setError(null);
       historyQuery.refetch();
       meQuery.refetch();
@@ -166,6 +169,7 @@ export default function HomePage() {
     && !uploadMutation.isPending
     && !referenceLimitError;
   const activeTemplate = templateOptions.find((item) => item.value === template);
+  const isGuest = meQuery.data?.user.isGuest ?? true;
 
   function handleFiles(files?: FileList | File[]) {
     const nextFiles = Array.from(files ?? []);
@@ -201,7 +205,7 @@ export default function HomePage() {
   function viewHistoryJob(job: ImageJobRecord) {
     setJobId(job.id);
     setViewingJob(job);
-    setIsHistoryOpen(false);
+    setMobileTab('preview');
   }
 
   function continueFrom(job: ImageJobRecord) {
@@ -214,7 +218,7 @@ export default function HomePage() {
     setAspectRatio(job.aspectRatio);
     setQuality(normalizeResolution(job.quality));
     setUploaded(job.inputFiles);
-    setIsHistoryOpen(false);
+    setMobileTab('create');
   }
 
   function returnToLatest() {
@@ -229,7 +233,7 @@ export default function HomePage() {
   }
 
   return (
-    <main className="min-h-screen bg-canvas text-ink">
+    <main className="min-h-screen bg-canvas pb-24 text-ink lg:pb-0">
       <header className="sticky top-0 z-30 border-b border-line bg-white/95 backdrop-blur">
         <div className="mx-auto flex h-16 max-w-[1500px] items-center justify-between px-4 sm:px-6">
           <div className="flex items-center gap-3">
@@ -241,8 +245,8 @@ export default function HomePage() {
               <p className="hidden text-sm text-muted sm:block">AI 图片生成与编辑工作台</p>
             </div>
           </div>
-          <div className="flex items-center gap-3">
-            {meQuery.data?.user.isGuest ? (
+          <div className="hidden items-center gap-3 lg:flex">
+            {isGuest ? (
               <Link
                 className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-line bg-white px-3 text-sm font-semibold text-ink transition-colors hover:border-teal-600 hover:text-teal-700"
                 href="/login"
@@ -260,19 +264,12 @@ export default function HomePage() {
                 退出
               </button>
             )}
-            <button
-              className="inline-flex min-h-11 cursor-pointer items-center gap-2 rounded-lg border border-line bg-white px-3 text-sm font-semibold text-ink transition-colors hover:border-teal-600 hover:text-teal-700 lg:hidden"
-              onClick={() => setIsHistoryOpen(true)}
-            >
-              <History size={18} aria-hidden />
-              历史
-            </button>
           </div>
         </div>
       </header>
 
       <div className="mx-auto grid max-w-[1720px] gap-3 px-3 py-3 sm:gap-4 sm:px-6 sm:py-4 lg:grid-cols-[380px_minmax(0,1fr)_320px] xl:grid-cols-[400px_minmax(0,1fr)_340px]">
-        <section className="rounded-lg border border-line bg-white p-4 shadow-panel lg:sticky lg:top-20 lg:max-h-[calc(100vh-6rem)] lg:overflow-auto">
+        <section className={`${mobileTab === 'create' ? 'block' : 'hidden'} rounded-lg border border-line bg-white p-4 shadow-panel lg:sticky lg:top-20 lg:block lg:max-h-[calc(100vh-6rem)] lg:overflow-auto`}>
           <div className="mb-4">
             <h1 className="text-2xl font-bold leading-tight">上传参考图，描述你想要的结果</h1>
             <p className="mt-2 text-sm leading-6 text-muted">
@@ -430,7 +427,7 @@ export default function HomePage() {
           </button>
         </section>
 
-        <section className="min-w-0">
+        <section className={`${mobileTab === 'preview' ? 'block' : 'hidden'} min-w-0 lg:block`}>
           <ResultPanel
             uploaded={isViewingHistory ? previewJob?.inputFiles ?? [] : uploaded}
             job={previewJob}
@@ -441,28 +438,134 @@ export default function HomePage() {
           />
         </section>
 
-        <HistoryPanel
-          jobs={historyQuery.data ?? []}
-          activeJobId={previewJob?.id ?? null}
-          onView={viewHistoryJob}
-          onContinue={continueFrom}
-          onDelete={deleteHistoryJob}
-          deletingJobId={deleteJobMutation.variables ?? null}
-          variant="sidebar"
-        />
+        <section className={`${mobileTab === 'history' ? 'block' : 'hidden'} lg:block`}>
+          <HistoryPanel
+            jobs={historyQuery.data ?? []}
+            activeJobId={previewJob?.id ?? null}
+            onView={viewHistoryJob}
+            onContinue={continueFrom}
+            onDelete={deleteHistoryJob}
+            deletingJobId={deleteJobMutation.variables ?? null}
+            variant="sidebar"
+          />
+        </section>
       </div>
 
-      <HistoryDrawer
-        open={isHistoryOpen}
-        jobs={historyQuery.data ?? []}
-        activeJobId={previewJob?.id ?? null}
-        onClose={() => setIsHistoryOpen(false)}
-        onView={viewHistoryJob}
-        onContinue={continueFrom}
-        onDelete={deleteHistoryJob}
-        deletingJobId={deleteJobMutation.variables ?? null}
+      <MobileAccountPanel
+        active={mobileTab === 'account'}
+        isGuest={isGuest}
+        logoutPending={logoutMutation.isPending}
+        onLogout={() => logoutMutation.mutate()}
+      />
+
+      <MobileBottomNav
+        activeTab={mobileTab}
+        historyCount={historyQuery.data?.length ?? 0}
+        isGuest={isGuest}
+        onChange={setMobileTab}
       />
     </main>
+  );
+}
+
+function MobileAccountPanel({
+  active,
+  isGuest,
+  logoutPending,
+  onLogout
+}: {
+  active: boolean;
+  isGuest: boolean;
+  logoutPending: boolean;
+  onLogout: () => void;
+}) {
+  if (!active) return null;
+
+  return (
+    <section className="mx-auto px-3 py-3 sm:px-6 lg:hidden">
+      <div className="rounded-lg border border-line bg-white p-4 shadow-panel">
+        <div className="mb-4 flex items-center gap-3">
+          <div className="flex h-11 w-11 items-center justify-center rounded-lg bg-teal-50 text-teal-700">
+            <UserCircle size={24} aria-hidden />
+          </div>
+          <div>
+            <h2 className="text-xl font-bold">账户</h2>
+            <p className="mt-1 text-sm text-muted">{isGuest ? '登录后可同步历史任务' : '已登录，可管理当前会话'}</p>
+          </div>
+        </div>
+        {isGuest ? (
+          <Link
+            className="inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-lg bg-teal-600 px-4 font-bold text-white transition-colors hover:bg-teal-700"
+            href="/login"
+          >
+            <UserCircle size={20} aria-hidden />
+            登录 / 注册
+          </Link>
+        ) : (
+          <button
+            className="inline-flex min-h-12 w-full cursor-pointer items-center justify-center gap-2 rounded-lg border border-line bg-white px-4 font-bold text-ink transition-colors hover:border-teal-600 hover:text-teal-700 disabled:cursor-not-allowed disabled:opacity-60"
+            onClick={onLogout}
+            disabled={logoutPending}
+          >
+            {logoutPending ? <Loader2 className="animate-spin" size={20} aria-hidden /> : <LogOut size={20} aria-hidden />}
+            退出登录
+          </button>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function MobileBottomNav({
+  activeTab,
+  historyCount,
+  isGuest,
+  onChange
+}: {
+  activeTab: MobileTab;
+  historyCount: number;
+  isGuest: boolean;
+  onChange: (tab: MobileTab) => void;
+}) {
+  const itemClass = (active: boolean) => `flex min-h-[58px] flex-1 cursor-pointer flex-col items-center justify-center gap-1 rounded-lg text-xs font-semibold transition-colors ${
+    active ? 'bg-teal-50 text-teal-700' : 'text-muted hover:bg-slate-50 hover:text-ink'
+  }`;
+
+  return (
+    <nav className="fixed inset-x-0 bottom-0 z-40 border-t border-line bg-white/95 px-3 pb-[max(env(safe-area-inset-bottom),0.5rem)] pt-2 shadow-[0_-12px_36px_rgba(15,23,42,0.10)] backdrop-blur lg:hidden" aria-label="移动端主导航">
+      <div className="mx-auto flex max-w-md gap-1">
+        <button type="button" className={itemClass(activeTab === 'create')} onClick={() => onChange('create')}>
+          <Wand2 size={21} aria-hidden />
+          创作
+        </button>
+        <button type="button" className={itemClass(activeTab === 'preview')} onClick={() => onChange('preview')}>
+          <Eye size={21} aria-hidden />
+          预览
+        </button>
+        <button type="button" className={itemClass(activeTab === 'history')} onClick={() => onChange('history')}>
+          <span className="relative">
+            <History size={21} aria-hidden />
+            {historyCount > 0 && (
+              <span className="absolute -right-3 -top-2 rounded-full bg-teal-600 px-1.5 text-[10px] leading-4 text-white">
+                {historyCount > 99 ? '99+' : historyCount}
+              </span>
+            )}
+          </span>
+          历史
+        </button>
+        {isGuest ? (
+          <Link className={itemClass(false)} href="/login">
+            <UserCircle size={21} aria-hidden />
+            登录
+          </Link>
+        ) : (
+          <button type="button" className={itemClass(activeTab === 'account')} onClick={() => onChange('account')}>
+            <UserCircle size={21} aria-hidden />
+            我的
+          </button>
+        )}
+      </div>
+    </nav>
   );
 }
 
@@ -512,7 +615,7 @@ function ResultPanel({
           <p className="mt-1 text-sm text-muted">
             {isViewingHistory
               ? '历史查看只切换预览区，点击继续编辑才会载入左侧参数。'
-              : '左侧显示全部参考图，右侧显示模型结果；点击图片可放大查看。'}
+              : '参考图和模型结果会完整显示；点击图片可进入全屏预览。'}
           </p>
         </div>
         {job && <StatusBadge status={job.status} />}
@@ -804,13 +907,13 @@ function HistoryPanel({
   onContinue: (job: ImageJobRecord) => void;
   onDelete: (job: ImageJobRecord) => void;
   deletingJobId: string | null;
-  variant: 'sidebar' | 'drawer';
+  variant: 'sidebar';
 }) {
   return (
     <section
       id="history"
       className={`rounded-lg border border-line bg-white p-4 shadow-panel ${
-        variant === 'sidebar' ? 'hidden lg:sticky lg:top-20 lg:block lg:max-h-[calc(100vh-6rem)] lg:overflow-hidden' : ''
+        variant === 'sidebar' ? 'lg:sticky lg:top-20 lg:max-h-[calc(100vh-6rem)] lg:overflow-hidden' : ''
       }`}
     >
       <div className="mb-4 flex items-center justify-between gap-3">
@@ -844,7 +947,7 @@ function HistoryPanel({
                   <img
                     src={job.outputImages[0]?.url ?? job.inputFiles[0]?.url}
                     alt="历史任务缩略图"
-                    className="h-full w-full object-cover"
+                    className="h-full w-full object-contain"
                   />
                 ) : (
                   <div className="flex h-full items-center justify-center text-sm text-muted">等待结果</div>
@@ -883,73 +986,5 @@ function HistoryPanel({
         </div>
       )}
     </section>
-  );
-}
-
-function HistoryDrawer({
-  open,
-  jobs,
-  activeJobId,
-  onClose,
-  onView,
-  onContinue,
-  onDelete,
-  deletingJobId
-}: {
-  open: boolean;
-  jobs: ImageJobRecord[];
-  activeJobId: string | null;
-  onClose: () => void;
-  onView: (job: ImageJobRecord) => void;
-  onContinue: (job: ImageJobRecord) => void;
-  onDelete: (job: ImageJobRecord) => void;
-  deletingJobId: string | null;
-}) {
-  useEffect(() => {
-    if (!open) return;
-    const originalOverflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onClose();
-    };
-    window.addEventListener('keydown', onKeyDown);
-    return () => {
-      document.body.style.overflow = originalOverflow;
-      window.removeEventListener('keydown', onKeyDown);
-    };
-  }, [onClose, open]);
-
-  if (!open) return null;
-
-  return (
-    <div className="fixed inset-0 z-50 bg-slate-950/45 lg:hidden" role="dialog" aria-modal="true" aria-label="历史任务">
-      <button className="absolute inset-0 h-full w-full cursor-default" onClick={onClose} aria-label="关闭历史任务" />
-      <div className="absolute inset-x-0 bottom-0 max-h-[86dvh] overflow-hidden rounded-t-2xl bg-white shadow-2xl">
-        <div className="flex min-h-14 items-center justify-between border-b border-line px-4">
-          <div>
-            <p className="font-bold">历史任务</p>
-            <p className="text-xs text-muted">点击查看，不覆盖当前编辑</p>
-          </div>
-          <button
-            className="inline-flex h-11 w-11 cursor-pointer items-center justify-center rounded-lg border border-line text-muted transition-colors hover:border-teal-600 hover:text-teal-700"
-            onClick={onClose}
-            aria-label="关闭"
-          >
-            <X size={20} aria-hidden />
-          </button>
-        </div>
-        <div className="max-h-[calc(86dvh-3.5rem)] overflow-y-auto p-3">
-          <HistoryPanel
-            jobs={jobs}
-            activeJobId={activeJobId}
-            onView={onView}
-            onContinue={onContinue}
-            onDelete={onDelete}
-            deletingJobId={deletingJobId}
-            variant="drawer"
-          />
-        </div>
-      </div>
-    </div>
   );
 }
