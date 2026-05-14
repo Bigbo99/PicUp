@@ -39,6 +39,88 @@ a:focus-visible {
   outline-offset: 2px;
 }
 
+/* ===== 工作台布局系统（响应式，全端锁定一屏） ===== */
+
+/* 移动端：单列，当前 tab 占满 */
+.workbench-shell {
+  grid-template-rows: 1fr;
+}
+
+@media (min-width: 1024px) {
+  .workbench-shell {
+    grid-template-columns: minmax(320px, 1fr) minmax(0, 2fr);
+    grid-template-rows: 1fr;
+    grid-template-areas: "composer main";
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .workbench-composer {
+    grid-area: composer;
+    overflow: hidden;
+    min-height: 0;
+  }
+
+  .workbench-main {
+    grid-area: main;
+    display: grid;
+    grid-template-rows: 1fr;
+    gap: 0.75rem;
+    min-width: 0;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .workbench-preview {
+    min-width: 0;
+    min-height: 0;
+  }
+
+  .workbench-history {
+    min-width: 0;
+    min-height: 0;
+  }
+}
+
+/* 1024–1439: 两列，main 区域内部上下拆分 preview + history */
+@media (min-width: 1024px) and (max-width: 1439px) {
+  .workbench-main {
+    grid-template-rows: minmax(0, 1fr) minmax(300px, 38vh);
+  }
+
+  .workbench-history {
+    overflow-y: auto;
+  }
+}
+
+/* ≥1440: 三列，preview 和 history 升级为 shell 的直接 grid 子项 */
+@media (min-width: 1440px) {
+  .workbench-shell {
+    grid-template-columns: minmax(340px, 1fr) minmax(0, 2fr) minmax(300px, 1fr);
+    grid-template-areas: "composer preview history";
+  }
+
+  .workbench-main {
+    display: contents;
+  }
+
+  .workbench-preview {
+    grid-area: preview;
+  }
+
+  .workbench-history {
+    grid-area: history;
+    overflow-y: auto;
+  }
+}
+
+@media (min-width: 1680px) {
+  .workbench-shell {
+    grid-template-columns: minmax(360px, 1.1fr) minmax(0, 2fr) minmax(320px, 1.1fr);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
