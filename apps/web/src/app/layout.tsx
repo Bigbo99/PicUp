@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import { NotificationProvider } from '@/components/notification-provider';
 import { QueryProvider } from '@/components/query-provider';
 import './globals.css';
 
@@ -14,7 +15,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="zh-CN">
       <body>
-        <QueryProvider>{children}</QueryProvider>
+        <QueryProvider>
+          <NotificationProvider>{children}</NotificationProvider>
+        </QueryProvider>
       </body>
     </html>
   );

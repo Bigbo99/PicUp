@@ -5,8 +5,6 @@ import Link from 'next/link';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   CheckCircle2,
-  ChevronLeft,
-  ChevronRight,
   Download,
   Eye,
   FileImage,
@@ -31,6 +29,7 @@ import {
   type UploadedFileRecord
 } from '@picup/shared';
 import { createImageJob, deleteImageJob, getImageJob, getMe, getModels, listImageJobs, logout, uploadImage } from '@/lib/api';
+import { useNotifications } from '@/components/notification-provider';
 
 const FALLBACK_REFERENCE_LIMIT = 14;
 
@@ -47,7 +46,7 @@ type LightboxState = {
   index: number;
 };
 
-type MobileTab = 'create' | 'preview' | 'history' | 'account';
+type MobileTab = 'create' | 'detail' | 'history' | 'account';
 
 function normalizeResolution(value: unknown): ImageQuality {
   if (value === '512' || value === '1K' || value === '2K' || value === '4K') return value;
@@ -57,8 +56,46 @@ function normalizeResolution(value: unknown): ImageQuality {
   return '1K';
 }
 
+function statusLabel(status: ImageJobRecord['status']) {
+  const map: Record<ImageJobRecord['status'], string> = {
+    queued: '排队中',
+    running: '生成中',
+    retrying: '重试中',
+    succeeded: '成功',
+    failed: '失败',
+    refunded: '已返还'
+  };
+  return map[status];
+}
+
+function formatJobMeta(job: ImageJobRecord) {
+  return `${job.selectedProvider} / ${statusLabel(job.status)} / ${normalizeResolution(job.quality)}/${job.aspectRatio}`;
+}
+
+function filePreviewImages(files: UploadedFileRecord[]) {
+  return files.map((file, index) => ({
+    url: file.url,
+    label: `参考图 ${index + 1}`,
+    alt: `参考图 ${index + 1} 预览`,
+    meta: file.width && file.height ? `${file.width} x ${file.height}` : `${Math.round(file.size / 1024)} KB`
+  }));
+}
+
+function jobLightboxImages(job: ImageJobRecord) {
+  return [
+    ...job.outputImages.map((image, index) => ({
+      url: image.url,
+      label: `结果图 ${index + 1}`,
+      alt: `结果图 ${index + 1} 预览`,
+      meta: image.width && image.height ? `${image.width} x ${image.height}` : undefined
+    })),
+    ...filePreviewImages(job.inputFiles)
+  ];
+}
+
 export default function HomePage() {
   const queryClient = useQueryClient();
+  const notifications = useNotifications();
   const inputRef = useRef<HTMLInputElement>(null);
   const [uploaded, setUploaded] = useState<UploadedFileRecord[]>([]);
   const [template, setTemplate] = useState<ImageTemplate>('replace_text');
@@ -70,6 +107,8 @@ export default function HomePage() {
   const [jobId, setJobId] = useState<string | null>(null);
   const [viewingJob, setViewingJob] = useState<ImageJobRecord | null>(null);
   const [mobileTab, setMobileTab] = useState<MobileTab>('create');
+  const [detailReferenceExpanded, setDetailReferenceExpanded] = useState(true);
+  const [lightbox, setLightbox] = useState<LightboxState | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const meQuery = useQuery({ queryKey: ['me'], queryFn: getMe });
@@ -125,8 +164,13 @@ export default function HomePage() {
     onSuccess: (files) => {
       setUploaded((items) => [...items, ...files]);
       setError(null);
+      notifications.success('上传完成', `已添加 ${files.length} 张参考图`);
     },
-    onError: (err) => setError(err instanceof Error ? err.message : '上传失败')
+    onError: (err) => {
+      const message = err instanceof Error ? err.message : '上传失败';
+      setError(message);
+      notifications.error('上传失败', message);
+    }
   });
 
   const createJobMutation = useMutation({
@@ -134,12 +178,17 @@ export default function HomePage() {
     onSuccess: (result) => {
       setJobId(result.jobId);
       setViewingJob(null);
-      setMobileTab('preview');
+      setMobileTab('detail');
       setError(null);
       historyQuery.refetch();
       meQuery.refetch();
+      notifications.success('任务已创建', '完成后会自动显示结果');
     },
-    onError: (err) => setError(err instanceof Error ? err.message : '任务创建失败')
+    onError: (err) => {
+      const message = err instanceof Error ? err.message : '任务创建失败';
+      setError(message);
+      notifications.error('任务创建失败', message);
+    }
   });
 
   const logoutMutation = useMutation({
@@ -147,6 +196,10 @@ export default function HomePage() {
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ['me'] });
       await queryClient.invalidateQueries({ queryKey: ['jobs'] });
+      notifications.success('已退出登录');
+    },
+    onError: (err) => {
+      notifications.error('退出失败', err instanceof Error ? err.message : '请稍后再试');
     }
   });
 
@@ -157,8 +210,13 @@ export default function HomePage() {
       if (jobId === result.jobId) setJobId(null);
       await queryClient.invalidateQueries({ queryKey: ['jobs'] });
       await queryClient.invalidateQueries({ queryKey: ['job', result.jobId] });
+      notifications.success('历史任务已删除');
     },
-    onError: (err) => setError(err instanceof Error ? err.message : '删除任务失败')
+    onError: (err) => {
+      const message = err instanceof Error ? err.message : '删除任务失败';
+      setError(message);
+      notifications.error('删除失败', message);
+    }
   });
 
   const currentJob = jobQuery.data;
@@ -177,13 +235,17 @@ export default function HomePage() {
 
     const availableSlots = maxReferenceImages - uploaded.length;
     if (availableSlots <= 0) {
-      setError(`当前模型最多支持 ${maxReferenceImages} 张参考图`);
+      const message = `当前模型最多支持 ${maxReferenceImages} 张参考图`;
+      setError(message);
+      notifications.warning('参考图已达上限', message);
       return;
     }
 
     const acceptedFiles = nextFiles.slice(0, availableSlots);
     if (acceptedFiles.length < nextFiles.length) {
-      setError(`已按当前模型上限保留前 ${acceptedFiles.length} 张图片`);
+      const message = `已按当前模型上限保留前 ${acceptedFiles.length} 张图片`;
+      setError(message);
+      notifications.warning('部分图片未加入', message);
     }
     uploadMutation.mutate(acceptedFiles);
   }
@@ -202,15 +264,7 @@ export default function HomePage() {
     });
   }
 
-  function viewHistoryJob(job: ImageJobRecord) {
-    setJobId(job.id);
-    setViewingJob(job);
-    setMobileTab('preview');
-  }
-
-  function continueFrom(job: ImageJobRecord) {
-    setJobId(job.id);
-    setViewingJob(null);
+  function loadJobIntoEditor(job: ImageJobRecord) {
     setTemplate(job.template);
     setPrompt(job.prompt);
     setProvider(job.provider);
@@ -218,6 +272,20 @@ export default function HomePage() {
     setAspectRatio(job.aspectRatio);
     setQuality(normalizeResolution(job.quality));
     setUploaded(job.inputFiles);
+  }
+
+  function viewHistoryJob(job: ImageJobRecord) {
+    setJobId(job.id);
+    setViewingJob(job);
+    setDetailReferenceExpanded(true);
+    setMobileTab('detail');
+  }
+
+  function editHistoryJob(job: ImageJobRecord) {
+    setJobId(job.id);
+    setViewingJob(null);
+    loadJobIntoEditor(job);
+    setDetailReferenceExpanded(false);
     setMobileTab('create');
   }
 
@@ -226,8 +294,14 @@ export default function HomePage() {
     if (currentJob) setJobId(currentJob.id);
   }
 
-  function deleteHistoryJob(job: ImageJobRecord) {
-    const ok = window.confirm('删除后将从历史任务中移除，是否继续？');
+  async function deleteHistoryJob(job: ImageJobRecord) {
+    const ok = await notifications.confirm({
+      title: '删除历史任务？',
+      message: '删除后将从历史任务中移除，当前生成结果不会再出现在列表里。',
+      confirmText: '删除',
+      cancelText: '保留',
+      tone: 'danger'
+    });
     if (!ok) return;
     deleteJobMutation.mutate(job.id);
   }
@@ -273,7 +347,7 @@ export default function HomePage() {
           <div className="mb-4">
             <h1 className="text-2xl font-bold leading-tight">上传参考图，描述你想要的结果</h1>
             <p className="mt-2 text-sm leading-6 text-muted">
-              当前选项会按模型能力自动收窄，包括比例、分辨率和参考图数量。
+              上传图片后，选择处理方式并描述你想要的效果。
             </p>
           </div>
 
@@ -304,25 +378,12 @@ export default function HomePage() {
           </button>
 
           {uploaded.length > 0 && (
-            <div className="mt-3 grid gap-2">
-              {uploaded.map((file, index) => (
-                <div key={file.id} className="flex items-center gap-3 rounded-lg border border-line bg-white p-3">
-                  <FileImage className="shrink-0 text-teal-700" size={22} aria-hidden />
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-semibold">参考图 {index + 1}</p>
-                    <p className="text-xs text-muted">{Math.round(file.size / 1024)} KB</p>
-                  </div>
-                  <button
-                    className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-line text-muted transition-colors hover:border-red-300 hover:text-red-600"
-                    onClick={() => setUploaded((items) => items.filter((item) => item.id !== file.id))}
-                    aria-label={`删除参考图 ${index + 1}`}
-                    title="删除"
-                  >
-                    <Trash2 size={16} aria-hidden />
-                  </button>
-                </div>
-              ))}
-            </div>
+            <UploadedReferenceList
+              files={uploaded}
+              maxCount={maxReferenceImages}
+              onRemove={(id) => setUploaded((items) => items.filter((item) => item.id !== id))}
+              onPreview={(images, index) => setLightbox({ title: '参考图预览', images, index })}
+            />
           )}
 
           <div className="mt-5">
@@ -427,14 +488,17 @@ export default function HomePage() {
           </button>
         </section>
 
-        <section className={`${mobileTab === 'preview' ? 'block' : 'hidden'} min-w-0 lg:block`}>
+        <section className={`${mobileTab === 'detail' ? 'block' : 'hidden'} min-w-0 lg:block`}>
           <ResultPanel
-            uploaded={isViewingHistory ? previewJob?.inputFiles ?? [] : uploaded}
             job={previewJob}
             loading={Boolean(jobId && jobQuery.isFetching && !previewJob)}
             isViewingHistory={isViewingHistory}
-            onContinueEdit={previewJob ? () => continueFrom(previewJob) : undefined}
+            onPreview={(title, images, index) => setLightbox({ title, images, index })}
+            onEdit={() => {
+              if (previewJob) editHistoryJob(previewJob);
+            }}
             onReturnLatest={isViewingHistory ? returnToLatest : undefined}
+            showReferenceGrid={detailReferenceExpanded}
           />
         </section>
 
@@ -443,13 +507,24 @@ export default function HomePage() {
             jobs={historyQuery.data ?? []}
             activeJobId={previewJob?.id ?? null}
             onView={viewHistoryJob}
-            onContinue={continueFrom}
+            onEdit={editHistoryJob}
             onDelete={deleteHistoryJob}
             deletingJobId={deleteJobMutation.variables ?? null}
             variant="sidebar"
+            onPreview={(images, index) => setLightbox({ title: '历史图片预览', images, index })}
           />
         </section>
       </div>
+
+      {lightbox && (
+        <ImageLightbox
+          title={lightbox.title}
+          images={lightbox.images}
+          index={lightbox.index}
+          onIndexChange={(index) => setLightbox((current) => current ? { ...current, index } : current)}
+          onClose={() => setLightbox(null)}
+        />
+      )}
 
       <MobileAccountPanel
         active={mobileTab === 'account'}
@@ -538,10 +613,6 @@ function MobileBottomNav({
           <Wand2 size={21} aria-hidden />
           创作
         </button>
-        <button type="button" className={itemClass(activeTab === 'preview')} onClick={() => onChange('preview')}>
-          <Eye size={21} aria-hidden />
-          预览
-        </button>
         <button type="button" className={itemClass(activeTab === 'history')} onClick={() => onChange('history')}>
           <span className="relative">
             <History size={21} aria-hidden />
@@ -569,53 +640,104 @@ function MobileBottomNav({
   );
 }
 
+function UploadedReferenceList({
+  files,
+  maxCount,
+  onRemove,
+  onPreview
+}: {
+  files: UploadedFileRecord[];
+  maxCount: number;
+  onRemove: (id: string) => void;
+  onPreview: (images: PreviewImage[], index: number) => void;
+}) {
+  const images = filePreviewImages(files);
+
+  return (
+    <div className="mt-3 overflow-hidden rounded-lg border border-line bg-white">
+      <div className="flex items-center justify-between border-b border-line px-3 py-2">
+        <div className="flex min-w-0 items-center gap-2">
+          <FileImage className="shrink-0 text-teal-700" size={18} aria-hidden />
+          <span className="truncate text-sm font-semibold">参考图</span>
+        </div>
+        <span className="text-xs font-medium text-muted">{files.length} / {maxCount} 张</span>
+      </div>
+      <div className="grid max-h-[360px] grid-cols-3 gap-2 overflow-y-auto bg-slate-50 p-2 sm:grid-cols-4 lg:grid-cols-3">
+        {files.map((file, index) => (
+          <div key={file.id} className="group relative overflow-hidden rounded-lg border border-line bg-white transition-colors hover:border-teal-500">
+            <button
+              type="button"
+              className="block aspect-square w-full cursor-pointer bg-slate-100 p-1.5"
+              onClick={() => onPreview(images, index)}
+              aria-label={`打开参考图 ${index + 1}`}
+            >
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={file.url} alt={`参考图 ${index + 1} 预览`} className="h-full w-full rounded-md object-contain" />
+            </button>
+            <button
+              type="button"
+              className="absolute right-1.5 top-1.5 inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded-lg border border-white/80 bg-white/95 text-slate-600 shadow-sm transition-colors hover:border-red-300 hover:text-red-600 focus-visible:border-red-300 focus-visible:text-red-600"
+              onClick={() => onRemove(file.id)}
+              aria-label={`删除参考图 ${index + 1}`}
+              title="删除"
+            >
+              <Trash2 size={16} aria-hidden />
+            </button>
+            <button
+              type="button"
+              className="block w-full cursor-pointer border-t border-line px-2 py-1.5 text-left"
+              onClick={() => onPreview(images, index)}
+            >
+              <span className="block truncate text-xs font-semibold">参考图 {index + 1}</span>
+              <span className="block truncate text-[11px] text-muted">
+                {file.width && file.height ? `${file.width} x ${file.height}` : `${Math.round(file.size / 1024)} KB`}
+              </span>
+            </button>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function ResultPanel({
-  uploaded,
   job,
   loading,
   isViewingHistory,
-  onContinueEdit,
-  onReturnLatest
+  onReturnLatest,
+  onPreview,
+  onEdit,
+  showReferenceGrid = false
 }: {
-  uploaded: UploadedFileRecord[];
   job: ImageJobRecord | null;
   loading: boolean;
   isViewingHistory: boolean;
-  onContinueEdit?: () => void;
   onReturnLatest?: () => void;
+  onPreview: (title: string, images: PreviewImage[], index: number) => void;
+  onEdit?: () => void;
+  showReferenceGrid?: boolean;
 }) {
   const output = job?.outputImages[0];
   const isWorking = job?.status === 'queued' || job?.status === 'running' || job?.status === 'retrying' || loading;
-  const [lightbox, setLightbox] = useState<LightboxState | null>(null);
-  const referenceImages = uploaded.map((file, index) => ({
-    url: file.url,
-    label: `参考图 ${index + 1}`,
-    alt: `参考图 ${index + 1} 预览`,
-    meta: file.width && file.height ? `${file.width} x ${file.height}` : `${Math.round(file.size / 1024)} KB`
-  }));
   const resultImages = (job?.outputImages ?? []).map((image, index) => ({
     url: image.url,
     label: `结果图 ${index + 1}`,
     alt: `结果图 ${index + 1} 预览`,
     meta: image.width && image.height ? `${image.width} x ${image.height}` : undefined
   }));
+  const referenceImages = filePreviewImages(job?.inputFiles ?? []);
 
   return (
     <section className="rounded-lg border border-line bg-white p-3 shadow-panel sm:p-4">
       <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <div className="flex flex-wrap items-center gap-2">
-            <h2 className="text-xl font-bold">{isViewingHistory ? '正在查看历史任务' : '当前任务预览'}</h2>
-            {isViewingHistory && (
-              <span className="rounded-full bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-700">
-                未覆盖当前编辑
-              </span>
-            )}
+            <h2 className="text-xl font-bold">{isViewingHistory ? '任务详情' : '当前结果'}</h2>
           </div>
           <p className="mt-1 text-sm text-muted">
             {isViewingHistory
-              ? '历史查看只切换预览区，点击继续编辑才会载入左侧参数。'
-              : '参考图和模型结果会完整显示；点击图片可进入全屏预览。'}
+              ? '查看结果与参考图，或继续基于这次任务编辑。'
+              : '结果会显示在这里，点击图片可查看大图。'}
           </p>
         </div>
         {job && <StatusBadge status={job.status} />}
@@ -624,27 +746,45 @@ function ResultPanel({
       {isViewingHistory && job && (
         <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-3">
           <p className="line-clamp-2 text-sm font-semibold text-amber-900">{job.prompt}</p>
-          <p className="mt-1 text-xs text-amber-700">
-            {new Date(job.createdAt).toLocaleString()} · {job.selectedProvider} · {normalizeResolution(job.quality)}
-          </p>
+          <p className="mt-1 text-xs text-amber-700">{new Date(job.createdAt).toLocaleString()} · {formatJobMeta(job)}</p>
         </div>
       )}
 
-      <div className="grid gap-3 sm:gap-4 lg:grid-cols-2">
-        <PreviewBox
-          title="参考图"
-          images={referenceImages}
-          emptyText="上传参考图后显示预览；不上传也可以直接文生图。"
-          onOpen={(index) => setLightbox({ title: '参考图预览', images: referenceImages, index })}
-        />
-        <PreviewBox
-          title="结果图"
-          images={resultImages}
-          emptyText={isWorking ? '模型正在处理，请稍候。' : '生成完成后结果会显示在这里。'}
-          working={isWorking}
-          onOpen={(index) => setLightbox({ title: '结果图预览', images: resultImages, index })}
-        />
+      <div className="overflow-hidden rounded-lg border border-line bg-slate-50">
+        <div className="min-h-[420px]">
+          <ResultStage
+            images={resultImages}
+            emptyText={isWorking ? '模型正在处理，请稍候。' : '生成完成后结果会显示在这里。'}
+            working={isWorking}
+            onOpen={(index) => onPreview('结果图预览', resultImages, index)}
+          />
+        </div>
       </div>
+
+      {showReferenceGrid && referenceImages.length > 0 && (
+        <section className="mt-4 overflow-hidden rounded-lg border border-line bg-white">
+          <div className="flex items-center justify-between border-b border-line px-4 py-3 text-sm font-semibold">
+            <span>参考图区</span>
+            <span className="text-xs font-medium text-muted">{referenceImages.length} 张</span>
+          </div>
+          <div className="grid grid-cols-3 gap-2 bg-slate-50 p-3 sm:grid-cols-4 md:grid-cols-5">
+            {referenceImages.map((image, index) => (
+              <button
+                key={`${image.url}-${index}`}
+                type="button"
+                className="cursor-pointer overflow-hidden rounded-lg border border-line bg-white transition-colors hover:border-teal-600"
+                onClick={() => onPreview('参考图预览', referenceImages, index)}
+                aria-label={`打开${image.label}`}
+              >
+                <span className="flex aspect-square items-center justify-center bg-slate-100 p-1.5">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={image.url} alt={image.alt} className="h-full w-full rounded-md object-contain" />
+                </span>
+              </button>
+            ))}
+          </div>
+        </section>
+      )}
 
       {job?.status === 'failed' && (
         <div className="mt-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
@@ -663,13 +803,14 @@ function ResultPanel({
             <Download size={18} aria-hidden />
             下载结果
           </a>
-          <button
-            className="inline-flex min-h-11 cursor-pointer items-center justify-center gap-2 rounded-lg border border-line bg-white px-4 font-semibold text-ink transition-colors hover:border-teal-600 hover:text-teal-700"
-            onClick={onContinueEdit}
-          >
-            <RefreshCw size={18} aria-hidden />
-            继续编辑
-          </button>
+          {onEdit && (
+            <button
+              className="inline-flex min-h-11 cursor-pointer items-center justify-center gap-2 rounded-lg border border-line bg-white px-4 font-semibold text-ink transition-colors hover:border-teal-600 hover:text-teal-700"
+              onClick={onEdit}
+            >
+              编辑
+            </button>
+          )}
           {onReturnLatest && (
             <button
               className="inline-flex min-h-11 cursor-pointer items-center justify-center rounded-lg border border-line bg-white px-4 font-semibold text-ink transition-colors hover:border-teal-600 hover:text-teal-700"
@@ -680,80 +821,63 @@ function ResultPanel({
           )}
         </div>
       )}
-
-      {lightbox && (
-        <ImageLightbox
-          title={lightbox.title}
-          images={lightbox.images}
-          index={lightbox.index}
-          onIndexChange={(index) => setLightbox((current) => current ? { ...current, index } : current)}
-          onClose={() => setLightbox(null)}
-        />
-      )}
     </section>
   );
 }
 
-function PreviewBox({
-  title,
+function ResultStage({
   images,
   emptyText,
   working,
   onOpen
 }: {
-  title: string;
   images: PreviewImage[];
   emptyText: string;
   working?: boolean;
   onOpen: (index: number) => void;
 }) {
+  const primary = images[0];
+
   return (
-    <div className="overflow-hidden rounded-lg border border-line bg-slate-50">
+    <section className="min-w-0 bg-slate-50">
       <div className="flex items-center justify-between border-b border-line bg-white px-4 py-3 text-sm font-semibold">
-        <span>{title}</span>
+        <span>生成图</span>
         {images.length > 0 && <span className="text-xs font-medium text-muted">{images.length} 张</span>}
       </div>
-      <div className="min-h-[220px] p-2 sm:min-h-[280px] sm:p-3">
-        {images.length > 0 ? (
-          <div className={`grid gap-2 sm:gap-3 ${images.length === 1 ? 'grid-cols-1' : 'grid-cols-1 min-[420px]:grid-cols-2 sm:grid-cols-3 lg:grid-cols-2 xl:grid-cols-3'}`}>
-            {images.map((image, index) => (
-              <button
-                key={`${image.url}-${index}`}
-                type="button"
-                className="group cursor-pointer overflow-hidden rounded-lg border border-line bg-white text-left shadow-sm transition-colors hover:border-teal-600 focus-visible:border-teal-600"
-                onClick={() => onOpen(index)}
-                aria-label={`打开${image.label}`}
-              >
-                <span
-                  className={`flex items-center justify-center bg-slate-100 p-2 ${
-                    images.length === 1
-                      ? 'h-[clamp(260px,58vh,560px)]'
-                      : 'aspect-[4/5] min-[420px]:aspect-square'
-                  }`}
-                >
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={image.url} alt={image.alt} className="max-h-full max-w-full rounded-md object-contain" />
-                </span>
-                <span className="flex min-h-11 items-center justify-between gap-2 border-t border-line px-3 py-2">
-                  <span className="min-w-0">
-                    <span className="block truncate text-sm font-semibold text-ink">{image.label}</span>
-                    {image.meta && <span className="block truncate text-xs text-muted">{image.meta}</span>}
-                  </span>
-                  <Eye className="shrink-0 text-muted transition-colors group-hover:text-teal-700" size={17} aria-hidden />
-                </span>
-              </button>
-            ))}
-          </div>
+      <div className="flex min-h-[360px] items-center justify-center p-3 sm:min-h-[520px] lg:min-h-[620px]">
+        {primary ? (
+          <button
+            type="button"
+            className="group flex h-full w-full cursor-pointer items-center justify-center rounded-lg bg-slate-100 p-3 transition-colors hover:bg-slate-200"
+            onClick={() => onOpen(0)}
+            aria-label={`打开${primary.label}`}
+          >
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={primary.url} alt={primary.alt} className="max-h-[560px] max-w-full rounded-lg object-contain shadow-sm" />
+          </button>
         ) : (
-          <div className="flex min-h-[216px] items-center justify-center sm:min-h-[256px]">
-            <div className="max-w-sm text-center text-sm leading-6 text-muted">
-              {working && <Loader2 className="mx-auto mb-3 animate-spin text-teal-700" size={28} aria-hidden />}
-              {emptyText}
-            </div>
+          <div className="max-w-sm text-center text-sm leading-6 text-muted">
+            {working && <Loader2 className="mx-auto mb-3 animate-spin text-teal-700" size={28} aria-hidden />}
+            {emptyText}
           </div>
         )}
       </div>
-    </div>
+      {images.length > 1 && (
+        <div className="flex gap-2 overflow-x-auto border-t border-line bg-white p-3">
+          {images.map((image, index) => (
+            <button
+              key={`${image.url}-${index}`}
+              className="h-16 w-16 shrink-0 cursor-pointer overflow-hidden rounded-lg border border-line bg-slate-100 transition-colors hover:border-teal-600"
+              onClick={() => onOpen(index)}
+              aria-label={`打开${image.label}`}
+            >
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={image.url} alt={image.alt} className="h-full w-full object-contain" />
+            </button>
+          ))}
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -772,6 +896,30 @@ function ImageLightbox({
 }) {
   const image = images[index];
   const hasMultiple = images.length > 1;
+  const [zoom, setZoom] = useState(1);
+  const [pan, setPan] = useState({ x: 0, y: 0 });
+  const [isPanning, setIsPanning] = useState(false);
+  const draggedRef = useRef(false);
+  const pointerRef = useRef<{
+    id: number;
+    startX: number;
+    startY: number;
+    lastX: number;
+    lastY: number;
+    moved: boolean;
+  } | null>(null);
+  const clampedZoom = Math.min(Math.max(zoom, 1), 4);
+  const canPan = clampedZoom > 1.02;
+
+  function showPrevious() {
+    if (!hasMultiple) return;
+    onIndexChange((index - 1 + images.length) % images.length);
+  }
+
+  function showNext() {
+    if (!hasMultiple) return;
+    onIndexChange((index + 1) % images.length);
+  }
 
   useEffect(() => {
     const originalOverflow = document.body.style.overflow;
@@ -779,12 +927,8 @@ function ImageLightbox({
 
     function handleKeyDown(event: KeyboardEvent) {
       if (event.key === 'Escape') onClose();
-      if (event.key === 'ArrowLeft' && hasMultiple) {
-        onIndexChange((index - 1 + images.length) % images.length);
-      }
-      if (event.key === 'ArrowRight' && hasMultiple) {
-        onIndexChange((index + 1) % images.length);
-      }
+      if (event.key === 'ArrowLeft') showPrevious();
+      if (event.key === 'ArrowRight') showNext();
     }
 
     window.addEventListener('keydown', handleKeyDown);
@@ -794,79 +938,146 @@ function ImageLightbox({
     };
   }, [hasMultiple, images.length, index, onClose, onIndexChange]);
 
+  useEffect(() => {
+    setZoom(1);
+    setPan({ x: 0, y: 0 });
+  }, [index]);
+
+  useEffect(() => {
+    if (!canPan) {
+      setPan({ x: 0, y: 0 });
+      setIsPanning(false);
+    }
+  }, [canPan]);
+
   if (!image) return null;
 
   return (
     <div
-      className="fixed inset-0 z-50 h-[100dvh] w-screen overflow-hidden bg-slate-950/90 p-2 text-white sm:p-5"
+      className="fixed inset-0 z-50 h-[100dvh] w-screen overflow-hidden bg-slate-950/90 text-white"
       role="dialog"
       aria-modal="true"
       aria-label={title}
-      onClick={onClose}
+      onClick={() => {
+        if (draggedRef.current) {
+          draggedRef.current = false;
+          return;
+        }
+        onClose();
+      }}
     >
       <div
-        className="mx-auto grid h-full min-h-0 w-full max-w-7xl grid-rows-[auto_minmax(0,1fr)_auto] gap-2 sm:gap-3"
-        onClick={(event) => event.stopPropagation()}
+        className="relative h-full min-h-0 w-full"
       >
-        <div className="flex min-h-11 items-center justify-between gap-3 rounded-lg bg-slate-950/80 px-2 py-2 sm:bg-transparent sm:px-0 sm:py-0">
-          <div className="min-w-0">
-            <p className="truncate text-base font-semibold">{title}</p>
-            <p className="text-sm text-slate-300">{index + 1} / {images.length} · {image.label}</p>
-          </div>
-          <button
-            type="button"
-            className="inline-flex h-11 w-11 shrink-0 cursor-pointer items-center justify-center rounded-lg border border-white/20 bg-white/10 transition-colors hover:bg-white/20"
-            onClick={onClose}
-            aria-label="关闭预览"
-            title="关闭"
-          >
-            <X size={22} aria-hidden />
-          </button>
-        </div>
+        <button
+          type="button"
+          className="absolute right-3 top-3 z-20 inline-flex h-11 w-11 shrink-0 cursor-pointer items-center justify-center rounded-lg border border-white/20 bg-slate-950/70 transition-colors hover:bg-white/20 sm:right-5 sm:top-5"
+          onClick={(event) => {
+            event.stopPropagation();
+            onClose();
+          }}
+          aria-label="关闭预览"
+          title="关闭"
+        >
+          <X size={22} aria-hidden />
+        </button>
 
-        <div className="relative flex min-h-0 items-center justify-center overflow-hidden rounded-lg bg-black/25">
-          {hasMultiple && (
-            <button
-              type="button"
-              className="absolute left-2 top-1/2 z-10 inline-flex h-11 w-11 -translate-y-1/2 cursor-pointer items-center justify-center rounded-lg border border-white/20 bg-slate-950/70 transition-colors hover:bg-white/20 sm:left-3"
-              onClick={() => onIndexChange((index - 1 + images.length) % images.length)}
-              aria-label="查看上一张"
-              title="上一张"
-            >
-              <ChevronLeft size={26} aria-hidden />
-            </button>
-          )}
+        <div
+          className="flex h-full min-h-0 items-center justify-center overflow-hidden px-2 pb-24 pt-2 sm:px-6 sm:pb-28 sm:pt-6"
+          onWheel={(event) => {
+            event.stopPropagation();
+            setZoom((value) => value + (event.deltaY > 0 ? -0.15 : 0.15));
+          }}
+          onPointerDown={(event) => {
+            event.stopPropagation();
+            pointerRef.current = {
+              id: event.pointerId,
+              startX: event.clientX,
+              startY: event.clientY,
+              lastX: event.clientX,
+              lastY: event.clientY,
+              moved: false
+            };
+            event.currentTarget.setPointerCapture(event.pointerId);
+            if (canPan) setIsPanning(true);
+          }}
+          onPointerMove={(event) => {
+            const pointer = pointerRef.current;
+            if (!pointer || pointer.id !== event.pointerId) return;
+            event.stopPropagation();
+            const dx = event.clientX - pointer.lastX;
+            const dy = event.clientY - pointer.lastY;
+            const totalDx = event.clientX - pointer.startX;
+            const totalDy = event.clientY - pointer.startY;
+            if (Math.abs(totalDx) > 3 || Math.abs(totalDy) > 3) pointer.moved = true;
+            if (pointer.moved) draggedRef.current = true;
+            pointer.lastX = event.clientX;
+            pointer.lastY = event.clientY;
+            if (canPan) {
+              setPan((value) => ({ x: value.x + dx, y: value.y + dy }));
+            }
+          }}
+          onPointerUp={(event) => {
+            const pointer = pointerRef.current;
+            if (!pointer || pointer.id !== event.pointerId) return;
+            event.stopPropagation();
+            pointerRef.current = null;
+            setIsPanning(false);
+            if (pointer.moved) draggedRef.current = true;
+            try {
+              event.currentTarget.releasePointerCapture(event.pointerId);
+            } catch {
+              // Pointer capture may already be released by the browser.
+            }
+            const dx = event.clientX - pointer.startX;
+            const dy = event.clientY - pointer.startY;
+            if (!canPan && Math.abs(dx) >= 48 && Math.abs(dx) >= Math.abs(dy) * 1.25) {
+              if (dx > 0) showPrevious();
+              else showNext();
+            }
+          }}
+          onPointerCancel={() => {
+            pointerRef.current = null;
+            setIsPanning(false);
+          }}
+        >
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={image.url} alt={image.alt} className="h-full w-full object-contain shadow-2xl" />
-          {hasMultiple && (
-            <button
-              type="button"
-              className="absolute right-2 top-1/2 z-10 inline-flex h-11 w-11 -translate-y-1/2 cursor-pointer items-center justify-center rounded-lg border border-white/20 bg-slate-950/70 transition-colors hover:bg-white/20 sm:right-3"
-              onClick={() => onIndexChange((index + 1) % images.length)}
-              aria-label="查看下一张"
-              title="下一张"
-            >
-              <ChevronRight size={26} aria-hidden />
-            </button>
-          )}
+          <img
+            src={image.url}
+            alt={image.alt}
+            className={`max-h-full max-w-full select-none object-contain shadow-2xl ${isPanning ? 'cursor-grabbing' : canPan ? 'cursor-grab' : 'cursor-zoom-in'} ${isPanning ? '' : 'transition-transform duration-150'}`}
+            style={{ transform: `translate3d(${pan.x}px, ${pan.y}px, 0) scale(${clampedZoom})`, touchAction: 'none' }}
+            draggable={false}
+            onClick={(event) => event.stopPropagation()}
+            onDoubleClick={(event) => {
+              event.stopPropagation();
+              setZoom((value) => value > 1.02 ? 1 : 2);
+              setPan({ x: 0, y: 0 });
+            }}
+          />
         </div>
 
         {hasMultiple && (
-          <div className="flex max-w-full gap-2 overflow-x-auto rounded-lg bg-slate-950/60 p-2 sm:bg-transparent sm:p-0">
-            {images.map((item, itemIndex) => (
-              <button
-                key={`${item.url}-${itemIndex}`}
-                type="button"
-                className={`h-14 w-14 shrink-0 cursor-pointer overflow-hidden rounded-lg border transition-colors sm:h-16 sm:w-16 ${
-                  itemIndex === index ? 'border-teal-300' : 'border-white/20 hover:border-white/60'
-                }`}
-                onClick={() => onIndexChange(itemIndex)}
-                aria-label={`查看${item.label}`}
-              >
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={item.url} alt={item.alt} className="h-full w-full object-cover" />
-              </button>
-            ))}
+          <div
+            className="absolute inset-x-0 bottom-3 z-20 flex justify-center px-3 sm:bottom-5"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="flex max-w-full gap-2 overflow-x-auto rounded-lg bg-slate-950/70 p-2 shadow-2xl">
+              {images.map((item, itemIndex) => (
+                <button
+                  key={`${item.url}-${itemIndex}`}
+                  type="button"
+                  className={`h-14 w-14 shrink-0 cursor-pointer overflow-hidden rounded-lg border transition-colors sm:h-16 sm:w-16 ${
+                    itemIndex === index ? 'border-teal-300' : 'border-white/20 hover:border-white/60'
+                  }`}
+                  onClick={() => onIndexChange(itemIndex)}
+                  aria-label={`查看${item.label}`}
+                >
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={item.url} alt={item.alt} className="h-full w-full object-cover" />
+                </button>
+              ))}
+            </div>
           </div>
         )}
       </div>
@@ -875,19 +1086,11 @@ function ImageLightbox({
 }
 
 function StatusBadge({ status }: { status: ImageJobRecord['status'] }) {
-  const map = {
-    queued: '排队中',
-    running: '生成中',
-    retrying: '重试中',
-    succeeded: '已完成',
-    failed: '失败',
-    refunded: '已返还'
-  };
   const done = status === 'succeeded';
   return (
     <span className={`inline-flex min-h-9 items-center gap-2 rounded-full px-3 text-sm font-semibold ${done ? 'bg-teal-50 text-teal-700' : 'bg-slate-100 text-muted'}`}>
       {done ? <CheckCircle2 size={16} aria-hidden /> : <Loader2 size={16} className={status === 'failed' ? '' : 'animate-spin'} aria-hidden />}
-      {map[status]}
+      {statusLabel(status)}
     </span>
   );
 }
@@ -896,18 +1099,20 @@ function HistoryPanel({
   jobs,
   activeJobId,
   onView,
-  onContinue,
+  onEdit,
   onDelete,
   deletingJobId,
-  variant
+  variant,
+  onPreview
 }: {
   jobs: ImageJobRecord[];
   activeJobId: string | null;
   onView: (job: ImageJobRecord) => void;
-  onContinue: (job: ImageJobRecord) => void;
+  onEdit: (job: ImageJobRecord) => void;
   onDelete: (job: ImageJobRecord) => void;
   deletingJobId: string | null;
   variant: 'sidebar';
+  onPreview: (images: PreviewImage[], index: number) => void;
 }) {
   return (
     <section
@@ -919,7 +1124,7 @@ function HistoryPanel({
       <div className="mb-4 flex items-center justify-between gap-3">
         <div>
           <h2 className="text-xl font-bold">历史任务</h2>
-          <p className="mt-1 text-xs text-muted">点击查看，不覆盖编辑</p>
+          <p className="mt-1 text-xs text-muted">查看结果，或继续编辑历史任务</p>
         </div>
         <span className="text-sm text-muted">{jobs.length} 条</span>
       </div>
@@ -930,61 +1135,103 @@ function HistoryPanel({
       ) : (
         <div className={`${variant === 'sidebar' ? 'max-h-[calc(100vh-11rem)] overflow-y-auto pr-1' : ''} grid gap-3`}>
           {jobs.map((job) => (
-            <article
+            <HistoryCard
               key={job.id}
-              className={`rounded-lg border bg-white p-3 transition-colors ${
-                activeJobId === job.id ? 'border-teal-600 ring-2 ring-teal-100' : 'border-line hover:border-teal-600'
-              }`}
-            >
-              <button
-                className="block w-full cursor-pointer text-left"
-                onClick={() => onView(job)}
-                aria-label={`查看历史任务：${job.prompt}`}
-              >
-                <div className="mb-3 aspect-[4/3] overflow-hidden rounded-md bg-slate-100">
-                {job.outputImages[0]?.url || job.inputFiles[0]?.url ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img
-                    src={job.outputImages[0]?.url ?? job.inputFiles[0]?.url}
-                    alt="历史任务缩略图"
-                    className="h-full w-full object-contain"
-                  />
-                ) : (
-                  <div className="flex h-full items-center justify-center text-sm text-muted">等待结果</div>
-                )}
-                </div>
-                <p className="line-clamp-2 text-sm font-semibold leading-5">{job.prompt}</p>
-                <p className="mt-1 text-xs text-muted">{job.selectedProvider} / {job.status} / {normalizeResolution(job.quality)}</p>
-              </button>
-              <div className="mt-3 grid grid-cols-[1fr_1fr_40px] gap-2">
-                <button
-                  className="inline-flex min-h-10 cursor-pointer items-center justify-center gap-1.5 rounded-lg border border-line bg-white px-3 text-sm font-semibold transition-colors hover:border-teal-600 hover:text-teal-700"
-                  onClick={() => onView(job)}
-                >
-                  <Eye size={15} aria-hidden />
-                  查看
-                </button>
-                <button
-                  className="inline-flex min-h-10 cursor-pointer items-center justify-center gap-1.5 rounded-lg bg-teal-600 px-3 text-sm font-semibold text-white transition-colors hover:bg-teal-700"
-                  onClick={() => onContinue(job)}
-                >
-                  <RefreshCw size={15} aria-hidden />
-                  编辑
-                </button>
-                <button
-                  className="inline-flex min-h-10 cursor-pointer items-center justify-center rounded-lg border border-red-200 bg-white text-red-600 transition-colors hover:border-red-400 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
-                  onClick={() => onDelete(job)}
-                  disabled={deletingJobId === job.id}
-                  aria-label={`删除历史任务：${job.prompt}`}
-                  title="删除"
-                >
-                  {deletingJobId === job.id ? <Loader2 className="animate-spin" size={15} aria-hidden /> : <Trash2 size={15} aria-hidden />}
-                </button>
-              </div>
-            </article>
+              job={job}
+              active={activeJobId === job.id}
+              deleting={deletingJobId === job.id}
+              onView={() => onView(job)}
+              onEdit={() => onEdit(job)}
+              onDelete={() => onDelete(job)}
+              onPreview={onPreview}
+            />
           ))}
         </div>
       )}
     </section>
+  );
+}
+
+function HistoryCard({
+  job,
+  active,
+  deleting,
+  onView,
+  onEdit,
+  onDelete,
+  onPreview
+}: {
+  job: ImageJobRecord;
+  active: boolean;
+  deleting: boolean;
+  onView: () => void;
+  onEdit: () => void;
+  onDelete: () => void;
+  onPreview: (images: PreviewImage[], index: number) => void;
+}) {
+  const images = jobLightboxImages(job);
+  const thumbnail = job.outputImages[0]?.url ?? job.inputFiles[0]?.url;
+
+  return (
+    <article
+      className={`rounded-lg border bg-white p-3 transition-colors ${
+        active ? 'border-teal-600 ring-2 ring-teal-100' : 'border-line hover:border-teal-600'
+      }`}
+    >
+      <button
+        className="mb-3 block aspect-[4/3] w-full cursor-pointer overflow-hidden rounded-md bg-slate-100 transition-colors hover:bg-slate-200"
+        onClick={() => {
+          if (images.length > 0) onPreview(images, 0);
+          else onView();
+        }}
+        aria-label={`预览历史任务图片：${job.prompt}`}
+      >
+        {thumbnail ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={thumbnail}
+            alt="历史任务缩略图"
+            className="h-full w-full object-contain"
+          />
+        ) : (
+          <div className="flex h-full items-center justify-center text-sm text-muted">等待结果</div>
+        )}
+      </button>
+
+      <button
+        className="block w-full cursor-pointer text-left"
+        onClick={onView}
+        aria-label={`查看历史任务详情：${job.prompt}`}
+      >
+        <p className="line-clamp-2 text-sm font-semibold leading-5">{job.prompt}</p>
+        <p className="mt-1 text-xs text-muted">{formatJobMeta(job)}</p>
+      </button>
+
+      <div className="mt-3 grid grid-cols-[1fr_1fr_40px] gap-2">
+        <button
+          className="inline-flex min-h-10 cursor-pointer items-center justify-center gap-1.5 rounded-lg border border-line bg-white px-3 text-sm font-semibold transition-colors hover:border-teal-600 hover:text-teal-700"
+          onClick={onView}
+        >
+          <Eye size={15} aria-hidden />
+          查看
+        </button>
+        <button
+          className="inline-flex min-h-10 cursor-pointer items-center justify-center gap-1.5 rounded-lg bg-teal-600 px-3 text-sm font-semibold text-white transition-colors hover:bg-teal-700"
+          onClick={onEdit}
+        >
+          <RefreshCw size={15} aria-hidden />
+          编辑
+        </button>
+        <button
+          className="inline-flex min-h-10 cursor-pointer items-center justify-center rounded-lg border border-red-200 bg-white text-red-600 transition-colors hover:border-red-400 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
+          onClick={onDelete}
+          disabled={deleting}
+          aria-label={`删除历史任务：${job.prompt}`}
+          title="删除"
+        >
+          {deleting ? <Loader2 className="animate-spin" size={15} aria-hidden /> : <Trash2 size={15} aria-hidden />}
+        </button>
+      </div>
+    </article>
   );
 }

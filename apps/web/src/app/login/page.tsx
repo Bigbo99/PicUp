@@ -12,12 +12,14 @@ import {
   startWechatAuth,
   verifyEmailAuth
 } from '@/lib/api';
+import { useNotifications } from '@/components/notification-provider';
 
 type AuthTab = 'email-register' | 'password-login' | 'wechat';
 
 export default function LoginPage() {
   const router = useRouter();
   const queryClient = useQueryClient();
+  const notifications = useNotifications();
   const [tab, setTab] = useState<AuthTab>('email-register');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -31,13 +33,18 @@ export default function LoginPage() {
   async function afterLogin() {
     await queryClient.invalidateQueries({ queryKey: ['me'] });
     await queryClient.invalidateQueries({ queryKey: ['jobs'] });
+    notifications.success('登录成功', '正在返回工作台');
     router.push('/');
   }
 
   const passwordLoginMutation = useMutation({
     mutationFn: () => login({ email, password }),
     onSuccess: afterLogin,
-    onError: (err) => setError(err instanceof Error ? err.message : '登录失败，请稍后再试')
+    onError: (err) => {
+      const message = err instanceof Error ? err.message : '登录失败，请稍后再试';
+      setError(message);
+      notifications.error('登录失败', message);
+    }
   });
 
   const emailStartMutation = useMutation({
@@ -49,14 +56,23 @@ export default function LoginPage() {
       setNotice(result.devCode
         ? `开发环境验证码：${result.devCode}`
         : `验证码已发送到 ${result.email}`);
+      notifications.success('验证码已发送', result.devCode ? `开发环境验证码：${result.devCode}` : result.email);
     },
-    onError: (err) => setError(err instanceof Error ? err.message : '验证码发送失败')
+    onError: (err) => {
+      const message = err instanceof Error ? err.message : '验证码发送失败';
+      setError(message);
+      notifications.error('验证码发送失败', message);
+    }
   });
 
   const emailVerifyMutation = useMutation({
     mutationFn: () => verifyEmailAuth({ challengeId: challengeId as string, code }),
     onSuccess: afterLogin,
-    onError: (err) => setError(err instanceof Error ? err.message : '验证码无效或已过期')
+    onError: (err) => {
+      const message = err instanceof Error ? err.message : '验证码无效或已过期';
+      setError(message);
+      notifications.error('验证失败', message);
+    }
   });
 
   const wechatStartMutation = useMutation({
@@ -66,8 +82,13 @@ export default function LoginPage() {
       setWechatQrCodeUrl(result.qrCodeUrl);
       setError(null);
       setNotice('请使用微信扫码完成登录');
+      notifications.info('二维码已创建', '请使用微信扫码完成登录');
     },
-    onError: (err) => setError(err instanceof Error ? err.message : '微信扫码会话创建失败')
+    onError: (err) => {
+      const message = err instanceof Error ? err.message : '微信扫码会话创建失败';
+      setError(message);
+      notifications.error('微信扫码会话创建失败', message);
+    }
   });
 
   const wechatStatusQuery = useQuery({
@@ -92,6 +113,7 @@ export default function LoginPage() {
     }
     if (wechatStatusQuery.data?.status === 'expired') {
       setNotice('二维码已过期，请刷新二维码');
+      notifications.warning('二维码已过期', '请刷新二维码后重新扫码');
     }
   }, [wechatStatusQuery.data]);
 
