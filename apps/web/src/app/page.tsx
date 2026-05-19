@@ -72,7 +72,8 @@ function statusLabel(status: ImageJobRecord['status']) {
 }
 
 function formatJobMeta(job: ImageJobRecord) {
-  return `${job.selectedProvider} / ${statusLabel(job.status)} / ${normalizeResolution(job.quality)}/${job.aspectRatio}`;
+  const ratio = job.aspectRatio === 'auto' ? '原图比例' : job.aspectRatio;
+  return `${job.selectedProvider} / ${statusLabel(job.status)} / ${normalizeResolution(job.quality)}/${ratio}`;
 }
 
 function filePreviewImages(files: UploadedFileRecord[]) {
@@ -100,6 +101,7 @@ function modelDisplayLabel(model: ModelConfig) {
   if (model.model === 'gemini-2.5-flash-image') return 'Nano Banana';
   if (model.model === 'gemini-3.1-flash-image-preview') return 'Nano Banana 2';
   if (model.model === 'gemini-3-pro-image-preview') return 'Nano Banana Pro';
+  if (model.model === 'gpt-image-2' || model.model === 'gpt-image2') return 'GPT Image 2';
   return model.displayName;
 }
 
@@ -113,6 +115,9 @@ function modelBadge(model: ModelConfig) {
   if (model.model === 'gemini-3-pro-image-preview') {
     return { label: '推理', tone: 'bg-amber-50 text-amber-700 border-amber-200' };
   }
+  if (model.model === 'gpt-image-2' || model.model === 'gpt-image2') {
+    return { label: 'TokenRun・图像', tone: 'bg-rose-50 text-rose-700 border-rose-200' };
+  }
   return { label: '自动', tone: 'bg-slate-50 text-slate-700 border-slate-200' };
 }
 
@@ -120,6 +125,7 @@ function modelShortDescription(model: ModelConfig) {
   if (model.model === 'gemini-2.5-flash-image') return '适合批量与高频编辑';
   if (model.model === 'gemini-3.1-flash-image-preview') return '更快，更适合日常使用';
   if (model.model === 'gemini-3-pro-image-preview') return '更强推理，适合复杂任务';
+  if (model.model === 'gpt-image-2' || model.model === 'gpt-image2') return 'TokenRun 通道，支持生成与参考图编辑';
   return model.description;
 }
 
@@ -270,7 +276,7 @@ export default function HomePage() {
   const [prompt, setPrompt] = useState('把图片里的文字改成夏日新品，其他不变');
   const [provider, setProvider] = useState<ImageProviderName>('auto');
   const [model, setModel] = useState('auto');
-  const [aspectRatio, setAspectRatio] = useState('1:1');
+  const [aspectRatio, setAspectRatio] = useState('auto');
   const [quality, setQuality] = useState<ImageQuality>('1K');
   const [jobId, setJobId] = useState<string | null>(null);
   const [viewingJob, setViewingJob] = useState<ImageJobRecord | null>(null);
@@ -302,8 +308,12 @@ export default function HomePage() {
   }, [model, modelOptions, modelsQuery.data?.defaultModel, provider]);
 
   const availableRatios = useMemo(() => {
+    const autoRatio = aspectRatioOptions.find((item) => item.value === 'auto');
     const supported = selectedModelConfig?.supportedRatios;
-    return supported ? aspectRatioOptions.filter((item) => supported.includes(item.value)) : aspectRatioOptions;
+    const ratios = supported
+      ? aspectRatioOptions.filter((item) => item.value !== 'auto' && supported.includes(item.value))
+      : aspectRatioOptions.filter((item) => item.value !== 'auto');
+    return autoRatio ? [autoRatio, ...ratios] : ratios;
   }, [selectedModelConfig]);
 
   const availableResolutions = useMemo(() => {
@@ -330,9 +340,11 @@ export default function HomePage() {
     () => availableRatios.map((item) => ({
       value: item.value,
       label: item.label,
-      description: item.value
+      description: item.value === 'auto'
+        ? uploaded.length > 0 ? '优先保持参考图比例' : '不指定比例，由模型自动决定'
+        : item.value
     })),
-    [availableRatios]
+    [availableRatios, uploaded.length]
   );
 
   const qualityMenuOptions = useMemo<DropdownOption[]>(
@@ -471,7 +483,7 @@ export default function HomePage() {
     setPrompt(job.prompt);
     setProvider(job.provider);
     setModel(job.model);
-    setAspectRatio(job.aspectRatio);
+    setAspectRatio(job.aspectRatio || 'auto');
     setQuality(normalizeResolution(job.quality));
     setUploaded(job.inputFiles);
   }

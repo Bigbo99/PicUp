@@ -8,6 +8,7 @@
     "build": "prisma generate --schema prisma/schema.prisma && tsc -p tsconfig.json",
     "start": "node dist/main.js",
     "start:worker": "node dist/workers/image-worker.js",
+    "smtp:test": "tsx src/tools/test-smtp.ts",
     "db:generate": "prisma generate --schema prisma/schema.prisma",
     "db:migrate": "prisma migrate dev --schema prisma/schema.prisma",
     "db:deploy": "prisma migrate deploy --schema prisma/schema.prisma",

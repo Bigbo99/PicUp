@@ -42,3 +42,8 @@ export class UpsertSettingDto {
   @IsObject()
   value!: Record<string, unknown>;
 }
+
+export class UpdateUserQuotaDto {
+  @IsBoolean()
+  quotaUnlimited!: boolean;
+}

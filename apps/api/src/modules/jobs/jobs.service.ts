@@ -154,9 +154,10 @@ export class JobsService {
   private async selectProvider(input: ImageJobCreateRequest) {
     const available = (await this.models.getModels()).models.filter((model) => model.enabled);
     const provider = this.resolveProvider(input);
-    const model = input.model === 'auto'
+    const requestedModel = input.model === 'gpt-image2' ? 'gpt-image-2' : input.model;
+    const model = requestedModel === 'auto'
       ? this.defaultModelFor(input, provider)
-      : input.model;
+      : requestedModel;
     const config = available.find((item) => item.provider === provider && item.model === model)
       ?? available.find((item) => item.provider === provider);
 
@@ -164,7 +165,7 @@ export class JobsService {
     if (input.imageIds.length > config.maxInputImages) {
       throw new BadRequestException(`当前模型最多支持 ${config.maxInputImages} 张参考图`);
     }
-    if (!config.supportedRatios.includes(input.aspectRatio)) {
+    if (input.aspectRatio !== 'auto' && !config.supportedRatios.includes(input.aspectRatio)) {
       throw new BadRequestException(`当前模型不支持 ${input.aspectRatio} 图片比例`);
     }
     if (!config.supportedQualities.includes(input.quality)) {
@@ -174,7 +175,7 @@ export class JobsService {
   }
 
   private async ensureQuota(user: AuthUser) {
-    if (user.role === 'admin') return;
+    if (user.role === 'admin' || user.quotaUnlimited) return;
 
     const dailyTotal = user.role === 'guest' ? 3 : 10;
     const used = await this.storage.countDailyJobs(user.id, new Date().toISOString().slice(0, 10));
@@ -191,7 +192,7 @@ export class JobsService {
   }
 
   private defaultModelFor(input: ImageJobCreateRequest, provider: Exclude<ImageProviderName, 'auto'>) {
-    if (provider === 'grsai') return 'gpt-image';
+    if (provider === 'grsai') return 'gpt-image-2';
     if (input.quality === '512') return 'gemini-3.1-flash-image-preview';
     if (input.quality === '4K' || input.template === 'product') return 'gemini-3-pro-image-preview';
     return 'gemini-3.1-flash-image-preview';
