@@ -37,6 +37,7 @@ const builtInAdminEmails = ['1315410762@qq.com'];
 export class AuthService {
   constructor(
     @Inject(StorageService) private readonly storage: StorageService,
+    @Inject(PrismaService)
     private readonly prisma: PrismaService
   ) {}
 
@@ -308,7 +309,7 @@ export class AuthService {
   }
 
   async withQuota(user: AuthUser): Promise<AuthMeResponse> {
-    const dailyTotal = user.role === 'guest' ? 3 : user.role === 'admin' ? unlimitedQuota : 10;
+    const dailyTotal = user.role === 'guest' ? 3 : user.role === 'admin' || user.quotaUnlimited ? unlimitedQuota : 10;
     const datePrefix = new Date().toISOString().slice(0, 10);
     const dailyUsed = await this.storage.countDailyJobs(user.id, datePrefix);
     return {
@@ -328,6 +329,7 @@ export class AuthService {
       role: user.role,
       status: user.status,
       isGuest: user.isGuest,
+      quotaUnlimited: user.quotaUnlimited,
       emailVerifiedAt: user.emailVerifiedAt,
       createdAt: user.createdAt,
       updatedAt: user.updatedAt

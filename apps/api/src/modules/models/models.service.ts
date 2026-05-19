@@ -58,14 +58,14 @@ export class ModelsService {
       },
       {
         provider: 'grsai',
-        model: 'gpt-image',
-        displayName: 'GrsAI GPT Image',
-        description: '备用通道，适合异步任务和低成本生成',
+        model: 'gpt-image-2',
+        displayName: 'GPT Image 2',
+        description: 'TokenRun NewAPI 图像通道，支持生成和参考图编辑',
         enabled: true,
         priority: 40,
         maxInputImages: 4,
         supportedRatios: ['1:1', '16:9', '9:16', '3:4', '4:5'],
-        supportedQualities: ['1K'],
+        supportedQualities: ['512', '1K', '2K', '4K'],
         costCredits: 1
       }
     ];

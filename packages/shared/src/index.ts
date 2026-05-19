@@ -96,6 +96,7 @@ export interface AuthUser {
   role: UserRole;
   status: UserStatus;
   isGuest: boolean;
+  quotaUnlimited: boolean;
   emailVerifiedAt?: string;
   createdAt: string;
   updatedAt: string;
@@ -150,6 +151,7 @@ export interface WechatAuthStatusResponse {
 }
 
 export const aspectRatioOptions = [
+  { label: '跟随原图', value: 'auto' },
   { label: '正方形', value: '1:1' },
   { label: '极窄竖幅', value: '1:8' },
   { label: '长竖幅', value: '1:4' },

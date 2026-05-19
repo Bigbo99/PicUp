@@ -1,0 +1,2 @@
+ALTER TABLE "users"
+  ADD COLUMN IF NOT EXISTS "quota_unlimited" BOOLEAN NOT NULL DEFAULT false;

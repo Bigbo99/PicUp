@@ -5,7 +5,7 @@ import { AdminGuard } from '../auth/admin.guard';
 import { StorageService } from '../../common/storage.service';
 import { ModelsService } from '../models/models.service';
 import type { AuthenticatedRequest } from '../auth/auth.types';
-import { UpdateModelConfigDto, UpsertSettingDto } from './dto';
+import { UpdateModelConfigDto, UpdateUserQuotaDto, UpsertSettingDto } from './dto';
 
 @Controller('api/admin')
 @UseGuards(AdminGuard)
@@ -20,6 +20,16 @@ export class AdminController {
   async users(@Query('limit') limit?: string) {
     const users = await this.storage.listUsers(Number(limit ?? 50));
     return users.map((user) => this.auth.toPublicUser(user));
+  }
+
+  @Patch('users/:id/quota')
+  async updateUserQuota(
+    @Param('id') id: string,
+    @Body() body: UpdateUserQuotaDto,
+    @Req() req: AuthenticatedRequest
+  ) {
+    const user = await this.storage.updateUserQuotaUnlimited(id, body.quotaUnlimited, req.authUser.id);
+    return user ? this.auth.toPublicUser(user) : null;
   }
 
   @Get('stats')

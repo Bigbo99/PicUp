@@ -140,6 +140,7 @@ export class StorageService {
         role: user.role,
         status: user.status,
         isGuest: user.isGuest,
+        quotaUnlimited: user.quotaUnlimited,
         emailVerifiedAt: user.emailVerifiedAt ? new Date(user.emailVerifiedAt) : undefined,
         createdAt: new Date(user.createdAt),
         updatedAt: new Date(user.updatedAt)
@@ -157,6 +158,7 @@ export class StorageService {
         role: user.role,
         status: user.status,
         isGuest: user.isGuest,
+        quotaUnlimited: user.quotaUnlimited,
         emailVerifiedAt: user.emailVerifiedAt ? new Date(user.emailVerifiedAt) : null,
         updatedAt: new Date()
       },
@@ -167,6 +169,7 @@ export class StorageService {
         role: user.role,
         status: user.status,
         isGuest: user.isGuest,
+        quotaUnlimited: user.quotaUnlimited,
         emailVerifiedAt: user.emailVerifiedAt ? new Date(user.emailVerifiedAt) : undefined,
         createdAt: new Date(user.createdAt),
         updatedAt: new Date(user.updatedAt)
@@ -190,6 +193,23 @@ export class StorageService {
     return users.map((user) => this.toStoredUser(user));
   }
 
+  async updateUserQuotaUnlimited(id: string, quotaUnlimited: boolean, actorId?: string) {
+    const before = await this.prisma.user.findUnique({ where: { id } });
+    if (!before) return null;
+    const after = await this.prisma.user.update({
+      where: { id },
+      data: { quotaUnlimited }
+    });
+    await this.addAuditLog({
+      actorId,
+      action: 'user.quota_unlimited.update',
+      target: `users:${id}`,
+      before: this.toStoredUser(before) as unknown as Prisma.JsonObject,
+      after: this.toStoredUser(after) as unknown as Prisma.JsonObject
+    });
+    return this.toStoredUser(after);
+  }
+
   async countDailyJobs(userId: string, datePrefix: string) {
     const start = new Date(`${datePrefix}T00:00:00.000Z`);
     const end = new Date(start);
@@ -209,6 +229,7 @@ export class StorageService {
     status?: UserStatus;
     isGuest: boolean;
     passwordHash?: string | null;
+    quotaUnlimited?: boolean;
     emailVerifiedAt?: string | null;
   }): StoredUser {
     const now = new Date().toISOString();
@@ -218,6 +239,7 @@ export class StorageService {
       role: input.role,
       status: input.status ?? 'active',
       isGuest: input.isGuest,
+      quotaUnlimited: input.quotaUnlimited ?? false,
       passwordHash: input.passwordHash ?? null,
       emailVerifiedAt: input.emailVerifiedAt ?? undefined,
       createdAt: now,
@@ -229,6 +251,13 @@ export class StorageService {
     const existing = await this.prisma.modelConfig.findMany({ orderBy: [{ priority: 'asc' }, { createdAt: 'asc' }] });
     if (existing.length === 0) {
       await this.seedModelConfigs(defaults);
+      return this.prisma.modelConfig.findMany({ orderBy: [{ priority: 'asc' }, { createdAt: 'asc' }] })
+        .then((models) => models.map((model) => this.toModelConfig(model)));
+    }
+    const existingKeys = new Set(existing.map((model) => `${model.provider}:${model.model}`));
+    const missingDefaults = defaults.filter((model) => !existingKeys.has(`${model.provider}:${model.model}`));
+    if (missingDefaults.length > 0) {
+      await this.seedModelConfigs(missingDefaults);
       return this.prisma.modelConfig.findMany({ orderBy: [{ priority: 'asc' }, { createdAt: 'asc' }] })
         .then((models) => models.map((model) => this.toModelConfig(model)));
     }
@@ -380,6 +409,7 @@ export class StorageService {
       role: user.role,
       status: user.status,
       isGuest: user.isGuest,
+      quotaUnlimited: user.quotaUnlimited,
       passwordHash: user.passwordHash,
       emailVerifiedAt: user.emailVerifiedAt?.toISOString(),
       createdAt: user.createdAt.toISOString(),

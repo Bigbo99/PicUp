@@ -139,18 +139,21 @@ export class GeminiProvider implements ImageProvider {
       });
     }
 
-    const imageConfig: Record<string, string> = {
-      aspectRatio: input.aspectRatio
+    const generationConfig: Record<string, unknown> = {
+      responseModalities: ['IMAGE']
     };
-    const imageSize = this.getImageSize(input);
-    if (imageSize) imageConfig.imageSize = imageSize;
+    if (input.aspectRatio !== 'auto') {
+      const imageConfig: Record<string, string> = {
+        aspectRatio: input.aspectRatio
+      };
+      const imageSize = this.getImageSize(input);
+      if (imageSize) imageConfig.imageSize = imageSize;
+      generationConfig.responseFormat = { image: imageConfig };
+    }
 
     return {
       contents: [{ parts }],
-      generationConfig: {
-        responseModalities: ['IMAGE'],
-        imageConfig
-      }
+      generationConfig
     };
   }
 
