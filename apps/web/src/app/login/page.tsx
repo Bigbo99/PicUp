@@ -53,9 +53,7 @@ export default function LoginPage() {
       setChallengeId(result.challengeId);
       setCode('');
       setError(null);
-      setNotice(result.devCode
-        ? `开发环境验证码：${result.devCode}`
-        : `验证码已发送到 ${result.email}`);
+      setNotice(result.devCode ? `开发环境验证码：${result.devCode}` : `验证码已发送到 ${result.email}`);
       notifications.success('验证码已发送', result.devCode ? `开发环境验证码：${result.devCode}` : result.email);
     },
     onError: (err) => {
@@ -81,7 +79,7 @@ export default function LoginPage() {
       setWechatState(result.state);
       setWechatQrCodeUrl(result.qrCodeUrl);
       setError(null);
-      setNotice('请使用微信扫码完成登录');
+      setNotice('请使用微信扫码确认登录');
       notifications.info('二维码已创建', '请使用微信扫码完成登录');
     },
     onError: (err) => {
@@ -97,23 +95,38 @@ export default function LoginPage() {
     enabled: Boolean(wechatState),
     refetchInterval: (query) => {
       const status = query.state.data?.status;
-      return status === 'confirmed' || status === 'expired' || status === 'consumed' ? false : 2000;
+      return status === 'confirmed' || status === 'expired' || status === 'consumed' || status === 'failed' ? false : 2000;
     }
   });
 
   useEffect(() => {
     if (tab === 'wechat' && !wechatState && !wechatStartMutation.isPending) {
-      wechatStartMutation.mutate();
+      refreshWechat();
     }
   }, [tab, wechatState, wechatStartMutation.isPending]);
 
   useEffect(() => {
     if (wechatStatusQuery.data?.status === 'confirmed') {
       afterLogin();
+      return;
     }
+
     if (wechatStatusQuery.data?.status === 'expired') {
-      setNotice('二维码已过期，请刷新二维码');
-      notifications.warning('二维码已过期', '请刷新二维码后重新扫码');
+      const message = '二维码已过期，请刷新后重新扫码';
+      setNotice(message);
+      notifications.warning('二维码已过期', message);
+      return;
+    }
+
+    if (wechatStatusQuery.data?.status === 'failed') {
+      const message = wechatStatusQuery.data.message || '微信扫码登录失败，请刷新二维码后重试';
+      setError(message);
+      notifications.error('微信扫码登录失败', message);
+      return;
+    }
+
+    if (wechatStatusQuery.data?.status === 'pending') {
+      setNotice(wechatStatusQuery.data.message || '等待微信扫码...');
     }
   }, [wechatStatusQuery.data]);
 
@@ -139,6 +152,8 @@ export default function LoginPage() {
   }
 
   function refreshWechat() {
+    setNotice('正在通过 PicUp 后端创建微信登录二维码...');
+    setError(null);
     setWechatState(null);
     setWechatQrCodeUrl(null);
     wechatStartMutation.mutate();
@@ -159,7 +174,7 @@ export default function LoginPage() {
           <div className="mb-5">
             <h1 className="text-2xl font-bold">登录 PicUp</h1>
             <p className="mt-2 text-sm leading-6 text-muted">
-              支持邮箱验证注册、密码登录和微信扫码登录。微信扫码回调由你的中间件确认，PicUp 负责创建本地会话和用户绑定。
+              支持邮箱验证注册、密码登录和微信扫码登录。
             </p>
           </div>
 
@@ -257,13 +272,14 @@ export default function LoginPage() {
                   <QrCode className="text-teal-700" size={52} aria-hidden />
                 )}
               </div>
-              <a className="break-all text-sm text-teal-700" href={wechatQrCodeUrl ?? '#'} target="_blank">
-                {wechatQrCodeUrl ?? '正在创建二维码'}
+              <a className="break-all text-sm text-teal-700" href={wechatQrCodeUrl ?? '#'} target="_blank" rel="noreferrer">
+                {wechatQrCodeUrl ?? '正在创建二维码...'}
               </a>
               <button
-                className="min-h-11 rounded-lg border border-line bg-white px-3 text-sm font-semibold text-ink transition-colors hover:border-teal-600 hover:text-teal-700"
+                className="min-h-11 rounded-lg border border-line bg-white px-3 text-sm font-semibold text-ink transition-colors hover:border-teal-600 hover:text-teal-700 disabled:cursor-not-allowed disabled:opacity-60"
                 type="button"
                 onClick={refreshWechat}
+                disabled={wechatStartMutation.isPending}
               >
                 刷新二维码
               </button>
