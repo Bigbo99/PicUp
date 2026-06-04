@@ -144,9 +144,10 @@ export interface WechatAuthStartResponse {
 }
 
 export interface WechatAuthStatusResponse {
-  status: 'pending' | 'confirmed' | 'expired' | 'consumed';
+  status: 'pending' | 'confirmed' | 'expired' | 'consumed' | 'failed';
   user?: AuthUser;
   quota?: AuthMeResponse['quota'];
+  message?: string;
 }
 
 export const aspectRatioOptions = [

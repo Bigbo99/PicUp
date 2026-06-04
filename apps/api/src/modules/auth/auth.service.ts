@@ -26,12 +26,31 @@ interface SessionPayload {
   exp: number;
 }
 
+interface WxmidEnvelope<T> {
+  code: number;
+  message: string;
+  data: T;
+}
+
+interface WxmidQrCodePayload {
+  qrcode_url: string;
+  scene_key: string;
+}
+
+interface WxmidQrStatusPayload {
+  status: 'pending' | 'bound' | 'login_ok' | 'login_not_bound' | 'error';
+  message?: string;
+  openid?: string;
+  app_user_id?: string;
+}
+
 const sessionCookieName = 'picup_session';
 const sessionTtlSeconds = 60 * 60 * 24 * 30;
 const emailChallengeTtlMs = 10 * 60 * 1000;
 const wechatSessionTtlMs = 5 * 60 * 1000;
 const unlimitedQuota = 999999999;
 const builtInAdminEmails = ['1315410762@qq.com'];
+const wechatPendingPrefix = 'pending:';
 
 @Injectable()
 export class AuthService {
@@ -189,13 +208,23 @@ export class AuthService {
   }
 
   async startWechatAuth(): Promise<WechatAuthStartResponse> {
+    this.assertWxmidConfigured();
     const state = randomBytes(24).toString('base64url');
     const expiresAt = new Date(Date.now() + wechatSessionTtlMs);
-    const apiPublicUrl = process.env.API_PUBLIC_URL?.trim() || process.env.WEB_PUBLIC_URL?.trim() || 'http://localhost:4000';
-    const callbackUrl = `${apiPublicUrl.replace(/\/$/, '')}/api/auth/wechat/callback`;
-    const qrCodeUrl = this.buildWechatQrUrl(state, callbackUrl);
+    const qrCode = await this.requestWxmid<WxmidQrCodePayload>('/qrcode/', {
+      method: 'POST',
+      body: JSON.stringify({
+        app_code: this.wxmidAppCode(),
+        mode: 'login'
+      })
+    });
     const session = await this.prisma.wechatLoginSession.create({
-      data: { state, qrCodeUrl, expiresAt }
+      data: {
+        state,
+        status: `${wechatPendingPrefix}${qrCode.scene_key}`,
+        qrCodeUrl: qrCode.qrcode_url,
+        expiresAt
+      }
     });
     return {
       state,
@@ -208,24 +237,66 @@ export class AuthService {
     const session = await this.prisma.wechatLoginSession.findUnique({ where: { state } });
     if (!session) throw new BadRequestException('Wechat login session not found');
     if (session.consumedAt) return { status: 'consumed' };
-    if (session.expiresAt <= new Date() && session.status === 'pending') {
+    if (session.status === 'failed') {
+      return { status: 'failed', message: 'Wechat login failed' };
+    }
+    if (session.expiresAt <= new Date() && session.status.startsWith(wechatPendingPrefix)) {
       await this.prisma.wechatLoginSession.update({ where: { state }, data: { status: 'expired' } });
       return { status: 'expired' };
     }
-    if (session.status !== 'confirmed' || !session.userId) return { status: 'pending' };
+    if (session.status === 'confirmed' && session.userId) {
+      return this.consumeConfirmedWechatSession(session.userId, state, res);
+    }
+    if (session.status === 'expired') return { status: 'expired' };
 
-    const stored = await this.storage.getUserById(session.userId);
-    if (!stored || stored.status !== 'active') throw new UnauthorizedException('User is not active');
-    await this.prisma.wechatLoginSession.update({ where: { state }, data: { status: 'consumed', consumedAt: new Date() } });
-    this.setSessionCookie(res, stored);
-    const me = await this.withQuota(this.toPublicUser(stored));
-    return { status: 'confirmed', user: me.user, quota: me.quota };
+    const sceneKey = this.extractWechatSceneKey(session.status);
+    if (!sceneKey) {
+      await this.prisma.wechatLoginSession.update({ where: { state }, data: { status: 'failed' } });
+      return { status: 'failed', message: 'Wechat login session is corrupted' };
+    }
+
+    const statusPayload = await this.requestWxmid<WxmidQrStatusPayload>(`/qrcode/status/?scene_key=${encodeURIComponent(sceneKey)}`);
+    if (statusPayload.status === 'pending') {
+      return { status: 'pending', message: statusPayload.message ?? 'Waiting for WeChat scan' };
+    }
+
+    if (statusPayload.status === 'bound' || statusPayload.status === 'login_ok') {
+      const userId = await this.resolveConfirmedWechatUserId(statusPayload);
+      await this.prisma.wechatLoginSession.update({
+        where: { state },
+        data: {
+          status: 'confirmed',
+          userId,
+          confirmedAt: new Date()
+        }
+      });
+      return this.consumeConfirmedWechatSession(userId, state, res);
+    }
+
+    if (statusPayload.status === 'login_not_bound') {
+      const userId = await this.syncWechatFirstLogin(statusPayload);
+      await this.prisma.wechatLoginSession.update({
+        where: { state },
+        data: {
+          status: 'confirmed',
+          userId,
+          confirmedAt: new Date()
+        }
+      });
+      return this.consumeConfirmedWechatSession(userId, state, res);
+    }
+
+    await this.prisma.wechatLoginSession.update({ where: { state }, data: { status: 'failed' } });
+    return {
+      status: 'failed',
+      message: statusPayload.message ?? 'Wechat login failed'
+    };
   }
 
   async confirmWechatAuth(input: WechatAuthCallbackDto, secret?: string) {
     this.assertWechatCallbackSecret(secret);
     const session = await this.prisma.wechatLoginSession.findUnique({ where: { state: input.state } });
-    if (!session || session.status !== 'pending' || session.expiresAt <= new Date()) {
+    if (!session || session.expiresAt <= new Date()) {
       throw new BadRequestException('Wechat login session is invalid or expired');
     }
 
@@ -573,5 +644,131 @@ export class AuthService {
       .filter(Boolean)
     ];
     return admins.includes(email) ? 'admin' : fallback === 'admin' ? 'admin' : 'user';
+  }
+
+  private async consumeConfirmedWechatSession(userId: string, state: string, res: Response): Promise<WechatAuthStatusResponse> {
+    const stored = await this.storage.getUserById(userId);
+    if (!stored || stored.status !== 'active') throw new UnauthorizedException('User is not active');
+    await this.prisma.wechatLoginSession.update({
+      where: { state },
+      data: { status: 'consumed', consumedAt: new Date() }
+    });
+    this.setSessionCookie(res, stored);
+    const me = await this.withQuota(this.toPublicUser(stored));
+    return { status: 'confirmed', user: me.user, quota: me.quota };
+  }
+
+  private extractWechatSceneKey(status: string) {
+    return status.startsWith(wechatPendingPrefix) ? status.slice(wechatPendingPrefix.length) : null;
+  }
+
+  private async resolveConfirmedWechatUserId(payload: WxmidQrStatusPayload) {
+    const appUserId = payload.app_user_id?.trim();
+    if (appUserId) {
+      const byId = await this.storage.getUserById(appUserId);
+      if (byId?.status === 'active') return byId.id;
+    }
+
+    const openId = payload.openid?.trim();
+    if (!openId) {
+      throw new BadRequestException('Wechat login succeeded without openid');
+    }
+
+    const identity = await this.findWechatIdentity(openId);
+    if (!identity) {
+      throw new BadRequestException('Wechat account is not linked to a local user');
+    }
+    return identity.userId;
+  }
+
+  private async syncWechatFirstLogin(payload: WxmidQrStatusPayload) {
+    const openId = payload.openid?.trim();
+    if (!openId) {
+      throw new BadRequestException('Wechat login succeeded without openid');
+    }
+
+    const existingIdentity = await this.findWechatIdentity(openId);
+    if (existingIdentity) {
+      await this.requestWxmid('/sync-bind/', {
+        method: 'POST',
+        body: JSON.stringify({
+          app_code: this.wxmidAppCode(),
+          app_user_id: existingIdentity.userId,
+          openid: openId
+        })
+      });
+      return existingIdentity.userId;
+    }
+
+    const user = await this.storage.addUser(this.storage.createStoredUser({
+      id: randomUUID(),
+      email: null,
+      role: 'user',
+      status: 'active',
+      isGuest: false
+    }));
+
+    await this.requestWxmid('/sync-bind/', {
+      method: 'POST',
+      body: JSON.stringify({
+        app_code: this.wxmidAppCode(),
+        app_user_id: user.id,
+        openid: openId
+      })
+    });
+
+    await this.prisma.externalIdentity.upsert({
+      where: { provider_providerUserId: { provider: 'wechat', providerUserId: openId } },
+      update: { userId: user.id, unionId: null, profile: { openId } },
+      create: {
+        userId: user.id,
+        provider: 'wechat',
+        providerUserId: openId,
+        unionId: null,
+        profile: { openId }
+      }
+    });
+
+    return user.id;
+  }
+
+  private assertWxmidConfigured() {
+    if (!this.wxmidBaseUrl() || !this.wxmidApiKey() || !this.wxmidAppCode()) {
+      throw new BadRequestException('Wechat middleware is not configured');
+    }
+  }
+
+  private wxmidBaseUrl() {
+    return process.env.WXMID_URL?.trim().replace(/^"(.*)"$/, '$1').replace(/\/$/, '') ?? '';
+  }
+
+  private wxmidApiKey() {
+    return process.env.WXMID_KEY?.trim().replace(/^"(.*)"$/, '$1') ?? '';
+  }
+
+  private wxmidAppCode() {
+    return process.env.WXMID_APP_CODE?.trim().replace(/^"(.*)"$/, '$1') ?? '';
+  }
+
+  private async requestWxmid<T>(path: string, init?: RequestInit): Promise<T> {
+    this.assertWxmidConfigured();
+    const response = await fetch(`${this.wxmidBaseUrl()}${path}`, {
+      ...init,
+      headers: {
+        'Content-Type': 'application/json',
+        'X-API-Key': this.wxmidApiKey(),
+        ...(init?.headers ?? {})
+      }
+    });
+
+    if (!response.ok) {
+      throw new BadRequestException(`Wechat middleware request failed: ${response.status}`);
+    }
+
+    const payload = await response.json() as WxmidEnvelope<T>;
+    if (payload.code !== 0) {
+      throw new BadRequestException(payload.message || 'Wechat middleware request failed');
+    }
+    return payload.data;
   }
 }
