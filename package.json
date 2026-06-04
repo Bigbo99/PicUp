@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "predev": "pnpm --filter @picup/shared build",
     "dev": "concurrently --kill-others-on-fail -n web,api,worker -c cyan,green,magenta \"pnpm --filter @picup/web dev\" \"pnpm --filter @picup/api dev\" \"pnpm --filter @picup/api dev:worker\"",
     "dev:local": "node scripts/dev-local.mjs",
     "build": "pnpm --filter @picup/shared build && pnpm --filter @picup/api build && pnpm --filter @picup/web build",
