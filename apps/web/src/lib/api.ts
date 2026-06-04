@@ -13,7 +13,7 @@ import type {
   WechatAuthStatusResponse
 } from '@picup/shared';
 
-/** 始终用相对路径。Next.js rewrites 或 Nginx 负责转发到 API 服务 */
+/** Always use relative paths; Next.js rewrites or Nginx forwards requests to the API service. */
 const API_BASE_URL = '';
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -26,10 +26,23 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   });
 
   if (!response.ok) {
-    const message = await response.text();
-    throw new Error(message || `请求失败：${response.status}`);
+    throw new Error(await readErrorMessage(response));
   }
   return response.json() as Promise<T>;
+}
+
+async function readErrorMessage(response: Response) {
+  const fallback = `请求失败：${response.status}`;
+  const text = await response.text().catch(() => '');
+  if (!text) return fallback;
+
+  try {
+    const payload = JSON.parse(text) as { message?: string | string[]; error?: string };
+    if (Array.isArray(payload.message)) return payload.message.join('；');
+    return payload.message || payload.error || text;
+  } catch {
+    return text;
+  }
 }
 
 export async function uploadImage(file: File) {
