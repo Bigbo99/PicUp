@@ -53,8 +53,9 @@ export default function LoginPage() {
       setChallengeId(result.challengeId);
       setCode('');
       setError(null);
-      setNotice(result.devCode ? `开发环境验证码：${result.devCode}` : `验证码已发送到 ${result.email}`);
-      notifications.success('验证码已发送', result.devCode ? `开发环境验证码：${result.devCode}` : result.email);
+      const message = result.devCode ? `开发环境验证码：${result.devCode}` : `验证码已发送到 ${result.email}`;
+      setNotice(message);
+      notifications.success('验证码已发送', message);
     },
     onError: (err) => {
       const message = err instanceof Error ? err.message : '验证码发送失败';
@@ -95,7 +96,9 @@ export default function LoginPage() {
     enabled: Boolean(wechatState),
     refetchInterval: (query) => {
       const status = query.state.data?.status;
-      return status === 'confirmed' || status === 'expired' || status === 'consumed' || status === 'failed' ? false : 2000;
+      return status === 'confirmed' || status === 'expired' || status === 'consumed' || status === 'failed'
+        ? false
+        : 2000;
     }
   });
 
@@ -174,14 +177,20 @@ export default function LoginPage() {
           <div className="mb-5">
             <h1 className="text-2xl font-bold">登录 PicUp</h1>
             <p className="mt-2 text-sm leading-6 text-muted">
-              支持邮箱验证注册、密码登录和微信扫码登录。
+              支持邮箱验证码注册、密码登录和微信扫码登录。
             </p>
           </div>
 
           <div className="mb-4 grid grid-cols-3 rounded-lg border border-line bg-slate-50 p-1">
-            <TabButton active={tab === 'email-register'} onClick={() => setTab('email-register')}>邮箱注册</TabButton>
-            <TabButton active={tab === 'password-login'} onClick={() => setTab('password-login')}>密码登录</TabButton>
-            <TabButton active={tab === 'wechat'} onClick={() => setTab('wechat')}>微信扫码</TabButton>
+            <TabButton active={tab === 'email-register'} onClick={() => setTab('email-register')}>
+              邮箱注册
+            </TabButton>
+            <TabButton active={tab === 'password-login'} onClick={() => setTab('password-login')}>
+              密码登录
+            </TabButton>
+            <TabButton active={tab === 'wechat'} onClick={() => setTab('wechat')}>
+              微信扫码
+            </TabButton>
           </div>
 
           {tab === 'email-register' && (
@@ -200,7 +209,11 @@ export default function LoginPage() {
                     disabled={!email.trim() || password.length < 8 || emailStartMutation.isPending}
                     type="submit"
                   >
-                    {emailStartMutation.isPending ? <Loader2 className="animate-spin" size={20} aria-hidden /> : <UserPlus size={20} aria-hidden />}
+                    {emailStartMutation.isPending ? (
+                      <Loader2 className="animate-spin" size={20} aria-hidden />
+                    ) : (
+                      <UserPlus size={20} aria-hidden />
+                    )}
                     发送验证码
                   </button>
                 </form>
@@ -222,7 +235,11 @@ export default function LoginPage() {
                     disabled={code.trim().length < 4 || emailVerifyMutation.isPending}
                     type="submit"
                   >
-                    {emailVerifyMutation.isPending ? <Loader2 className="animate-spin" size={20} aria-hidden /> : <MailCheck size={20} aria-hidden />}
+                    {emailVerifyMutation.isPending ? (
+                      <Loader2 className="animate-spin" size={20} aria-hidden />
+                    ) : (
+                      <MailCheck size={20} aria-hidden />
+                    )}
                     完成注册并登录
                   </button>
                   <button
@@ -254,7 +271,11 @@ export default function LoginPage() {
                 disabled={!email.trim() || password.length < 8 || passwordLoginMutation.isPending}
                 type="submit"
               >
-                {passwordLoginMutation.isPending ? <Loader2 className="animate-spin" size={20} aria-hidden /> : <LogIn size={20} aria-hidden />}
+                {passwordLoginMutation.isPending ? (
+                  <Loader2 className="animate-spin" size={20} aria-hidden />
+                ) : (
+                  <LogIn size={20} aria-hidden />
+                )}
                 登录
               </button>
             </form>
@@ -267,7 +288,11 @@ export default function LoginPage() {
                   <Loader2 className="animate-spin text-teal-700" size={36} aria-hidden />
                 ) : wechatQrCodeUrl ? (
                   // eslint-disable-next-line @next/next/no-img-element
-                  <img src={wechatQrCodeUrl} alt="微信扫码登录二维码" className="max-h-full max-w-full rounded-md object-contain" />
+                  <img
+                    src={wechatQrCodeUrl}
+                    alt="微信扫码登录二维码"
+                    className="max-h-full max-w-full rounded-md object-contain"
+                  />
                 ) : (
                   <QrCode className="text-teal-700" size={52} aria-hidden />
                 )}
@@ -297,7 +322,9 @@ export default function LoginPage() {
 function TabButton({ active, children, onClick }: { active: boolean; children: React.ReactNode; onClick: () => void }) {
   return (
     <button
-      className={`min-h-10 rounded-md text-sm font-semibold transition-colors ${active ? 'bg-white text-teal-700 shadow-sm' : 'text-muted hover:text-ink'}`}
+      className={`min-h-10 rounded-md text-sm font-semibold transition-colors ${
+        active ? 'bg-white text-teal-700 shadow-sm' : 'text-muted hover:text-ink'
+      }`}
       onClick={onClick}
       type="button"
     >

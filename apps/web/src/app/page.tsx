@@ -535,27 +535,13 @@ export default function HomePage() {
           </div>
           <div className="hidden items-center gap-3 lg:flex">
             {isGuest ? (
-              <div className="flex items-center gap-2">
-                <Link
-                  className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-line bg-white px-3 text-sm font-semibold text-ink transition-colors hover:border-teal-600 hover:text-teal-700"
-                  href="/login"
-                >
-                  <UserCircle size={18} aria-hidden />
-                  登录
-                </Link>
-                <a
-                  className="inline-flex min-h-11 items-center rounded-lg border border-teal-200 bg-teal-50 px-3 py-2 text-center text-sm font-semibold leading-5 text-teal-700 transition-colors hover:border-teal-600 hover:bg-teal-100"
-                  href="https://contentos.ai-mendao.xyz/"
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  <span>
-                    跳转<span className="bg-gradient-to-r from-violet-600 via-fuchsia-500 to-purple-600 bg-clip-text font-extrabold text-transparent">小红书/公众号/海报</span>
-                    <br />
-                    <span className="text-teal-700">等图文生成</span>
-                  </span>
-                </a>
-              </div>
+              <Link
+                className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-line bg-white px-3 text-sm font-semibold text-ink transition-colors hover:border-teal-600 hover:text-teal-700"
+                href="/login"
+              >
+                <UserCircle size={18} aria-hidden />
+                登录
+              </Link>
             ) : (
               <button
                 className="inline-flex min-h-11 cursor-pointer items-center gap-2 rounded-lg border border-line bg-white px-3 text-sm font-semibold text-ink transition-colors hover:border-teal-600 hover:text-teal-700 disabled:cursor-not-allowed disabled:opacity-60"
@@ -566,6 +552,7 @@ export default function HomePage() {
                 退出
               </button>
             )}
+            <ContentPlatformLink />
           </div>
         </div>
       </header>
@@ -786,6 +773,23 @@ export default function HomePage() {
   );
 }
 
+function ContentPlatformLink({ className = '' }: { className?: string }) {
+  return (
+    <a
+      className={`inline-flex min-h-11 items-center justify-center rounded-lg border border-teal-200 bg-teal-50 px-3 py-2 text-center text-sm font-semibold leading-5 text-teal-700 transition-colors hover:border-teal-600 hover:bg-teal-100 ${className}`}
+      href="https://contentos.ai-mendao.xyz/"
+      target="_blank"
+      rel="noreferrer"
+    >
+      <span>
+        跳转<span className="bg-gradient-to-r from-violet-600 via-fuchsia-500 to-purple-600 bg-clip-text font-extrabold text-transparent">小红书/公众号/海报</span>
+        <br />
+        <span className="text-teal-700">等图文生成</span>
+      </span>
+    </a>
+  );
+}
+
 function MobileAccountPanel({
   active,
   isGuest,
@@ -829,6 +833,7 @@ function MobileAccountPanel({
             退出登录
           </button>
         )}
+        <ContentPlatformLink className="mt-3 w-full" />
       </div>
     </section>
   );

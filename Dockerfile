@@ -21,7 +21,7 @@ ENV NODE_ENV=production
 COPY . .
 RUN pnpm build
 
-FROM node:20-alpine AS runner
+FROM ${NODE_IMAGE} AS runner
 ENV PNPM_HOME="/pnpm"
 ENV PATH="$PNPM_HOME:$PATH"
 ENV NODE_ENV=production

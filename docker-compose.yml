@@ -35,6 +35,7 @@ services:
       context: .
       dockerfile: Dockerfile
       args:
+        NODE_IMAGE: ${NODE_IMAGE:-node:20-alpine}
         NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-}
     command: ["pnpm", "--filter", "@picup/api", "db:deploy"]
     env_file:
@@ -50,6 +51,7 @@ services:
       context: .
       dockerfile: Dockerfile
       args:
+        NODE_IMAGE: ${NODE_IMAGE:-node:20-alpine}
         NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-}
         API_INTERNAL_URL: http://api:4000
     restart: unless-stopped
@@ -70,6 +72,7 @@ services:
       context: .
       dockerfile: Dockerfile
       args:
+        NODE_IMAGE: ${NODE_IMAGE:-node:20-alpine}
         NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-}
     restart: unless-stopped
     command: ["node", "apps/api/dist/main.js"]
@@ -93,6 +96,7 @@ services:
       context: .
       dockerfile: Dockerfile
       args:
+        NODE_IMAGE: ${NODE_IMAGE:-node:20-alpine}
         NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-}
     restart: unless-stopped
     command: ["node", "apps/api/dist/workers/image-worker.js"]

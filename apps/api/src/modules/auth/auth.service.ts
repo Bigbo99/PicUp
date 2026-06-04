@@ -1,4 +1,11 @@
-import { BadRequestException, ConflictException, Inject, Injectable, UnauthorizedException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  Inject,
+  Injectable,
+  ServiceUnavailableException,
+  UnauthorizedException
+} from '@nestjs/common';
 import type { Response } from 'express';
 import { createHmac, pbkdf2Sync, randomBytes, randomInt, randomUUID, timingSafeEqual } from 'node:crypto';
 import { Prisma } from '@prisma/client';
@@ -506,7 +513,7 @@ export class AuthService {
 
   private async deliverEmailCode(email: string, code: string, mode: string) {
     if (this.isSmtpConfigured()) {
-      await this.deliverEmailCodeBySmtp(email, code, mode);
+      await this.deliverEmailCodeBySmtpWithFallback(email, code, mode);
       return true;
     }
 
@@ -540,6 +547,121 @@ export class AuthService {
       })
     });
     if (!response.ok) throw new BadRequestException('Email delivery failed');
+  }
+
+  private async deliverEmailCodeBySmtpWithFallback(email: string, code: string, mode: string) {
+    const host = process.env.SMTP_HOST as string;
+    const port = this.envNumber('SMTP_PORT', 587);
+    const user = process.env.SMTP_USER as string;
+    const pass = process.env.SMTP_PASS as string;
+    const from = process.env.SMTP_FROM?.trim() || user;
+    const appName = process.env.APP_NAME?.trim() || 'PicUp';
+    const secure = this.envFlag('SMTP_SECURE', port === 465);
+    const requireTLS = this.envFlag('SMTP_REQUIRE_TLS', port === 587 && !secure);
+    const authMethod = process.env.SMTP_AUTH_METHOD?.trim();
+    const actionText = mode === 'register' ? '注册' : '登录';
+    const expiresInMinutes = Math.floor(emailChallengeTtlMs / 60_000);
+    const message = {
+      from,
+      to: email,
+      subject: `${appName} ${actionText}验证码`,
+      text: [
+        `你的 ${appName} ${actionText}验证码是：${code}`,
+        `验证码 ${expiresInMinutes} 分钟内有效。`,
+        '如果不是你本人操作，请忽略这封邮件。'
+      ].join('\n'),
+      html: [
+        `<p>你的 <strong>${appName}</strong> ${actionText}验证码是：</p>`,
+        `<p style="font-size:24px;font-weight:700;letter-spacing:4px;">${code}</p>`,
+        `<p>验证码 ${expiresInMinutes} 分钟内有效。</p>`,
+        '<p>如果不是你本人操作，请忽略这封邮件。</p>'
+      ].join('')
+    };
+
+    const common = {
+      host,
+      user,
+      pass,
+      authMethod,
+      message,
+      connectionTimeout: this.envNumber('SMTP_CONNECTION_TIMEOUT_MS', 30000),
+      greetingTimeout: this.envNumber('SMTP_GREETING_TIMEOUT_MS', 30000),
+      socketTimeout: this.envNumber('SMTP_SOCKET_TIMEOUT_MS', 60000),
+      rejectUnauthorized: this.envFlag('SMTP_REJECT_UNAUTHORIZED', true)
+    };
+
+    try {
+      await this.sendSmtpMessage({ ...common, port, secure, requireTLS });
+      return;
+    } catch (error) {
+      if (!secure && port !== 465 && this.isSmtpUnexpectedClose(error)) {
+        try {
+          await this.sendSmtpMessage({
+            ...common,
+            port: this.envNumber('SMTP_SSL_FALLBACK_PORT', 465),
+            secure: true,
+            requireTLS: false
+          });
+          return;
+        } catch (fallbackError) {
+          throw new BadRequestException(`Email delivery failed: ${this.errorMessage(fallbackError)}`);
+        }
+      }
+
+      throw new BadRequestException(`Email delivery failed: ${this.errorMessage(error)}`);
+    }
+  }
+
+  private async sendSmtpMessage(input: {
+    host: string;
+    port: number;
+    secure: boolean;
+    requireTLS: boolean;
+    user: string;
+    pass: string;
+    authMethod?: string;
+    connectionTimeout: number;
+    greetingTimeout: number;
+    socketTimeout: number;
+    rejectUnauthorized: boolean;
+    message: {
+      from: string;
+      to: string;
+      subject: string;
+      text: string;
+      html: string;
+    };
+  }) {
+    const transporter = nodemailer.createTransport({
+      host: input.host,
+      port: input.port,
+      secure: input.secure,
+      requireTLS: input.requireTLS,
+      auth: { user: input.user, pass: input.pass },
+      ...(input.authMethod ? { authMethod: input.authMethod } : {}),
+      connectionTimeout: input.connectionTimeout,
+      greetingTimeout: input.greetingTimeout,
+      socketTimeout: input.socketTimeout,
+      tls: {
+        rejectUnauthorized: input.rejectUnauthorized
+      }
+    });
+
+    await transporter.sendMail(input.message);
+  }
+
+  private isSmtpUnexpectedClose(error: unknown) {
+    const message = this.errorMessage(error).toLowerCase();
+    return (
+      message.includes('unexpected socket close') ||
+      message.includes('unexpectedly closed') ||
+      message.includes('connection closed') ||
+      message.includes('greeting never received')
+    );
+  }
+
+  private errorMessage(error: unknown) {
+    return error instanceof Error ? error.message : String(error);
   }
 
   private async deliverEmailCodeBySmtp(email: string, code: string, mode: string) {
@@ -736,38 +858,59 @@ export class AuthService {
 
   private assertWxmidConfigured() {
     if (!this.wxmidBaseUrl() || !this.wxmidApiKey() || !this.wxmidAppCode()) {
-      throw new BadRequestException('Wechat middleware is not configured');
+      throw new BadRequestException('Wechat middleware is not configured. Check WXMID_URL, WXMID_KEY and WXMID_APP_CODE.');
     }
   }
 
   private wxmidBaseUrl() {
-    return process.env.WXMID_URL?.trim().replace(/^"(.*)"$/, '$1').replace(/\/$/, '') ?? '';
+    return this.envString('WXMID_URL').replace(/\/$/, '');
   }
 
   private wxmidApiKey() {
-    return process.env.WXMID_KEY?.trim().replace(/^"(.*)"$/, '$1') ?? '';
+    return this.envString('WXMID_KEY');
   }
 
   private wxmidAppCode() {
-    return process.env.WXMID_APP_CODE?.trim().replace(/^"(.*)"$/, '$1') ?? '';
+    return this.envString('WXMID_APP_CODE');
+  }
+
+  private envString(name: string) {
+    const value = process.env[name] ?? process.env[`${name} `];
+    return value?.trim().replace(/^"(.*)"$/, '$1') ?? '';
   }
 
   private async requestWxmid<T>(path: string, init?: RequestInit): Promise<T> {
     this.assertWxmidConfigured();
-    const response = await fetch(`${this.wxmidBaseUrl()}${path}`, {
-      ...init,
-      headers: {
-        'Content-Type': 'application/json',
-        'X-API-Key': this.wxmidApiKey(),
-        ...(init?.headers ?? {})
-      }
-    });
+    const url = `${this.wxmidBaseUrl()}${path}`;
+    let response: globalThis.Response;
 
-    if (!response.ok) {
-      throw new BadRequestException(`Wechat middleware request failed: ${response.status}`);
+    try {
+      response = await fetch(url, {
+        ...init,
+        headers: {
+          'Content-Type': 'application/json',
+          'X-API-Key': this.wxmidApiKey(),
+          ...(init?.headers ?? {})
+        }
+      });
+    } catch (error) {
+      throw new ServiceUnavailableException(`Wechat middleware is unreachable: ${this.errorMessage(error)}`);
     }
 
-    const payload = await response.json() as WxmidEnvelope<T>;
+    if (!response.ok) {
+      const detail = await response.text().catch(() => '');
+      throw new ServiceUnavailableException(
+        `Wechat middleware request failed: ${response.status}${detail ? ` ${detail}` : ''}`
+      );
+    }
+
+    let payload: WxmidEnvelope<T>;
+    try {
+      payload = (await response.json()) as WxmidEnvelope<T>;
+    } catch (error) {
+      throw new ServiceUnavailableException(`Wechat middleware returned invalid JSON: ${this.errorMessage(error)}`);
+    }
+
     if (payload.code !== 0) {
       throw new BadRequestException(payload.message || 'Wechat middleware request failed');
     }
