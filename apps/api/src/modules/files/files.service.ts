@@ -1,8 +1,8 @@
 import { BadRequestException, Inject, Injectable } from '@nestjs/common';
-import { copyFile, writeFile } from 'node:fs/promises';
-import { extname, resolve } from 'node:path';
+import { readFile } from 'node:fs/promises';
+import { extname } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { ensureStorage, publicMediaUrl } from '../../common/storage-paths';
+import { ObjectStorageService } from '../../common/object-storage.service';
 import { StorageService } from '../../common/storage.service';
 import type { AuthUser, UploadedFileRecord } from '@picup/shared';
 
@@ -11,35 +11,31 @@ const maxFileSize = 10 * 1024 * 1024;
 
 @Injectable()
 export class FilesService {
-  constructor(@Inject(StorageService) private readonly storage: StorageService) {}
+  constructor(
+    @Inject(StorageService) private readonly storage: StorageService,
+    @Inject(ObjectStorageService) private readonly objectStorage: ObjectStorageService
+  ) {}
 
   async saveUploadedFile(file: Express.Multer.File, user: AuthUser): Promise<UploadedFileRecord> {
-    if (!file) throw new BadRequestException('请选择要上传的图片');
+    if (!file) throw new BadRequestException('Please choose an image to upload');
     if (!allowedMimeTypes.has(file.mimetype)) {
-      throw new BadRequestException('仅支持 JPG、PNG、WEBP 图片');
+      throw new BadRequestException('Only JPG, PNG, and WEBP images are supported');
     }
     if (file.size > maxFileSize) {
-      throw new BadRequestException('图片不能超过 10MB');
+      throw new BadRequestException('Image cannot exceed 10MB');
     }
 
-    const paths = await ensureStorage();
     const id = randomUUID();
     const extension = this.extensionFor(file);
     const filename = `${id}${extension}`;
-    const target = resolve(paths.inputs, filename);
-
-    if (file.buffer) {
-      await writeFile(target, file.buffer);
-    } else if (file.path) {
-      await copyFile(file.path, target);
-    } else {
-      throw new BadRequestException('图片上传失败');
-    }
+    const buffer = file.buffer ?? (file.path ? await readFile(file.path) : null);
+    if (!buffer) throw new BadRequestException('Image upload failed');
+    const url = await this.objectStorage.save('inputs', filename, buffer, file.mimetype);
 
     return this.storage.addFile({
       id,
       userId: user.id,
-      url: publicMediaUrl('inputs', filename),
+      url,
       mimeType: file.mimetype,
       size: file.size,
       createdAt: new Date().toISOString()

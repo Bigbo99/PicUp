@@ -19,3 +19,4 @@ apps/api/storage/outputs/*
 !apps/api/storage/outputs/.gitkeep
 *.log
 picup_actions_server*
+output/playwright/
