@@ -1,8 +1,6 @@
-import { Injectable } from '@nestjs/common';
-import { readFile, writeFile } from 'node:fs/promises';
-import { resolve } from 'node:path';
+import { Inject, Injectable } from '@nestjs/common';
 import { Agent, ProxyAgent, type Dispatcher } from 'undici';
-import { ensureStorage, publicMediaUrl } from '../../common/storage-paths';
+import { ObjectStorageService } from '../../common/object-storage.service';
 import type { ImageProvider, ProviderImageInput, ProviderImageResult } from './provider.types';
 
 const DEFAULT_GEMINI_TIMEOUT_MS = 10 * 60 * 1000;
@@ -12,6 +10,8 @@ const transientStatusCodes = new Set([408, 429, 500, 502, 503, 504]);
 
 @Injectable()
 export class GeminiProvider implements ImageProvider {
+  constructor(@Inject(ObjectStorageService) private readonly objectStorage: ObjectStorageService) {}
+
   async generate(input: ProviderImageInput): Promise<ProviderImageResult> {
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) throw new Error('GEMINI_API_KEY 未配置');
@@ -127,10 +127,7 @@ export class GeminiProvider implements ImageProvider {
   private async buildRequest(input: ProviderImageInput) {
     const parts: Array<Record<string, unknown>> = [{ text: input.prompt }];
     for (const image of input.images) {
-      const sourceName = image.url.split('/').pop();
-      if (!sourceName) continue;
-      const paths = await ensureStorage();
-      const buffer = await readFile(resolve(paths.inputs, sourceName));
+      const buffer = await this.objectStorage.readByUrl(image.url);
       parts.push({
         inline_data: {
           mime_type: image.mimeType,
@@ -163,7 +160,6 @@ export class GeminiProvider implements ImageProvider {
   }
 
   private async parseResponse(jobId: string, payload: GeminiResponse): Promise<ProviderImageResult> {
-    const paths = await ensureStorage();
     const images: ProviderImageResult['images'] = [];
     const textOutputs: string[] = [];
 
@@ -175,8 +171,8 @@ export class GeminiProvider implements ImageProvider {
           const mimeType = this.getInlineMimeType(inlineData);
           const extension = mimeType.includes('jpeg') ? '.jpg' : mimeType.includes('webp') ? '.webp' : '.png';
           const filename = `${jobId}-${images.length + 1}${extension}`;
-          await writeFile(resolve(paths.outputs, filename), Buffer.from(inlineData.data, 'base64'));
-          images.push({ url: publicMediaUrl('outputs', filename), mimeType });
+          const url = await this.objectStorage.save('outputs', filename, Buffer.from(inlineData.data, 'base64'), mimeType);
+          images.push({ url, mimeType });
         }
       }
     }

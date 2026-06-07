@@ -1,8 +1,6 @@
-import { Injectable } from '@nestjs/common';
-import { readFile, writeFile } from 'node:fs/promises';
-import { resolve } from 'node:path';
+import { Inject, Injectable } from '@nestjs/common';
 import { Agent, FormData, ProxyAgent, type Dispatcher } from 'undici';
-import { ensureStorage, publicMediaUrl } from '../../common/storage-paths';
+import { ObjectStorageService } from '../../common/object-storage.service';
 import type { ImageProvider, ProviderImageInput, ProviderImageResult } from './provider.types';
 
 const DEFAULT_NEWAPI_TIMEOUT_MS = 10 * 60 * 1000;
@@ -10,6 +8,8 @@ const DEFAULT_NEWAPI_BASE_URL = 'https://tokenrun.ai-mendao.xyz';
 
 @Injectable()
 export class GrsAiProvider implements ImageProvider {
+  constructor(@Inject(ObjectStorageService) private readonly objectStorage: ObjectStorageService) {}
+
   async generate(input: ProviderImageInput): Promise<ProviderImageResult> {
     const apiKey = process.env.NEWAPI_GPT_IMAGE_KEY ?? process.env.GRSAI_API_KEY;
     if (!apiKey) throw new Error('NEWAPI_GPT_IMAGE_KEY 未配置');
@@ -57,11 +57,9 @@ export class GrsAiProvider implements ImageProvider {
     form.set('quality', this.qualityFor(input));
     form.set('output_format', 'png');
 
-    const paths = await ensureStorage();
     for (const image of input.images) {
-      const sourceName = image.url.split('/').pop();
-      if (!sourceName) continue;
-      const buffer = await readFile(resolve(paths.inputs, sourceName));
+      const sourceName = this.objectStorage.filenameFromUrl(image.url);
+      const buffer = await this.objectStorage.readByUrl(image.url);
       form.append('image[]', new File([buffer], sourceName, { type: image.mimeType }));
     }
 
@@ -69,7 +67,6 @@ export class GrsAiProvider implements ImageProvider {
   }
 
   private async parseResponse(jobId: string, payload: NewApiImageResponse): Promise<ProviderImageResult> {
-    const paths = await ensureStorage();
     const images: ProviderImageResult['images'] = [];
 
     for (const item of payload.data ?? []) {
@@ -77,8 +74,8 @@ export class GrsAiProvider implements ImageProvider {
         const mimeType = this.mimeTypeFromBase64(item.b64_json);
         const extension = mimeType.includes('jpeg') ? '.jpg' : mimeType.includes('webp') ? '.webp' : '.png';
         const filename = `${jobId}-newapi-${images.length + 1}${extension}`;
-        await writeFile(resolve(paths.outputs, filename), Buffer.from(item.b64_json, 'base64'));
-        images.push({ url: publicMediaUrl('outputs', filename), mimeType });
+        const url = await this.objectStorage.save('outputs', filename, Buffer.from(item.b64_json, 'base64'), mimeType);
+        images.push({ url, mimeType });
         continue;
       }
       if (item.url) {
@@ -91,16 +88,15 @@ export class GrsAiProvider implements ImageProvider {
     return { images, textOutputs: [] };
   }
 
-  private async downloadOutput(jobId: string, url: string, index: number) {
-    const response = await fetch(url, { dispatcher: this.createDispatcher() } as RequestInit & { dispatcher: Dispatcher });
+  private async downloadOutput(jobId: string, sourceUrl: string, index: number) {
+    const response = await fetch(sourceUrl, { dispatcher: this.createDispatcher() } as RequestInit & { dispatcher: Dispatcher });
     if (!response.ok) throw new Error(`下载 NewAPI 图片失败：${response.status}`);
 
     const mimeType = response.headers.get('content-type') ?? 'image/png';
     const extension = mimeType.includes('jpeg') ? '.jpg' : mimeType.includes('webp') ? '.webp' : '.png';
     const filename = `${jobId}-newapi-${index}${extension}`;
-    const paths = await ensureStorage();
-    await writeFile(resolve(paths.outputs, filename), Buffer.from(await response.arrayBuffer()));
-    return { url: publicMediaUrl('outputs', filename), mimeType };
+    const outputUrl = await this.objectStorage.save('outputs', filename, Buffer.from(await response.arrayBuffer()), mimeType);
+    return { url: outputUrl, mimeType };
   }
 
   private sizeFor(input: ProviderImageInput) {

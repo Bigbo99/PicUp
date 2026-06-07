@@ -1,33 +1,32 @@
-import { Injectable } from '@nestjs/common';
-import { copyFile, writeFile } from 'node:fs/promises';
-import { extname, resolve } from 'node:path';
-import { ensureStorage, publicMediaUrl } from '../../common/storage-paths';
+import { Inject, Injectable } from '@nestjs/common';
+import { extname } from 'node:path';
+import { ObjectStorageService } from '../../common/object-storage.service';
 import type { ImageProvider, ProviderImageInput, ProviderImageResult } from './provider.types';
 
 @Injectable()
 export class MockProvider implements ImageProvider {
-  async generate(input: ProviderImageInput): Promise<ProviderImageResult> {
-    const paths = await ensureStorage();
+  constructor(@Inject(ObjectStorageService) private readonly objectStorage: ObjectStorageService) {}
 
+  async generate(input: ProviderImageInput): Promise<ProviderImageResult> {
     if (input.images.length > 0) {
       const source = input.images[0];
-      const sourceName = source.url.split('/').pop();
-      if (!sourceName) throw new Error('输入图片不存在');
+      const sourceName = this.objectStorage.filenameFromUrl(source.url);
       const extension = extname(sourceName) || '.png';
       const outputName = `${input.jobId}-mock${extension}`;
-      await copyFile(resolve(paths.inputs, sourceName), resolve(paths.outputs, outputName));
+      const buffer = await this.objectStorage.readByUrl(source.url);
+      const url = await this.objectStorage.save('outputs', outputName, buffer, source.mimeType);
       return {
-        images: [{ url: publicMediaUrl('outputs', outputName), mimeType: source.mimeType }],
-        textOutputs: [`Mock 已完成：${input.prompt}`]
+        images: [{ url, mimeType: source.mimeType }],
+        textOutputs: [`Mock completed: ${input.prompt}`]
       };
     }
 
     const outputName = `${input.jobId}-mock.svg`;
     const svg = this.createSvg(input);
-    await writeFile(resolve(paths.outputs, outputName), svg, 'utf8');
+    const url = await this.objectStorage.save('outputs', outputName, Buffer.from(svg, 'utf8'), 'image/svg+xml');
     return {
-      images: [{ url: publicMediaUrl('outputs', outputName), mimeType: 'image/svg+xml', width: 1024, height: 1024 }],
-      textOutputs: [`Mock 已完成：${input.prompt}`]
+      images: [{ url, mimeType: 'image/svg+xml', width: 1024, height: 1024 }],
+      textOutputs: [`Mock completed: ${input.prompt}`]
     };
   }
 
