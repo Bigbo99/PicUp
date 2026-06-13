@@ -7,11 +7,12 @@ import type {
   ImageQuality,
   ImageTemplate,
   ModelConfig,
+  PaymentOrderResponse,
   UploadedFileRecord,
   UserRole,
   UserStatus
 } from '@picup/shared';
-import { Prisma, type FileRecord, type ImageJob, type ModelConfig as DbModelConfig, type User } from '@prisma/client';
+import { Prisma, type FileRecord, type ImageJob, type ModelConfig as DbModelConfig, type PaymentOrder, type User } from '@prisma/client';
 import { PrismaService } from './database/prisma.service';
 
 export interface StoredUser extends AuthUser {
@@ -136,11 +137,13 @@ export class StorageService {
       data: {
         id: user.id,
         email: user.email,
+        ...(user.displayName !== undefined ? { displayName: user.displayName } : {}),
         passwordHash: user.passwordHash,
         role: user.role,
         status: user.status,
         isGuest: user.isGuest,
         quotaUnlimited: user.quotaUnlimited,
+        creditBalance: user.creditBalance,
         emailVerifiedAt: user.emailVerifiedAt ? new Date(user.emailVerifiedAt) : undefined,
         createdAt: new Date(user.createdAt),
         updatedAt: new Date(user.updatedAt)
@@ -154,22 +157,26 @@ export class StorageService {
       where: { id: user.id },
       update: {
         email: user.email,
+        ...(user.displayName !== undefined ? { displayName: user.displayName } : {}),
         passwordHash: user.passwordHash,
         role: user.role,
         status: user.status,
         isGuest: user.isGuest,
         quotaUnlimited: user.quotaUnlimited,
+        creditBalance: user.creditBalance,
         emailVerifiedAt: user.emailVerifiedAt ? new Date(user.emailVerifiedAt) : null,
         updatedAt: new Date()
       },
       create: {
         id: user.id,
         email: user.email,
+        ...(user.displayName !== undefined ? { displayName: user.displayName } : {}),
         passwordHash: user.passwordHash,
         role: user.role,
         status: user.status,
         isGuest: user.isGuest,
         quotaUnlimited: user.quotaUnlimited,
+        creditBalance: user.creditBalance,
         emailVerifiedAt: user.emailVerifiedAt ? new Date(user.emailVerifiedAt) : undefined,
         createdAt: new Date(user.createdAt),
         updatedAt: new Date(user.updatedAt)
@@ -225,21 +232,25 @@ export class StorageService {
   createStoredUser(input: {
     id: string;
     email: string | null;
+    displayName?: string | null;
     role: UserRole;
     status?: UserStatus;
     isGuest: boolean;
     passwordHash?: string | null;
     quotaUnlimited?: boolean;
+    creditBalance?: number;
     emailVerifiedAt?: string | null;
   }): StoredUser {
     const now = new Date().toISOString();
     return {
       id: input.id,
       email: input.email,
+      displayName: input.displayName ?? null,
       role: input.role,
       status: input.status ?? 'active',
       isGuest: input.isGuest,
       quotaUnlimited: input.quotaUnlimited ?? false,
+      creditBalance: input.creditBalance ?? 0,
       passwordHash: input.passwordHash ?? null,
       emailVerifiedAt: input.emailVerifiedAt ?? undefined,
       createdAt: now,
@@ -371,6 +382,85 @@ export class StorageService {
     return { users, files, jobs, failedJobs, succeededJobs, settings, auditLogs };
   }
 
+  async debitCredits(userId: string, credits: number) {
+    const updated = await this.prisma.user.updateMany({
+      where: {
+        id: userId,
+        creditBalance: { gte: credits }
+      },
+      data: {
+        creditBalance: { decrement: credits }
+      }
+    });
+    return updated.count === 1;
+  }
+
+  async creditUser(userId: string, credits: number) {
+    const user = await this.prisma.user.update({
+      where: { id: userId },
+      data: { creditBalance: { increment: credits } }
+    });
+    return this.toStoredUser(user);
+  }
+
+  async createPaymentOrder(input: {
+    id: string;
+    userId: string;
+    externalOrderId: string;
+    orderType: 'credit_recharge' | 'single_job';
+    amountCents: number;
+    credits: number;
+    metadata?: Prisma.InputJsonValue;
+  }) {
+    const order = await this.prisma.paymentOrder.create({
+      data: {
+        id: input.id,
+        userId: input.userId,
+        externalOrderId: input.externalOrderId,
+        orderType: input.orderType,
+        amountCents: input.amountCents,
+        credits: input.credits,
+        metadata: input.metadata
+      }
+    });
+    return this.toPaymentOrder(order);
+  }
+
+  async getPaymentOrder(id: string, userId?: string) {
+    const order = await this.prisma.paymentOrder.findFirst({
+      where: {
+        id,
+        ...(userId ? { userId } : {})
+      }
+    });
+    return order ? this.toPaymentOrder(order) : null;
+  }
+
+  async markPaymentOrderPaid(externalOrderId: string) {
+    return this.prisma.$transaction(async (tx) => {
+      const order = await tx.paymentOrder.findUnique({ where: { externalOrderId } });
+      if (!order) return null;
+      if (order.status === 'paid') return this.toPaymentOrder(order);
+
+      const paid = await tx.paymentOrder.update({
+        where: { id: order.id },
+        data: {
+          status: 'paid',
+          paidAt: new Date()
+        }
+      });
+
+      if (paid.userId && paid.orderType === 'credit_recharge' && paid.credits > 0) {
+        await tx.user.update({
+          where: { id: paid.userId },
+          data: { creditBalance: { increment: paid.credits } }
+        });
+      }
+
+      return this.toPaymentOrder(paid);
+    });
+  }
+
   private async addAuditLog(input: {
     actorId?: string;
     action: string;
@@ -406,10 +496,12 @@ export class StorageService {
     return {
       id: user.id,
       email: user.email,
+      displayName: 'displayName' in user && typeof user.displayName === 'string' ? user.displayName : null,
       role: user.role,
       status: user.status,
       isGuest: user.isGuest,
       quotaUnlimited: user.quotaUnlimited,
+      creditBalance: user.creditBalance,
       passwordHash: user.passwordHash,
       emailVerifiedAt: user.emailVerifiedAt?.toISOString(),
       createdAt: user.createdAt.toISOString(),
@@ -438,6 +530,8 @@ export class StorageService {
       textOutputs: this.jsonArray<string>(job.textOutputs),
       error: job.error as ImageJobRecord['error'],
       creditsReserved: job.creditsReserved,
+      paymentMode: job.paymentMode as ImageJobRecord['paymentMode'],
+      paymentOrderId: job.paymentOrderId,
       createdAt: job.createdAt.toISOString(),
       updatedAt: job.updatedAt.toISOString(),
       completedAt: job.completedAt?.toISOString()
@@ -465,6 +559,8 @@ export class StorageService {
       textOutputs: job.textOutputs as unknown as Prisma.InputJsonValue,
       error: job.error as unknown as Prisma.InputJsonValue,
       creditsReserved: job.creditsReserved,
+      paymentMode: job.paymentMode ?? 'free',
+      paymentOrderId: job.paymentOrderId ?? null,
       createdAt: new Date(job.createdAt),
       updatedAt: new Date(job.updatedAt),
       completedAt: job.completedAt ? new Date(job.completedAt) : null
@@ -485,6 +581,25 @@ export class StorageService {
       supportedQualities: this.jsonArray<ImageQuality>(model.supportedQualities),
       costCredits: model.costCredits
     };
+  }
+
+  private toPaymentOrder(order: PaymentOrder): PaymentOrderResponse {
+    return {
+      id: order.id,
+      status: order.status as PaymentOrderResponse['status'],
+      orderType: order.orderType as PaymentOrderResponse['orderType'],
+      amountCents: order.amountCents,
+      credits: order.credits,
+      codeUrl: this.metadataString(order.metadata, 'codeUrl'),
+      createdAt: order.createdAt.toISOString(),
+      paidAt: order.paidAt?.toISOString()
+    };
+  }
+
+  private metadataString(metadata: Prisma.JsonValue, key: string) {
+    if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return undefined;
+    const value = (metadata as Record<string, unknown>)[key];
+    return typeof value === 'string' ? value : undefined;
   }
 
   private jsonArray<T>(value: Prisma.JsonValue): T[] {

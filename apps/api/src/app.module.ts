@@ -5,10 +5,11 @@ import { ModelsModule } from './modules/models/models.module';
 import { ProvidersModule } from './modules/providers/providers.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { AdminModule } from './modules/admin/admin.module';
+import { PaymentsModule } from './modules/payments/payments.module';
 import { DatabaseModule } from './common/database/database.module';
 import { QueueModule } from './common/queue/queue.module';
 
 @Module({
-  imports: [DatabaseModule, QueueModule, AuthModule, FilesModule, JobsModule, ModelsModule, ProvidersModule, AdminModule]
+  imports: [DatabaseModule, QueueModule, AuthModule, FilesModule, JobsModule, ModelsModule, ProvidersModule, AdminModule, PaymentsModule]
 })
 export class AppModule {}

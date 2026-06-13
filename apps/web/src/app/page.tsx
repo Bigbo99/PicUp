@@ -29,9 +29,10 @@ import {
   type ImageProviderName,
   type ImageQuality,
   type ImageTemplate,
+  type CreditRechargePlan,
   type UploadedFileRecord
 } from '@picup/shared';
-import { createImageJob, deleteImageJob, getImageJob, getMe, getModels, listImageJobs, logout, uploadImage } from '@/lib/api';
+import { createImageJob, createRechargeOrder, deleteImageJob, getImageJob, getMe, getModels, listImageJobs, logout, updateProfile, uploadImage } from '@/lib/api';
 import { useNotifications } from '@/components/notification-provider';
 
 const FALLBACK_REFERENCE_LIMIT = 14;
@@ -119,6 +120,10 @@ function modelBadge(model: ModelConfig) {
     return { label: 'TokenRun・图像', tone: 'bg-rose-50 text-rose-700 border-rose-200' };
   }
   return { label: '自动', tone: 'bg-slate-50 text-slate-700 border-slate-200' };
+}
+
+function formatYuan(amountCents: number) {
+  return (amountCents / 100).toFixed(1);
 }
 
 function modelShortDescription(model: ModelConfig) {
@@ -278,6 +283,14 @@ export default function HomePage() {
   const [model, setModel] = useState('auto');
   const [aspectRatio, setAspectRatio] = useState('auto');
   const [quality, setQuality] = useState<ImageQuality>('1K');
+  const [paymentMode, setPaymentMode] = useState<'auto' | 'credits' | 'single'>('auto');
+  const [showPaymentChoice, setShowPaymentChoice] = useState(false);
+  const [accountMenuOpen, setAccountMenuOpen] = useState(false);
+  const [profileEditorOpen, setProfileEditorOpen] = useState(false);
+  const [profileName, setProfileName] = useState('');
+  const [profileEmail, setProfileEmail] = useState('');
+  const [profilePassword, setProfilePassword] = useState('');
+  const [forceGuest, setForceGuest] = useState(false);
   const [jobId, setJobId] = useState<string | null>(null);
   const [viewingJob, setViewingJob] = useState<ImageJobRecord | null>(null);
   const [mobileTab, setMobileTab] = useState<MobileTab>('create');
@@ -373,6 +386,12 @@ export default function HomePage() {
     }
   }, [availableResolutions, quality]);
 
+  useEffect(() => {
+    if (meQuery.data?.user && !meQuery.data.user.isGuest) {
+      setForceGuest(false);
+    }
+  }, [meQuery.data?.user]);
+
   const uploadMutation = useMutation({
     mutationFn: async (files: File[]) => Promise.all(files.map((file) => uploadImage(file))),
     onSuccess: (files) => {
@@ -407,13 +426,47 @@ export default function HomePage() {
 
   const logoutMutation = useMutation({
     mutationFn: logout,
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ['me'] });
-      await queryClient.invalidateQueries({ queryKey: ['jobs'] });
+    onMutate: async () => {
+      setForceGuest(true);
+      setAccountMenuOpen(false);
+      setMobileTab('create');
+      setViewingJob(null);
+      setJobId(null);
+      setUploaded([]);
+      queryClient.setQueryData(['jobs'], []);
+      queryClient.setQueryData(['me'], undefined);
+    },
+    onSuccess: () => {
+      queryClient.removeQueries({ queryKey: ['jobs'] });
       notifications.success('已退出登录');
     },
     onError: (err) => {
       notifications.error('退出失败', err instanceof Error ? err.message : '请稍后再试');
+    }
+  });
+
+  const rechargeMutation = useMutation({
+    mutationFn: createRechargeOrder,
+    onSuccess: (order) => {
+      notifications.success('充值订单已创建', order.codeUrl ? '请使用微信扫码支付' : '请完成微信支付');
+      if (order.codeUrl) window.open(order.codeUrl, '_blank', 'noreferrer');
+    },
+    onError: (err) => {
+      notifications.error('创建充值订单失败', err instanceof Error ? err.message : '请稍后再试');
+    }
+  });
+
+  const profileMutation = useMutation({
+    mutationFn: updateProfile,
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['me'] });
+      setProfileEditorOpen(false);
+      setAccountMenuOpen(false);
+      setProfilePassword('');
+      notifications.success('账户已更新');
+    },
+    onError: (err) => {
+      notifications.error('账户更新失败', err instanceof Error ? err.message : '请稍后再试');
     }
   });
 
@@ -441,7 +494,15 @@ export default function HomePage() {
     && !uploadMutation.isPending
     && !referenceLimitError;
   const activeTemplate = templateOptions.find((item) => item.value === template);
-  const isGuest = meQuery.data?.user.isGuest ?? true;
+  const isGuest = forceGuest || (meQuery.data?.user.isGuest ?? true);
+  const rechargePlans: CreditRechargePlan[] = useMemo(() => {
+    const plans = meQuery.data?.credits.rechargePlans ?? [];
+    const hasTrial = plans.some((plan) => plan.id === 'credits_10_trial');
+    const merged = hasTrial
+      ? plans
+      : [{ id: 'credits_10_trial' as const, title: '10 积分', amountCents: 10, credits: 10 }, ...plans];
+    return [...merged].sort((a, b) => a.amountCents - b.amountCents);
+  }, [meQuery.data?.credits.rechargePlans]);
 
   function handleFiles(files?: FileList | File[]) {
     const nextFiles = Array.from(files ?? []);
@@ -466,6 +527,18 @@ export default function HomePage() {
 
   function submit() {
     if (!canSubmit) return;
+    if (isGuest) {
+      setError('请先登录账户后再生成图片');
+      notifications.warning('请先登录账户', '登录后可生成图片并使用每日免费额度');
+      return;
+    }
+    setShowPaymentChoice(true);
+  }
+
+  function submitWithPayment(nextPaymentMode: 'auto' | 'credits' | 'single') {
+    if (!canSubmit) return;
+    setPaymentMode(nextPaymentMode);
+    setShowPaymentChoice(false);
     createJobMutation.mutate({
       mode: uploaded.length > 0 ? 'edit' : 'generate',
       provider,
@@ -474,7 +547,8 @@ export default function HomePage() {
       prompt,
       imageIds: uploaded.map((file) => file.id),
       aspectRatio,
-      quality
+      quality,
+      ...(nextPaymentMode === 'auto' ? {} : { paymentMode: nextPaymentMode })
     });
   }
 
@@ -520,6 +594,14 @@ export default function HomePage() {
     deleteJobMutation.mutate(job.id);
   }
 
+  function openProfileEditor() {
+    setProfileName(meQuery.data?.user.displayName ?? '');
+    setProfileEmail(meQuery.data?.user.email ?? '');
+    setProfilePassword('');
+    setProfileEditorOpen(true);
+    setAccountMenuOpen(false);
+  }
+
   return (
     <main className="min-h-[100dvh] bg-canvas pb-[calc(4.5rem+env(safe-area-inset-bottom))] text-ink lg:flex lg:h-[100dvh] lg:flex-col lg:pb-0">
       <header className="sticky top-0 z-30 shrink-0 border-b border-line bg-white/95 backdrop-blur lg:static">
@@ -543,14 +625,68 @@ export default function HomePage() {
                 登录
               </Link>
             ) : (
-              <button
-                className="inline-flex min-h-11 cursor-pointer items-center gap-2 rounded-lg border border-line bg-white px-3 text-sm font-semibold text-ink transition-colors hover:border-teal-600 hover:text-teal-700 disabled:cursor-not-allowed disabled:opacity-60"
-                onClick={() => logoutMutation.mutate()}
-                disabled={logoutMutation.isPending}
-              >
-                <LogOut size={18} aria-hidden />
-                退出
-              </button>
+              <div className="relative">
+                <button
+                  className="inline-flex min-h-11 cursor-pointer items-center gap-2 rounded-lg border border-line bg-white px-3 text-sm font-semibold text-ink transition-colors hover:border-teal-600 hover:text-teal-700"
+                  onClick={() => setAccountMenuOpen((open) => !open)}
+                  type="button"
+                >
+                  <UserCircle size={18} aria-hidden />
+                  {meQuery.data?.user.displayName || meQuery.data?.user.email || '我的账户'}
+                  <ChevronDown size={16} aria-hidden />
+                </button>
+                {accountMenuOpen && (
+                  <div className="absolute right-0 top-12 z-50 w-72 rounded-lg border border-line bg-white p-3 shadow-[0_18px_48px_rgba(15,23,42,0.18)]">
+                    <div className="rounded-lg bg-slate-50 p-3">
+                      <p className="text-xs text-muted">账户</p>
+                      <p className="mt-1 truncate text-sm font-bold text-ink">{meQuery.data?.user.displayName || meQuery.data?.user.email || '微信账户'}</p>
+                    </div>
+                    <div className="mt-3 rounded-lg border border-teal-100 bg-teal-50 p-3">
+                      <div className="flex items-center justify-between">
+                        <span className="text-sm font-semibold text-teal-900">剩余积分</span>
+                        <span className="text-2xl font-black text-teal-700">{meQuery.data?.credits.balance ?? 0}</span>
+                      </div>
+                      <div className="mt-3">
+                        <p className="mb-2 text-xs font-semibold text-teal-900">充值积分</p>
+                        <div className="grid gap-2">
+                        {rechargePlans.map((plan) => (
+                          <button
+                            key={plan.id}
+                            type="button"
+                            className={`flex min-h-10 items-center justify-between rounded-md px-3 py-2 text-xs font-bold transition-colors disabled:opacity-60 ${
+                              plan.id === 'credits_10_trial'
+                                ? 'border border-amber-200 bg-amber-50 text-amber-800 hover:bg-amber-100'
+                                : 'bg-teal-600 text-white hover:bg-teal-700'
+                            }`}
+                            onClick={() => rechargeMutation.mutate({ planId: plan.id })}
+                            disabled={rechargeMutation.isPending}
+                          >
+                            <span>{plan.credits} 积分</span>
+                            <span>¥{formatYuan(plan.amountCents)}</span>
+                          </button>
+                        ))}
+                        </div>
+                      </div>
+                    </div>
+                    <button
+                      className="mt-3 inline-flex min-h-10 w-full items-center justify-center gap-2 rounded-lg border border-line bg-white px-3 text-sm font-semibold text-ink transition-colors hover:border-teal-600 hover:text-teal-700"
+                      type="button"
+                      onClick={openProfileEditor}
+                    >
+                      账户编辑
+                    </button>
+                    <button
+                      className="mt-2 inline-flex min-h-10 w-full cursor-pointer items-center justify-center gap-2 rounded-lg border border-red-200 bg-white px-3 text-sm font-semibold text-red-600 transition-colors hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
+                      onClick={() => logoutMutation.mutate()}
+                      disabled={logoutMutation.isPending}
+                      type="button"
+                    >
+                      <LogOut size={18} aria-hidden />
+                      退出账户
+                    </button>
+                  </div>
+                )}
+              </div>
             )}
             <ContentPlatformLink />
           </div>
@@ -707,7 +843,10 @@ export default function HomePage() {
               className="inline-flex min-h-12 w-full cursor-pointer items-center justify-center gap-2 rounded-lg bg-teal-600 px-4 font-bold text-white transition-colors hover:bg-teal-700 disabled:cursor-not-allowed disabled:bg-slate-300"
             >
               {createJobMutation.isPending ? <Loader2 className="animate-spin" size={20} aria-hidden /> : <Wand2 size={20} aria-hidden />}
-              开始生成
+              <span className="flex flex-col leading-tight">
+                <span>开始生成</span>
+                <span className="text-xs font-medium text-white/80">每日免费生成 1 次</span>
+              </span>
             </button>
           </div>
         </section>
@@ -746,6 +885,9 @@ export default function HomePage() {
             <MobileAccountPanel
               active
               isGuest={isGuest}
+              credits={meQuery.data?.credits ? { ...meQuery.data.credits, rechargePlans } : undefined}
+              rechargePending={rechargeMutation.isPending}
+              onRecharge={(planId) => rechargeMutation.mutate({ planId })}
               logoutPending={logoutMutation.isPending}
               onLogout={() => logoutMutation.mutate()}
             />
@@ -761,6 +903,128 @@ export default function HomePage() {
           onIndexChange={(index) => setLightbox((current) => current ? { ...current, index } : current)}
           onClose={() => setLightbox(null)}
         />
+      )}
+
+      {showPaymentChoice && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4">
+          <div className="w-full max-w-md rounded-xl border border-line bg-white p-5 shadow-2xl">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h2 className="text-xl font-bold">选择生成扣费方式</h2>
+                <p className="mt-2 text-sm leading-6 text-muted">
+                  每天 1 次免费生成；使用积分生成失败会自动返还。当前剩余 {meQuery.data?.credits.balance ?? 0} 积分。
+                </p>
+              </div>
+              <button
+                type="button"
+                className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-line text-muted hover:text-ink"
+                onClick={() => setShowPaymentChoice(false)}
+                aria-label="关闭"
+              >
+                <X size={18} aria-hidden />
+              </button>
+            </div>
+
+            <div className="mt-5 grid gap-3">
+              <button
+                type="button"
+                className="rounded-lg border border-line bg-white p-4 text-left transition-colors hover:border-teal-600 hover:bg-teal-50"
+                onClick={() => submitWithPayment('auto')}
+              >
+                <span className="block font-bold">免费优先</span>
+                <span className="mt-1 block text-sm text-muted">如果今日免费额度未使用，则本次不扣费。</span>
+              </button>
+              <button
+                type="button"
+                className="rounded-lg border border-line bg-white p-4 text-left transition-colors hover:border-teal-600 hover:bg-teal-50"
+                onClick={() => submitWithPayment('credits')}
+              >
+                <span className="block font-bold">扣除积分</span>
+                <span className="mt-1 block text-sm text-muted">每次生成扣 1 积分，任务失败自动返还。</span>
+              </button>
+              <button
+                type="button"
+                className="rounded-lg border border-line bg-white p-4 text-left transition-colors hover:border-teal-600 hover:bg-teal-50"
+                onClick={() => submitWithPayment('single')}
+              >
+                <span className="block font-bold">单次付费</span>
+                <span className="mt-1 block text-sm text-muted">0.5 元/次；当前后端会要求先完成单次支付订单。</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {profileEditorOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4">
+          <form
+            className="w-full max-w-md rounded-xl border border-line bg-white p-5 shadow-2xl"
+            onSubmit={(event) => {
+              event.preventDefault();
+              profileMutation.mutate({
+                displayName: profileName,
+                email: profileEmail,
+                ...(profilePassword ? { password: profilePassword } : {})
+              });
+            }}
+          >
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h2 className="text-xl font-bold">账户编辑</h2>
+                <p className="mt-2 text-sm text-muted">修改账户名、登录账号和密码。</p>
+              </div>
+              <button
+                type="button"
+                className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-line text-muted hover:text-ink"
+                onClick={() => setProfileEditorOpen(false)}
+                aria-label="关闭"
+              >
+                <X size={18} aria-hidden />
+              </button>
+            </div>
+
+            <div className="mt-5 grid gap-4">
+              <label className="grid gap-2">
+                <span className="text-sm font-semibold">账户名</span>
+                <input
+                  className="min-h-11 rounded-lg border border-line bg-white px-3 text-base"
+                  value={profileName}
+                  onChange={(event) => setProfileName(event.target.value)}
+                  placeholder="我的账户"
+                />
+              </label>
+              <label className="grid gap-2">
+                <span className="text-sm font-semibold">登录账号（邮箱）</span>
+                <input
+                  className="min-h-11 rounded-lg border border-line bg-white px-3 text-base"
+                  type="email"
+                  value={profileEmail}
+                  onChange={(event) => setProfileEmail(event.target.value)}
+                  required
+                />
+              </label>
+              <label className="grid gap-2">
+                <span className="text-sm font-semibold">新密码</span>
+                <input
+                  className="min-h-11 rounded-lg border border-line bg-white px-3 text-base"
+                  type="password"
+                  value={profilePassword}
+                  onChange={(event) => setProfilePassword(event.target.value)}
+                  minLength={8}
+                  placeholder="不修改请留空"
+                />
+              </label>
+            </div>
+
+            <button
+              type="submit"
+              className="mt-5 inline-flex min-h-12 w-full items-center justify-center rounded-lg bg-teal-600 px-4 font-bold text-white hover:bg-teal-700 disabled:opacity-60"
+              disabled={profileMutation.isPending}
+            >
+              {profileMutation.isPending ? '保存中...' : '保存账户信息'}
+            </button>
+          </form>
+        </div>
       )}
 
       <MobileBottomNav
@@ -793,11 +1057,20 @@ function ContentPlatformLink({ className = '' }: { className?: string }) {
 function MobileAccountPanel({
   active,
   isGuest,
+  credits,
+  rechargePending,
+  onRecharge,
   logoutPending,
   onLogout
 }: {
   active: boolean;
   isGuest: boolean;
+  credits?: {
+    balance: number;
+    rechargePlans: Array<Pick<CreditRechargePlan, 'id' | 'amountCents' | 'credits'>>;
+  };
+  rechargePending: boolean;
+  onRecharge: (planId: CreditRechargePlan['id']) => void;
   logoutPending: boolean;
   onLogout: () => void;
 }) {
@@ -815,6 +1088,32 @@ function MobileAccountPanel({
             <p className="mt-1 text-sm text-muted">{isGuest ? '登录后可同步历史任务' : '已登录，可管理当前会话'}</p>
           </div>
         </div>
+        {!isGuest && (
+          <div className="mb-4 rounded-lg border border-line bg-slate-50 p-3">
+            <div className="flex items-center justify-between">
+              <span className="text-sm font-semibold">账户积分</span>
+              <span className="text-xl font-bold text-teal-700">{credits?.balance ?? 0}</span>
+            </div>
+            <div className="mt-3 grid gap-2">
+              {credits?.rechargePlans.map((plan) => (
+                <button
+                  key={plan.id}
+                  type="button"
+                  className={`flex min-h-11 items-center justify-between rounded-lg px-3 text-sm font-bold disabled:opacity-60 ${
+                    plan.id === 'credits_10_trial'
+                      ? 'border border-amber-200 bg-amber-50 text-amber-800 hover:bg-amber-100'
+                      : 'bg-teal-600 text-white hover:bg-teal-700'
+                  }`}
+                  onClick={() => onRecharge(plan.id)}
+                  disabled={rechargePending}
+                >
+                  <span>{plan.credits} 积分</span>
+                  <span>¥{formatYuan(plan.amountCents)}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
         {isGuest ? (
           <Link
             className="inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-lg bg-teal-600 px-4 font-bold text-white transition-colors hover:bg-teal-700"

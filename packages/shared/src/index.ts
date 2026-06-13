@@ -42,6 +42,7 @@ export interface ImageJobCreateRequest {
   imageIds: string[];
   aspectRatio: string;
   quality: ImageQuality;
+  paymentMode?: 'credits' | 'single' | 'free';
 }
 
 export interface ImageJobCreateResponse {
@@ -65,6 +66,8 @@ export interface ImageJobRecord extends ImageJobCreateRequest {
     message: string;
   };
   creditsReserved: number;
+  paymentMode?: 'credits' | 'single' | 'free';
+  paymentOrderId?: string | null;
   createdAt: string;
   updatedAt: string;
   completedAt?: string;
@@ -93,10 +96,12 @@ export interface ModelsResponse {
 export interface AuthUser {
   id: string;
   email: string | null;
+  displayName?: string | null;
   role: UserRole;
   status: UserStatus;
   isGuest: boolean;
   quotaUnlimited: boolean;
+  creditBalance: number;
   emailVerifiedAt?: string;
   createdAt: string;
   updatedAt: string;
@@ -108,6 +113,11 @@ export interface AuthMeResponse {
     dailyTotal: number;
     dailyUsed: number;
     remaining: number;
+  };
+  credits: {
+    balance: number;
+    rechargePlans: CreditRechargePlan[];
+    singleUsePriceCents: number;
   };
 }
 
@@ -149,6 +159,34 @@ export interface WechatAuthStatusResponse {
   user?: AuthUser;
   quota?: AuthMeResponse['quota'];
   message?: string;
+}
+
+export interface CreditRechargePlan {
+  id: 'credits_10_trial' | 'credits_20' | 'credits_45';
+  title: string;
+  amountCents: number;
+  credits: number;
+}
+
+export interface PaymentOrderResponse {
+  id: string;
+  status: 'pending' | 'paid' | 'failed' | 'closed';
+  orderType: 'credit_recharge' | 'single_job';
+  amountCents: number;
+  credits: number;
+  codeUrl?: string;
+  createdAt: string;
+  paidAt?: string;
+}
+
+export interface CreateRechargeOrderRequest {
+  planId: CreditRechargePlan['id'];
+}
+
+export interface AuthProfileUpdateRequest {
+  displayName?: string;
+  email?: string;
+  password?: string;
 }
 
 export const aspectRatioOptions = [

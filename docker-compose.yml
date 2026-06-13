@@ -40,6 +40,8 @@ services:
     command: ["pnpm", "--filter", "@picup/api", "db:deploy"]
     env_file:
       - .env
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-picup}:${POSTGRES_PASSWORD:-picup_password}@postgres:5432/${POSTGRES_DB:-picup}?schema=public
     depends_on:
       postgres:
         condition: service_healthy
@@ -59,6 +61,7 @@ services:
     env_file:
       - .env
     environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-picup}:${POSTGRES_PASSWORD:-picup_password}@postgres:5432/${POSTGRES_DB:-picup}?schema=public
       API_INTERNAL_URL: http://api:4000
     ports:
       - "${WEB_PUBLISH_PORT:-${WEB_PORT:-3000}}:3000"
@@ -78,6 +81,9 @@ services:
     command: ["node", "apps/api/dist/main.js"]
     env_file:
       - .env
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-picup}:${POSTGRES_PASSWORD:-picup_password}@postgres:5432/${POSTGRES_DB:-picup}?schema=public
+      REDIS_URL: redis://redis:6379
     ports:
       - "${API_PUBLISH_PORT:-${API_PORT:-4000}}:4000"
     volumes:
@@ -102,6 +108,9 @@ services:
     command: ["node", "apps/api/dist/workers/image-worker.js"]
     env_file:
       - .env
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-picup}:${POSTGRES_PASSWORD:-picup_password}@postgres:5432/${POSTGRES_DB:-picup}?schema=public
+      REDIS_URL: redis://redis:6379
     volumes:
       - ./storage:/app/storage
     depends_on:

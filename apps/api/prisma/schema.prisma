@@ -31,11 +31,13 @@ enum ImageJobStatus {
 model User {
   id           String         @id @default(uuid()) @db.Uuid
   email        String?        @unique @db.VarChar(255)
+  displayName  String?        @map("display_name") @db.VarChar(120)
   passwordHash String?        @map("password_hash")
   role         UserRole       @default(guest)
   status       UserStatus     @default(active)
   isGuest      Boolean        @default(true) @map("is_guest")
   quotaUnlimited Boolean      @default(false) @map("quota_unlimited")
+  creditBalance Int           @default(0) @map("credit_balance")
   emailVerifiedAt DateTime?   @map("email_verified_at")
   createdAt    DateTime       @default(now()) @map("created_at")
   updatedAt    DateTime       @updatedAt @map("updated_at")
@@ -108,7 +110,9 @@ model PaymentOrder {
   provider        String    @default("wechat") @db.VarChar(32)
   externalOrderId String?   @unique @map("external_order_id") @db.VarChar(160)
   status          String    @default("pending") @db.VarChar(32)
+  orderType       String    @default("credit_recharge") @map("order_type") @db.VarChar(32)
   amountCents     Int       @map("amount_cents")
+  credits         Int       @default(0)
   currency        String    @default("CNY") @db.VarChar(12)
   metadata        Json?
   paidAt          DateTime? @map("paid_at")
@@ -155,6 +159,8 @@ model ImageJob {
   textOutputs      Json           @default("[]") @map("text_outputs")
   error            Json?
   creditsReserved  Int            @default(1) @map("credits_reserved")
+  paymentMode      String         @default("free") @map("payment_mode") @db.VarChar(32)
+  paymentOrderId   String?        @map("payment_order_id") @db.Uuid
   createdAt        DateTime       @default(now()) @map("created_at")
   updatedAt        DateTime       @updatedAt @map("updated_at")
   completedAt      DateTime?      @map("completed_at")
