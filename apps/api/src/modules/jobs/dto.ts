@@ -1,4 +1,4 @@
-import { IsArray, IsIn, IsString } from 'class-validator';
+import { IsArray, IsIn, IsOptional, IsString } from 'class-validator';
 import type { ImageJobMode, ImageProviderName, ImageQuality, ImageTemplate } from '@picup/shared';
 
 export class CreateImageJobDto {
@@ -35,4 +35,8 @@ export class CreateImageJobDto {
 
   @IsIn(['512', '1K', '2K', '4K'])
   quality!: ImageQuality;
+
+  @IsOptional()
+  @IsIn(['credits', 'single'])
+  paymentMode?: 'credits' | 'single';
 }

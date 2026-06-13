@@ -35,14 +35,13 @@ export class JobsService {
       throw new BadRequestException('图片编辑需要先上传图片');
     }
 
-    await this.ensureQuota(user);
-
     const inputFiles = await this.storage.getFiles(input.imageIds, user.id);
     if (inputFiles.length !== input.imageIds.length) {
       throw new BadRequestException('上传图片不存在或已过期');
     }
 
     const selection = await this.selectProvider(input);
+    const payment = await this.reservePayment(user, input, selection.costCredits);
     const finalPrompt = buildFinalPrompt(input.template, input.prompt);
     const now = new Date().toISOString();
     const job: ImageJobRecord = {
@@ -58,6 +57,8 @@ export class JobsService {
       textOutputs: [],
       error: null,
       creditsReserved: selection.costCredits,
+      paymentMode: payment.mode,
+      paymentOrderId: payment.orderId,
       createdAt: now,
       updatedAt: now
     };
@@ -142,6 +143,7 @@ export class JobsService {
         completedAt: new Date().toISOString()
       };
       await this.storage.upsertJob(failed);
+      await this.refundFailedJob(failed);
       console.error(`[job] ${failed.id} failed ${failed.error?.code}: ${failed.error?.message}`);
       return failed;
     }
@@ -174,14 +176,41 @@ export class JobsService {
     return { provider, model: config.model, costCredits: config.costCredits };
   }
 
-  private async ensureQuota(user: AuthUser) {
-    if (user.role === 'admin' || user.quotaUnlimited) return;
-
-    const dailyTotal = user.role === 'guest' ? 3 : 10;
-    const used = await this.storage.countDailyJobs(user.id, new Date().toISOString().slice(0, 10));
-    if (used >= dailyTotal) {
-      throw new BadRequestException('Daily free quota has been used up');
+  private async reservePayment(user: AuthUser, input: ImageJobCreateRequest, costCredits: number) {
+    if (user.isGuest) {
+      throw new BadRequestException('请先登录账户后再生成图片');
     }
+
+    if (user.role === 'admin' || user.quotaUnlimited) {
+      return { mode: 'free' as const, orderId: null };
+    }
+
+    const usedToday = await this.storage.countDailyJobs(user.id, new Date().toISOString().slice(0, 10));
+    if (usedToday < 1 && !input.paymentMode) {
+      return { mode: 'free' as const, orderId: null };
+    }
+
+    if (input.paymentMode === 'credits') {
+      const ok = await this.storage.debitCredits(user.id, costCredits);
+      if (!ok) throw new BadRequestException('积分不足，请充值后再生成');
+      return { mode: 'credits' as const, orderId: null };
+    }
+
+    if (input.paymentMode === 'single') {
+      throw new BadRequestException('单次付费订单未支付，请先完成单次支付');
+    }
+
+    throw new BadRequestException('今日免费额度已用完，请选择积分扣除或单次付费');
+  }
+
+  private async refundFailedJob(job: ImageJobRecord) {
+    if (job.paymentMode !== 'credits' || !job.userId || job.creditsReserved <= 0) return;
+    await this.storage.creditUser(job.userId, job.creditsReserved);
+    await this.storage.upsertJob({
+      ...job,
+      status: 'refunded',
+      updatedAt: new Date().toISOString()
+    });
   }
 
   private resolveProvider(input: ImageJobCreateRequest): Exclude<ImageProviderName, 'auto'> {

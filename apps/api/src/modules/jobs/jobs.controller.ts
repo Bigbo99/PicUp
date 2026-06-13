@@ -2,16 +2,21 @@ import { Body, Controller, Delete, Get, Inject, Param, Post, Query, Req, UseGuar
 import { JobsService } from './jobs.service';
 import { CreateImageJobDto } from './dto';
 import { AuthGuard } from '../auth/auth.guard';
+import { AuthService } from '../auth/auth.service';
 import type { AuthenticatedRequest } from '../auth/auth.types';
 
 @Controller('api/image/jobs')
 @UseGuards(AuthGuard)
 export class JobsController {
-  constructor(@Inject(JobsService) private readonly jobs: JobsService) {}
+  constructor(
+    @Inject(JobsService) private readonly jobs: JobsService,
+    @Inject(AuthService) private readonly auth: AuthService
+  ) {}
 
   @Post()
-  create(@Body() body: CreateImageJobDto, @Req() req: AuthenticatedRequest) {
-    return this.jobs.create(body, req.authUser);
+  async create(@Body() body: CreateImageJobDto, @Req() req: AuthenticatedRequest) {
+    const user = await this.auth.requireUser(req);
+    return this.jobs.create(body, user);
   }
 
   @Get()

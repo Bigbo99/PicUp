@@ -58,6 +58,12 @@ const wechatSessionTtlMs = 5 * 60 * 1000;
 const unlimitedQuota = 999999999;
 const builtInAdminEmails = ['1315410762@qq.com'];
 const wechatPendingPrefix = 'pending:';
+export const creditRechargePlans = [
+  { id: 'credits_10_trial' as const, title: '10 积分', amountCents: 10, credits: 10 },
+  { id: 'credits_20' as const, title: '20 积分', amountCents: 990, credits: 20 },
+  { id: 'credits_45' as const, title: '45 积分', amountCents: 1990, credits: 45 }
+];
+export const singleUsePriceCents = 50;
 
 @Injectable()
 export class AuthService {
@@ -226,14 +232,19 @@ export class AuthService {
         mode: 'login'
       })
     });
-    const session = await this.prisma.wechatLoginSession.create({
-      data: {
-        state,
-        status: `${wechatPendingPrefix}${qrCode.scene_key}`,
-        qrCodeUrl: qrCode.qrcode_url,
-        expiresAt
-      }
-    });
+    let session;
+    try {
+      session = await this.prisma.wechatLoginSession.create({
+        data: {
+          state,
+          status: `${wechatPendingPrefix}${qrCode.scene_key}`,
+          qrCodeUrl: qrCode.qrcode_url,
+          expiresAt
+        }
+      });
+    } catch (error) {
+      throw new BadRequestException(`Wechat login session create failed: ${this.errorMessage(error)}`);
+    }
     return {
       state,
       qrCodeUrl: session.qrCodeUrl,
@@ -386,6 +397,32 @@ export class AuthService {
     return req.authUser;
   }
 
+  async updateProfile(req: AuthenticatedRequest, input: {
+    displayName?: string;
+    email?: string;
+    password?: string;
+  }, res: Response): Promise<AuthMeResponse> {
+    const current = await this.requireUser(req);
+    const stored = await this.storage.getUserById(current.id);
+    if (!stored || stored.isGuest) throw new UnauthorizedException('Authentication required');
+
+    const nextEmail = input.email?.trim() ? this.normalizeEmail(input.email) : stored.email;
+    if (nextEmail && nextEmail !== stored.email) {
+      const existing = await this.storage.getUserByEmail(nextEmail);
+      if (existing && existing.id !== stored.id) throw new ConflictException('Email is already registered');
+    }
+
+    const updated = await this.storage.updateUser({
+      ...stored,
+      email: nextEmail,
+      displayName: input.displayName?.trim() || null,
+      passwordHash: input.password ? this.hashPassword(input.password) : stored.passwordHash,
+      updatedAt: new Date().toISOString()
+    });
+    this.setSessionCookie(res, updated);
+    return this.withQuota(this.toPublicUser(updated));
+  }
+
   async withQuota(user: AuthUser): Promise<AuthMeResponse> {
     const dailyTotal = user.role === 'guest' ? 3 : user.role === 'admin' || user.quotaUnlimited ? unlimitedQuota : 10;
     const datePrefix = new Date().toISOString().slice(0, 10);
@@ -396,6 +433,11 @@ export class AuthService {
         dailyTotal,
         dailyUsed,
         remaining: Math.max(0, dailyTotal - dailyUsed)
+      },
+      credits: {
+        balance: user.creditBalance,
+        rechargePlans: creditRechargePlans,
+        singleUsePriceCents
       }
     };
   }
@@ -404,10 +446,12 @@ export class AuthService {
     return {
       id: user.id,
       email: user.email,
+      displayName: user.displayName,
       role: user.role,
       status: user.status,
       isGuest: user.isGuest,
       quotaUnlimited: user.quotaUnlimited,
+      creditBalance: user.creditBalance,
       emailVerifiedAt: user.emailVerifiedAt,
       createdAt: user.createdAt,
       updatedAt: user.updatedAt

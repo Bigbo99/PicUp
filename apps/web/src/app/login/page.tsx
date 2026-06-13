@@ -27,6 +27,7 @@ export default function LoginPage() {
   const [challengeId, setChallengeId] = useState<string | null>(null);
   const [wechatState, setWechatState] = useState<string | null>(null);
   const [wechatQrCodeUrl, setWechatQrCodeUrl] = useState<string | null>(null);
+  const [wechatMessage, setWechatMessage] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -79,12 +80,14 @@ export default function LoginPage() {
     onSuccess: (result) => {
       setWechatState(result.state);
       setWechatQrCodeUrl(result.qrCodeUrl);
+      setWechatMessage('请使用微信扫码确认登录');
       setError(null);
-      setNotice('请使用微信扫码确认登录');
+      setNotice(null);
       notifications.info('二维码已创建', '请使用微信扫码完成登录');
     },
     onError: (err) => {
       const message = err instanceof Error ? err.message : '微信扫码会话创建失败';
+      setWechatMessage(null);
       setError(message);
       notifications.error('微信扫码会话创建失败', message);
     }
@@ -109,27 +112,32 @@ export default function LoginPage() {
   }, [tab, wechatState, wechatStartMutation.isPending]);
 
   useEffect(() => {
-    if (wechatStatusQuery.data?.status === 'confirmed') {
+    const data = wechatStatusQuery.data;
+    if (!data) return;
+
+    if (data.status === 'confirmed') {
+      setWechatMessage(data.message || '扫码确认成功，正在登录...');
       afterLogin();
       return;
     }
 
-    if (wechatStatusQuery.data?.status === 'expired') {
-      const message = '二维码已过期，请刷新后重新扫码';
-      setNotice(message);
+    if (data.status === 'expired') {
+      const message = data.message || '二维码已过期，请刷新后重新扫码';
+      setWechatMessage(message);
       notifications.warning('二维码已过期', message);
       return;
     }
 
-    if (wechatStatusQuery.data?.status === 'failed') {
-      const message = wechatStatusQuery.data.message || '微信扫码登录失败，请刷新二维码后重试';
+    if (data.status === 'failed') {
+      const message = data.message || '微信扫码登录失败，请刷新二维码后重试';
+      setWechatMessage(message);
       setError(message);
       notifications.error('微信扫码登录失败', message);
       return;
     }
 
-    if (wechatStatusQuery.data?.status === 'pending') {
-      setNotice(wechatStatusQuery.data.message || '等待微信扫码...');
+    if (data.status === 'pending') {
+      setWechatMessage(data.message || '等待微信扫码...');
     }
   }, [wechatStatusQuery.data]);
 
@@ -155,7 +163,8 @@ export default function LoginPage() {
   }
 
   function refreshWechat() {
-    setNotice('正在通过 PicUp 后端创建微信登录二维码...');
+    setWechatMessage('正在通过 PicUp 后端创建微信登录二维码...');
+    setNotice(null);
     setError(null);
     setWechatState(null);
     setWechatQrCodeUrl(null);
@@ -297,9 +306,14 @@ export default function LoginPage() {
                   <QrCode className="text-teal-700" size={52} aria-hidden />
                 )}
               </div>
-              <a className="break-all text-sm text-teal-700" href={wechatQrCodeUrl ?? '#'} target="_blank" rel="noreferrer">
-                {wechatQrCodeUrl ?? '正在创建二维码...'}
-              </a>
+              <div className="rounded-lg border border-teal-200 bg-teal-50 p-3 text-center text-sm leading-6 text-teal-800">
+                {wechatMessage || (wechatQrCodeUrl ? '等待微信扫码...' : '正在创建二维码...')}
+              </div>
+              {wechatQrCodeUrl && (
+                <a className="break-all text-xs text-muted hover:text-teal-700" href={wechatQrCodeUrl} target="_blank" rel="noreferrer">
+                  打开二维码链接
+                </a>
+              )}
               <button
                 className="min-h-11 rounded-lg border border-line bg-white px-3 text-sm font-semibold text-ink transition-colors hover:border-teal-600 hover:text-teal-700 disabled:cursor-not-allowed disabled:opacity-60"
                 type="button"

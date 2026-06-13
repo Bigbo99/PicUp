@@ -5,10 +5,13 @@ import type {
   ModelsResponse,
   UploadedFileRecord,
   AuthCredentials,
+  AuthProfileUpdateRequest,
   AuthMeResponse,
+  CreateRechargeOrderRequest,
   EmailAuthStartRequest,
   EmailAuthStartResponse,
   EmailAuthVerifyRequest,
+  PaymentOrderResponse,
   WechatAuthStartResponse,
   WechatAuthStatusResponse
 } from '@picup/shared';
@@ -125,4 +128,26 @@ export async function logout() {
   return request<{ ok: boolean }>('/api/auth/logout', {
     method: 'POST'
   });
+}
+
+export async function updateProfile(input: AuthProfileUpdateRequest) {
+  return request<AuthMeResponse>('/api/auth/profile', {
+    method: 'PATCH',
+    body: JSON.stringify(input)
+  });
+}
+
+export async function getPaymentPlans() {
+  return request<Pick<AuthMeResponse['credits'], 'rechargePlans'>>('/api/payments/plans');
+}
+
+export async function createRechargeOrder(input: CreateRechargeOrderRequest) {
+  return request<PaymentOrderResponse>('/api/payments/recharge', {
+    method: 'POST',
+    body: JSON.stringify(input)
+  });
+}
+
+export async function getPaymentOrder(id: string) {
+  return request<PaymentOrderResponse>(`/api/payments/orders/${id}`);
 }

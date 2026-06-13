@@ -1,7 +1,7 @@
-import { Body, Controller, Get, Headers, Inject, Post, Query, Req, Res, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Headers, Inject, Patch, Post, Query, Req, Res, UseGuards } from '@nestjs/common';
 import type { Response } from 'express';
 import { AuthService } from './auth.service';
-import { AuthCredentialsDto, EmailAuthStartDto, EmailAuthVerifyDto, WechatAuthCallbackDto } from './dto';
+import { AuthCredentialsDto, AuthProfileUpdateDto, EmailAuthStartDto, EmailAuthVerifyDto, WechatAuthCallbackDto } from './dto';
 import { AuthGuard } from './auth.guard';
 import type { AuthenticatedRequest } from './auth.types';
 
@@ -38,6 +38,12 @@ export class AuthController {
   @Post('logout')
   logout(@Res({ passthrough: true }) res: Response) {
     return this.auth.logout(res);
+  }
+
+  @Patch('profile')
+  @UseGuards(AuthGuard)
+  updateProfile(@Body() body: AuthProfileUpdateDto, @Req() req: AuthenticatedRequest, @Res({ passthrough: true }) res: Response) {
+    return this.auth.updateProfile(req, body, res);
   }
 
   @Post('wechat/start')
