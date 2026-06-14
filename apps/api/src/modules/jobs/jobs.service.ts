@@ -5,6 +5,7 @@ import type {
   ImageJobCreateResponse,
   ImageJobRecord,
   ImageProviderName,
+  PaymentOrderResponse,
   AuthUser
 } from '@picup/shared';
 import { StorageService } from '../../common/storage.service';
@@ -13,6 +14,11 @@ import { ModelsService } from '../models/models.service';
 import { ProviderRegistry } from '../providers/provider.registry';
 import { buildFinalPrompt } from './prompt-builder';
 import { ObjectStorageService } from '../../common/object-storage.service';
+import { PaymentsService } from '../payments/payments.service';
+
+type ReservedPayment =
+  | { mode: 'free' | 'credits' | 'single'; orderId: string | null }
+  | { mode: 'single_pending'; order: PaymentOrderResponse };
 
 @Injectable()
 export class JobsService {
@@ -26,7 +32,9 @@ export class JobsService {
     @Inject(ProviderRegistry)
     private readonly providers: ProviderRegistry,
     @Inject(ObjectStorageService)
-    private readonly objectStorage: ObjectStorageService
+    private readonly objectStorage: ObjectStorageService,
+    @Inject(PaymentsService)
+    private readonly payments: PaymentsService
   ) {}
 
   async create(input: ImageJobCreateRequest, user: AuthUser): Promise<ImageJobCreateResponse> {
@@ -42,6 +50,12 @@ export class JobsService {
 
     const selection = await this.selectProvider(input);
     const payment = await this.reservePayment(user, input, selection.costCredits);
+    if (payment.mode === 'single_pending') {
+      return {
+        paymentRequired: true,
+        paymentOrder: payment.order
+      };
+    }
     const finalPrompt = buildFinalPrompt(input.template, input.prompt);
     const now = new Date().toISOString();
     const job: ImageJobRecord = {
@@ -176,7 +190,7 @@ export class JobsService {
     return { provider, model: config.model, costCredits: config.costCredits };
   }
 
-  private async reservePayment(user: AuthUser, input: ImageJobCreateRequest, costCredits: number) {
+  private async reservePayment(user: AuthUser, input: ImageJobCreateRequest, costCredits: number): Promise<ReservedPayment> {
     if (user.isGuest) {
       throw new BadRequestException('请先登录账户后再生成图片');
     }
@@ -197,7 +211,22 @@ export class JobsService {
     }
 
     if (input.paymentMode === 'single') {
-      throw new BadRequestException('单次付费订单未支付，请先完成单次支付');
+      if (!input.paymentOrderId) {
+        const order = await this.payments.createSingleJobOrder(user);
+        return { mode: 'single_pending', order };
+      }
+
+      const order = await this.storage.getPaymentOrder(input.paymentOrderId, user.id);
+      if (!order || order.orderType !== 'single_job') {
+        throw new BadRequestException('Single payment order is invalid');
+      }
+      if (order.status !== 'paid') {
+        throw new BadRequestException('Single payment order is not paid');
+      }
+      if (await this.storage.isPaymentOrderUsed(order.id)) {
+        throw new BadRequestException('Single payment order has already been used');
+      }
+      return { mode: 'single' as const, orderId: order.id };
     }
 
     throw new BadRequestException('今日免费额度已用完，请选择积分扣除或单次付费');

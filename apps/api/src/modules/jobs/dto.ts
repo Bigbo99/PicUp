@@ -39,4 +39,8 @@ export class CreateImageJobDto {
   @IsOptional()
   @IsIn(['credits', 'single'])
   paymentMode?: 'credits' | 'single';
+
+  @IsOptional()
+  @IsString()
+  paymentOrderId?: string;
 }

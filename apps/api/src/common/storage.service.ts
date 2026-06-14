@@ -436,6 +436,11 @@ export class StorageService {
     return order ? this.toPaymentOrder(order) : null;
   }
 
+  async isPaymentOrderUsed(paymentOrderId: string) {
+    const count = await this.prisma.imageJob.count({ where: { paymentOrderId } });
+    return count > 0;
+  }
+
   async markPaymentOrderPaid(externalOrderId: string) {
     return this.prisma.$transaction(async (tx) => {
       const order = await tx.paymentOrder.findUnique({ where: { externalOrderId } });

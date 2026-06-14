@@ -1,7 +1,6 @@
 'use client';
 
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, Loader2, LogIn, MailCheck, QrCode, UserPlus } from 'lucide-react';
@@ -17,7 +16,6 @@ import { useNotifications } from '@/components/notification-provider';
 type AuthTab = 'email-register' | 'password-login' | 'wechat';
 
 export default function LoginPage() {
-  const router = useRouter();
   const queryClient = useQueryClient();
   const notifications = useNotifications();
   const [tab, setTab] = useState<AuthTab>('email-register');
@@ -36,10 +34,11 @@ export default function LoginPage() {
     if (redirectedAfterLogin.current) return;
     redirectedAfterLogin.current = true;
     notifications.success('登录成功', '正在返回工作台');
-    router.replace('/');
-    router.refresh();
     void queryClient.invalidateQueries({ queryKey: ['me'] });
     void queryClient.invalidateQueries({ queryKey: ['jobs'] });
+    window.setTimeout(() => {
+      window.location.replace('/');
+    }, 50);
   }
 
   const passwordLoginMutation = useMutation({
