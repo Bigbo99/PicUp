@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, Loader2, LogIn, MailCheck, QrCode, UserPlus } from 'lucide-react';
 import {
@@ -30,12 +30,16 @@ export default function LoginPage() {
   const [wechatMessage, setWechatMessage] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const redirectedAfterLogin = useRef(false);
 
-  async function afterLogin() {
-    await queryClient.invalidateQueries({ queryKey: ['me'] });
-    await queryClient.invalidateQueries({ queryKey: ['jobs'] });
+  function afterLogin() {
+    if (redirectedAfterLogin.current) return;
+    redirectedAfterLogin.current = true;
     notifications.success('登录成功', '正在返回工作台');
-    router.push('/');
+    router.replace('/');
+    router.refresh();
+    void queryClient.invalidateQueries({ queryKey: ['me'] });
+    void queryClient.invalidateQueries({ queryKey: ['jobs'] });
   }
 
   const passwordLoginMutation = useMutation({
