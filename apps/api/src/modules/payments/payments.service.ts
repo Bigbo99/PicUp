@@ -2,6 +2,7 @@ import { BadRequestException, Inject, Injectable, NotFoundException, ServiceUnav
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import type { AuthUser, CreditRechargePlan } from '@picup/shared';
 import { StorageService } from '../../common/storage.service';
+import { singleUsePriceCents } from '../auth/auth.service';
 
 const paymentRechargePlans: CreditRechargePlan[] = [
   { id: 'credits_10_trial', title: '10 积分', amountCents: 10, credits: 10 },
@@ -44,6 +45,27 @@ export class PaymentsService {
       amountCents: plan.amountCents,
       credits: plan.credits,
       metadata: { planId, codeUrl }
+    });
+  }
+
+  async createSingleJobOrder(user: AuthUser) {
+    const id = randomUUID();
+    const externalOrderId = `SJ${Date.now()}${randomBytes(4).toString('hex')}`;
+    const codeUrl = await this.createWechatNativeOrder({
+      outTradeNo: externalOrderId,
+      body: 'PicUp single image generation',
+      amountCents: singleUsePriceCents,
+      attach: id
+    });
+
+    return this.storage.createPaymentOrder({
+      id,
+      userId: user.id,
+      externalOrderId,
+      orderType: 'single_job',
+      amountCents: singleUsePriceCents,
+      credits: 0,
+      metadata: { codeUrl }
     });
   }
 

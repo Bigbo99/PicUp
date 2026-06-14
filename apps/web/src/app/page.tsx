@@ -13,6 +13,7 @@ import {
   History,
   Loader2,
   LogOut,
+  QrCode,
   RefreshCw,
   Trash2,
   UploadCloud,
@@ -29,10 +30,12 @@ import {
   type ImageProviderName,
   type ImageQuality,
   type ImageTemplate,
+  type ImageJobCreateRequest,
   type CreditRechargePlan,
+  type PaymentOrderResponse,
   type UploadedFileRecord
 } from '@picup/shared';
-import { createImageJob, createRechargeOrder, deleteImageJob, getImageJob, getMe, getModels, listImageJobs, logout, updateProfile, uploadImage } from '@/lib/api';
+import { createImageJob, createRechargeOrder, deleteImageJob, getImageJob, getMe, getModels, getPaymentOrder, listImageJobs, logout, updateProfile, uploadImage } from '@/lib/api';
 import { useNotifications } from '@/components/notification-provider';
 
 const FALLBACK_REFERENCE_LIMIT = 14;
@@ -276,6 +279,7 @@ export default function HomePage() {
   const queryClient = useQueryClient();
   const notifications = useNotifications();
   const inputRef = useRef<HTMLInputElement>(null);
+  const handledPaidOrderIdRef = useRef<string | null>(null);
   const [uploaded, setUploaded] = useState<UploadedFileRecord[]>([]);
   const [template, setTemplate] = useState<ImageTemplate>('replace_text');
   const [prompt, setPrompt] = useState('把图片里的文字改成夏日新品，其他不变');
@@ -285,6 +289,8 @@ export default function HomePage() {
   const [quality, setQuality] = useState<ImageQuality>('1K');
   const [paymentMode, setPaymentMode] = useState<'auto' | 'credits' | 'single'>('auto');
   const [showPaymentChoice, setShowPaymentChoice] = useState(false);
+  const [activePaymentOrder, setActivePaymentOrder] = useState<PaymentOrderResponse | null>(null);
+  const [pendingSingleJobInput, setPendingSingleJobInput] = useState<ImageJobCreateRequest | null>(null);
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   const [profileEditorOpen, setProfileEditorOpen] = useState(false);
   const [profileName, setProfileName] = useState('');
@@ -310,6 +316,12 @@ export default function HomePage() {
       const status = query.state.data?.status;
       return status === 'succeeded' || status === 'failed' || status === 'refunded' ? false : 2000;
     }
+  });
+  const paymentOrderQuery = useQuery({
+    queryKey: ['payment-order', activePaymentOrder?.id],
+    queryFn: () => getPaymentOrder(activePaymentOrder?.id as string),
+    enabled: Boolean(activePaymentOrder?.id),
+    refetchInterval: (query) => query.state.data?.status === 'paid' ? false : 2000
   });
 
   const modelOptions = useMemo(() => modelsQuery.data?.models.filter((item) => item.enabled) ?? [], [modelsQuery.data]);
@@ -408,7 +420,23 @@ export default function HomePage() {
 
   const createJobMutation = useMutation({
     mutationFn: createImageJob,
-    onSuccess: (result) => {
+    onSuccess: (result, variables) => {
+      if (result.paymentRequired && result.paymentOrder) {
+        handledPaidOrderIdRef.current = null;
+        setPendingSingleJobInput(variables);
+        setActivePaymentOrder(result.paymentOrder);
+        setError(null);
+        notifications.info('请完成微信支付', '支付成功后会自动开始生成');
+        return;
+      }
+
+      if (!result.jobId) {
+        const message = '任务创建失败，请稍后再试';
+        setError(message);
+        notifications.error('任务创建失败', message);
+        return;
+      }
+
       setJobId(result.jobId);
       setViewingJob(null);
       setMobileTab('detail');
@@ -448,8 +476,10 @@ export default function HomePage() {
   const rechargeMutation = useMutation({
     mutationFn: createRechargeOrder,
     onSuccess: (order) => {
-      notifications.success('充值订单已创建', order.codeUrl ? '请使用微信扫码支付' : '请完成微信支付');
-      if (order.codeUrl) window.open(order.codeUrl, '_blank', 'noreferrer');
+      handledPaidOrderIdRef.current = null;
+      setPendingSingleJobInput(null);
+      setActivePaymentOrder(order);
+      notifications.success('充值订单已创建', order.codeUrl ? '请使用微信扫码支付或打开微信支付' : '请完成微信支付');
     },
     onError: (err) => {
       notifications.error('创建充值订单失败', err instanceof Error ? err.message : '请稍后再试');
@@ -503,6 +533,36 @@ export default function HomePage() {
       : [{ id: 'credits_10_trial' as const, title: '10 积分', amountCents: 10, credits: 10 }, ...plans];
     return [...merged].sort((a, b) => a.amountCents - b.amountCents);
   }, [meQuery.data?.credits.rechargePlans]);
+  const displayedPaymentOrder = paymentOrderQuery.data ?? activePaymentOrder;
+  const paymentQrUrl = displayedPaymentOrder?.codeUrl
+    ? `https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(displayedPaymentOrder.codeUrl)}`
+    : null;
+
+  useEffect(() => {
+    const order = paymentOrderQuery.data;
+    if (!order || order.status !== 'paid') return;
+    if (handledPaidOrderIdRef.current === order.id) return;
+    handledPaidOrderIdRef.current = order.id;
+
+    setActivePaymentOrder(order);
+    void queryClient.invalidateQueries({ queryKey: ['me'] });
+
+    if (pendingSingleJobInput) {
+      const nextInput: ImageJobCreateRequest = {
+        ...pendingSingleJobInput,
+        paymentMode: 'single',
+        paymentOrderId: order.id
+      };
+      setPendingSingleJobInput(null);
+      setActivePaymentOrder(null);
+      notifications.success('支付成功', '正在开始生成');
+      createJobMutation.mutate(nextInput);
+      return;
+    }
+
+    setActivePaymentOrder(null);
+    notifications.success('充值成功', '积分余额已更新');
+  }, [createJobMutation, notifications, paymentOrderQuery.data, pendingSingleJobInput, queryClient]);
 
   function handleFiles(files?: FileList | File[]) {
     const nextFiles = Array.from(files ?? []);
@@ -539,7 +599,7 @@ export default function HomePage() {
     if (!canSubmit) return;
     setPaymentMode(nextPaymentMode);
     setShowPaymentChoice(false);
-    createJobMutation.mutate({
+    const input: ImageJobCreateRequest = {
       mode: uploaded.length > 0 ? 'edit' : 'generate',
       provider,
       model,
@@ -549,7 +609,8 @@ export default function HomePage() {
       aspectRatio,
       quality,
       ...(nextPaymentMode === 'auto' ? {} : { paymentMode: nextPaymentMode })
-    });
+    };
+    createJobMutation.mutate(input);
   }
 
   function loadJobIntoEditor(job: ImageJobRecord) {
@@ -949,6 +1010,71 @@ export default function HomePage() {
               >
                 <span className="block font-bold">单次付费</span>
                 <span className="mt-1 block text-sm text-muted">0.5 元/次；当前后端会要求先完成单次支付订单。</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {displayedPaymentOrder && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4">
+          <div className="w-full max-w-sm rounded-xl border border-line bg-white p-5 shadow-2xl">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h2 className="text-xl font-bold">微信支付</h2>
+                <p className="mt-2 text-sm leading-6 text-muted">
+                  {displayedPaymentOrder.orderType === 'single_job'
+                    ? '支付成功后会自动开始生成。'
+                    : '支付成功后会自动刷新积分余额。'}
+                </p>
+              </div>
+              <button
+                type="button"
+                className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-line text-muted hover:text-ink"
+                onClick={() => {
+                  setActivePaymentOrder(null);
+                  setPendingSingleJobInput(null);
+                }}
+                aria-label="关闭"
+              >
+                <X size={18} aria-hidden />
+              </button>
+            </div>
+
+            <div className="mt-5 grid gap-4">
+              <div className="rounded-lg border border-line bg-slate-50 p-4 text-center">
+                {paymentQrUrl ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={paymentQrUrl}
+                    alt="微信支付二维码"
+                    className="mx-auto h-[220px] w-[220px] rounded-md bg-white object-contain"
+                  />
+                ) : (
+                  <QrCode className="mx-auto text-teal-700" size={72} aria-hidden />
+                )}
+                <p className="mt-3 text-sm font-semibold text-ink">¥{formatYuan(displayedPaymentOrder.amountCents)}</p>
+                <p className="mt-1 text-xs text-muted">
+                  {paymentOrderQuery.isFetching ? '正在确认支付状态...' : displayedPaymentOrder.status === 'paid' ? '支付已完成' : '等待支付'}
+                </p>
+              </div>
+
+              {displayedPaymentOrder.codeUrl && (
+                <a
+                  className="inline-flex min-h-11 items-center justify-center rounded-lg bg-teal-600 px-4 text-sm font-bold text-white transition-colors hover:bg-teal-700"
+                  href={displayedPaymentOrder.codeUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  打开微信支付
+                </a>
+              )}
+              <button
+                type="button"
+                className="min-h-11 rounded-lg border border-line bg-white px-3 text-sm font-semibold text-ink transition-colors hover:border-teal-600 hover:text-teal-700"
+                onClick={() => void paymentOrderQuery.refetch()}
+              >
+                刷新支付状态
               </button>
             </div>
           </div>

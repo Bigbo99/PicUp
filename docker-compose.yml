@@ -37,7 +37,7 @@ services:
       args:
         NODE_IMAGE: ${NODE_IMAGE:-node:20-alpine}
         NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-}
-    command: ["pnpm", "--filter", "@picup/api", "db:deploy"]
+    command: ["sh", "-lc", "node node_modules/.pnpm/prisma@*/node_modules/prisma/build/index.js migrate deploy --schema apps/api/prisma/schema.prisma"]
     env_file:
       - .env
     environment:

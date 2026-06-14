@@ -43,12 +43,15 @@ export interface ImageJobCreateRequest {
   aspectRatio: string;
   quality: ImageQuality;
   paymentMode?: 'credits' | 'single' | 'free';
+  paymentOrderId?: string | null;
 }
 
 export interface ImageJobCreateResponse {
-  jobId: string;
-  status: ImageJobStatus;
-  creditsReserved: number;
+  jobId?: string;
+  status?: ImageJobStatus;
+  creditsReserved?: number;
+  paymentRequired?: boolean;
+  paymentOrder?: PaymentOrderResponse;
 }
 
 export interface ImageJobRecord extends ImageJobCreateRequest {
