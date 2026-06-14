@@ -137,8 +137,10 @@ export class PaymentsService {
 
   private parseXml(xml: string) {
     const result: Record<string, string> = {};
-    for (const match of xml.matchAll(/<([^!?/][^>\s]*)>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/\1>/g)) {
-      result[match[1]] = match[2].trim();
+    const body = xml.trim().replace(/^<xml>/i, '').replace(/<\/xml>$/i, '').trim();
+    const tagPattern = /<([A-Za-z0-9_:-]+)>\s*(?:<!\[CDATA\[([\s\S]*?)\]\]>|([\s\S]*?))\s*<\/\1>/g;
+    for (const match of body.matchAll(tagPattern)) {
+      result[match[1]] = (match[2] ?? match[3] ?? '').trim();
     }
     return result;
   }
