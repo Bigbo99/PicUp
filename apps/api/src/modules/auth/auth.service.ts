@@ -254,7 +254,12 @@ export class AuthService {
 
   async getWechatStatus(state: string, res: Response): Promise<WechatAuthStatusResponse> {
     const session = await this.prisma.wechatLoginSession.findUnique({ where: { state } });
-    if (!session) throw new BadRequestException('Wechat login session not found');
+    if (!session) {
+      return {
+        status: 'expired',
+        message: 'Wechat login session expired. Please refresh and scan again.'
+      };
+    }
     if (session.consumedAt) return { status: 'consumed' };
     if (session.status === 'failed') {
       return { status: 'failed', message: 'Wechat login failed' };
@@ -274,7 +279,18 @@ export class AuthService {
       return { status: 'failed', message: 'Wechat login session is corrupted' };
     }
 
-    const statusPayload = await this.requestWxmid<WxmidQrStatusPayload>(`/qrcode/status/?scene_key=${encodeURIComponent(sceneKey)}`);
+    let statusPayload: WxmidQrStatusPayload;
+    try {
+      statusPayload = await this.requestWxmid<WxmidQrStatusPayload>(`/qrcode/status/?scene_key=${encodeURIComponent(sceneKey)}`);
+    } catch (error) {
+      if (error instanceof ServiceUnavailableException) {
+        return {
+          status: 'pending',
+          message: 'Wechat middleware is temporarily unavailable. Please keep waiting.'
+        };
+      }
+      throw error;
+    }
     if (statusPayload.status === 'pending') {
       return { status: 'pending', message: statusPayload.message ?? 'Waiting for WeChat scan' };
     }
