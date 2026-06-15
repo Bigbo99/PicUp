@@ -5,7 +5,7 @@ export class CreateImageJobDto {
   @IsIn(['generate', 'edit'])
   mode!: ImageJobMode;
 
-  @IsIn(['auto', 'gemini', 'grsai'])
+  @IsIn(['auto', 'gemini', 'tokenrun'])
   provider!: ImageProviderName;
 
   @IsString()

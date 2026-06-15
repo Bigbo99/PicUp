@@ -127,6 +127,7 @@ model PaymentOrder {
 model FileRecord {
   id        String   @id @default(uuid()) @db.Uuid
   userId    String?  @map("user_id") @db.Uuid
+  hash      String?  @db.VarChar(64)
   url       String
   mimeType  String   @map("mime_type") @db.VarChar(120)
   size      Int
@@ -135,6 +136,7 @@ model FileRecord {
   createdAt DateTime @default(now()) @map("created_at")
   user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
 
+  @@unique([userId, hash])
   @@index([userId, createdAt])
   @@map("files")
 }

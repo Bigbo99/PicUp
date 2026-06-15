@@ -23,6 +23,7 @@ import {
 } from 'lucide-react';
 import {
   aspectRatioOptions,
+  findModelCatalogEntry,
   resolutionOptions,
   templateOptions,
   type ImageJobRecord,
@@ -77,7 +78,9 @@ function statusLabel(status: ImageJobRecord['status']) {
 
 function formatJobMeta(job: ImageJobRecord) {
   const ratio = job.aspectRatio === 'auto' ? '原图比例' : job.aspectRatio;
-  return `${job.selectedProvider} / ${statusLabel(job.status)} / ${normalizeResolution(job.quality)}/${ratio}`;
+  const catalog = findModelCatalogEntry(job.selectedProvider, job.selectedModel);
+  const modelLabel = catalog?.displayName ?? job.selectedModel;
+  return `${modelLabel} / ${statusLabel(job.status)} / ${normalizeResolution(job.quality)}/${ratio}`;
 }
 
 function filePreviewImages(files: UploadedFileRecord[]) {
@@ -102,27 +105,23 @@ function jobLightboxImages(job: ImageJobRecord) {
 }
 
 function modelDisplayLabel(model: ModelConfig) {
-  if (model.model === 'gemini-2.5-flash-image') return 'Nano Banana';
-  if (model.model === 'gemini-3.1-flash-image-preview') return 'Nano Banana 2';
-  if (model.model === 'gemini-3-pro-image-preview') return 'Nano Banana Pro';
-  if (model.model === 'gpt-image-2' || model.model === 'gpt-image2') return 'GPT Image 2';
-  return model.displayName;
+  const catalog = findModelCatalogEntry(model.provider, model.model);
+  if (catalog?.provider === 'tokenrun') return 'GPT Image 2';
+  return catalog?.displayName ?? model.displayName;
 }
 
 function modelBadge(model: ModelConfig) {
-  if (model.model === 'gemini-2.5-flash-image') {
-    return { label: '批量・高效', tone: 'bg-teal-50 text-teal-700 border-teal-200' };
+  const catalog = findModelCatalogEntry(model.provider, model.model);
+  if (catalog?.model === 'gemini-3.1-flash-image') {
+    return { label: '推荐日常', tone: 'bg-teal-50 text-teal-700 border-teal-200' };
   }
-  if (model.model === 'gemini-3.1-flash-image-preview') {
-    return { label: '推荐・快速', tone: 'bg-blue-50 text-blue-700 border-blue-200' };
+  if (catalog?.model === 'gemini-3-pro-image') {
+    return { label: '高质量', tone: 'bg-amber-50 text-amber-700 border-amber-200' };
   }
-  if (model.model === 'gemini-3-pro-image-preview') {
-    return { label: '推理', tone: 'bg-amber-50 text-amber-700 border-amber-200' };
+  if (catalog?.model === 'gpt-image-2') {
+    return { label: '稳定备用', tone: 'bg-slate-50 text-slate-700 border-slate-200' };
   }
-  if (model.model === 'gpt-image-2' || model.model === 'gpt-image2') {
-    return { label: 'TokenRun・图像', tone: 'bg-rose-50 text-rose-700 border-rose-200' };
-  }
-  return { label: '自动', tone: 'bg-slate-50 text-slate-700 border-slate-200' };
+  return { label: '可用', tone: 'bg-slate-50 text-slate-700 border-slate-200' };
 }
 
 function formatYuan(amountCents: number) {
@@ -130,10 +129,10 @@ function formatYuan(amountCents: number) {
 }
 
 function modelShortDescription(model: ModelConfig) {
-  if (model.model === 'gemini-2.5-flash-image') return '适合批量与高频编辑';
-  if (model.model === 'gemini-3.1-flash-image-preview') return '更快，更适合日常使用';
-  if (model.model === 'gemini-3-pro-image-preview') return '更强推理，适合复杂任务';
-  if (model.model === 'gpt-image-2' || model.model === 'gpt-image2') return 'TokenRun 通道，支持生成与参考图编辑';
+  const catalog = findModelCatalogEntry(model.provider, model.model);
+  if (catalog?.model === 'gemini-3.1-flash-image') return '适合日常改图、中文改字和多参考图编辑';
+  if (catalog?.model === 'gemini-3-pro-image') return '适合复杂构图、商品图和高质量输出';
+  if (catalog?.model === 'gpt-image-2') return '适合通用生成与参考图编辑';
   return model.description;
 }
 
@@ -170,10 +169,11 @@ function DropdownSelect({
   const triggerRef = useRef<HTMLButtonElement>(null);
   const selected = options.find((item) => item.value === value);
   const isOpen = openMenu === id;
-  const [floatingStyle, setFloatingStyle] = useState<{ top: number; left: number; width: number }>({
+  const [floatingStyle, setFloatingStyle] = useState<{ top: number; left: number; width: number; maxHeight: number }>({
     top: 0,
     left: 0,
-    width: 0
+    width: 0,
+    maxHeight: 320
   });
 
   useLayoutEffect(() => {
@@ -185,18 +185,21 @@ function DropdownSelect({
       const rect = trigger.getBoundingClientRect();
       const viewportPadding = 12;
       const menuMaxHeight = 320;
-      const belowSpace = window.innerHeight - rect.bottom - viewportPadding;
-      const aboveSpace = rect.top - viewportPadding;
-      const placeAbove = belowSpace < menuMaxHeight && aboveSpace > belowSpace;
+      const gap = 8;
+      const belowSpace = window.innerHeight - rect.bottom - viewportPadding - gap;
+      const aboveSpace = rect.top - viewportPadding - gap;
+      const placeAbove = belowSpace < Math.min(menuMaxHeight, 220) && aboveSpace > belowSpace;
+      const availableHeight = Math.max(160, Math.min(menuMaxHeight, placeAbove ? aboveSpace : belowSpace));
       const left = Math.max(viewportPadding, Math.min(rect.left, window.innerWidth - rect.width - viewportPadding));
       const top = placeAbove
-        ? Math.max(viewportPadding, rect.top - viewportPadding - Math.min(menuMaxHeight, aboveSpace))
-        : rect.bottom + 8;
+        ? Math.max(viewportPadding, rect.top - gap - availableHeight)
+        : Math.min(rect.bottom + gap, window.innerHeight - viewportPadding - availableHeight);
 
       setFloatingStyle({
         top,
         left,
-        width: rect.width
+        width: rect.width,
+        maxHeight: availableHeight
       });
     }
 
@@ -237,10 +240,10 @@ function DropdownSelect({
           />
           <div
             className="fixed overflow-hidden rounded-lg border border-line bg-white shadow-[0_16px_48px_rgba(15,23,42,0.18)]"
-            style={{ top: floatingStyle.top, left: floatingStyle.left, width: floatingStyle.width, maxHeight: 'min(320px, calc(100vh - 24px))' }}
+            style={{ top: floatingStyle.top, left: floatingStyle.left, width: floatingStyle.width, maxHeight: floatingStyle.maxHeight }}
             onClick={(event) => event.stopPropagation()}
           >
-            <div className="max-h-[320px] overflow-y-auto p-1.5">
+            <div className="overflow-y-auto p-1.5" style={{ maxHeight: floatingStyle.maxHeight }}>
               {options.map((item) => (
                 <button
                   key={item.value}
@@ -287,8 +290,6 @@ export default function HomePage() {
   const [model, setModel] = useState('auto');
   const [aspectRatio, setAspectRatio] = useState('auto');
   const [quality, setQuality] = useState<ImageQuality>('1K');
-  const [paymentMode, setPaymentMode] = useState<'auto' | 'credits' | 'single'>('auto');
-  const [showPaymentChoice, setShowPaymentChoice] = useState(false);
   const [activePaymentOrder, setActivePaymentOrder] = useState<PaymentOrderResponse | null>(null);
   const [pendingSingleJobInput, setPendingSingleJobInput] = useState<ImageJobCreateRequest | null>(null);
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
@@ -350,7 +351,7 @@ export default function HomePage() {
     {
       value: 'auto:auto',
       label: '自动推荐',
-      description: modelsQuery.data?.defaultModel ? `默认使用 ${modelsQuery.data.defaultModel}` : '根据当前任务自动选择'
+      description: modelsQuery.data?.defaultModel ? `默认使用 ${findModelCatalogEntry('gemini', modelsQuery.data.defaultModel)?.displayName ?? modelsQuery.data.defaultModel}` : '根据当前任务自动选择'
     },
     ...modelOptions.map((item) => ({
       value: `${item.provider}:${item.model}`,
@@ -443,7 +444,13 @@ export default function HomePage() {
       setError(null);
       historyQuery.refetch();
       meQuery.refetch();
-      notifications.success('任务已创建', '完成后会自动显示结果');
+      if (result.paymentMode === 'credits') {
+        notifications.success('任务已创建', `已优先使用积分，本次预扣 ${result.creditsReserved ?? 0} 积分`);
+      } else if (result.paymentMode === 'free') {
+        notifications.info('使用免费次数生成', '本次未扣积分，正在开始生成');
+      } else {
+        notifications.success('任务已创建', '完成后会自动显示结果');
+      }
     },
     onError: (err) => {
       const message = err instanceof Error ? err.message : '任务创建失败';
@@ -592,13 +599,11 @@ export default function HomePage() {
       notifications.warning('请先登录账户', '登录后可生成图片并使用每日免费额度');
       return;
     }
-    setShowPaymentChoice(true);
+    submitAutoPayment();
   }
 
-  function submitWithPayment(nextPaymentMode: 'auto' | 'credits' | 'single') {
+  function submitAutoPayment() {
     if (!canSubmit) return;
-    setPaymentMode(nextPaymentMode);
-    setShowPaymentChoice(false);
     const input: ImageJobCreateRequest = {
       mode: uploaded.length > 0 ? 'edit' : 'generate',
       provider,
@@ -607,8 +612,7 @@ export default function HomePage() {
       prompt,
       imageIds: uploaded.map((file) => file.id),
       aspectRatio,
-      quality,
-      ...(nextPaymentMode === 'auto' ? {} : { paymentMode: nextPaymentMode })
+      quality
     };
     createJobMutation.mutate(input);
   }
@@ -866,7 +870,7 @@ export default function HomePage() {
                   setProvider(nextProvider);
                   setModel(nextModel);
                 }}
-                helperText={selectedModelConfig ? selectedModelConfig.description : undefined}
+                helperText={selectedModelConfig ? modelShortDescription(selectedModelConfig) : undefined}
               />
 
               <DropdownSelect
@@ -964,56 +968,6 @@ export default function HomePage() {
           onIndexChange={(index) => setLightbox((current) => current ? { ...current, index } : current)}
           onClose={() => setLightbox(null)}
         />
-      )}
-
-      {showPaymentChoice && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4">
-          <div className="w-full max-w-md rounded-xl border border-line bg-white p-5 shadow-2xl">
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <h2 className="text-xl font-bold">选择生成扣费方式</h2>
-                <p className="mt-2 text-sm leading-6 text-muted">
-                  每天 1 次免费生成；使用积分生成失败会自动返还。当前剩余 {meQuery.data?.credits.balance ?? 0} 积分。
-                </p>
-              </div>
-              <button
-                type="button"
-                className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-line text-muted hover:text-ink"
-                onClick={() => setShowPaymentChoice(false)}
-                aria-label="关闭"
-              >
-                <X size={18} aria-hidden />
-              </button>
-            </div>
-
-            <div className="mt-5 grid gap-3">
-              <button
-                type="button"
-                className="rounded-lg border border-line bg-white p-4 text-left transition-colors hover:border-teal-600 hover:bg-teal-50"
-                onClick={() => submitWithPayment('auto')}
-              >
-                <span className="block font-bold">免费优先</span>
-                <span className="mt-1 block text-sm text-muted">如果今日免费额度未使用，则本次不扣费。</span>
-              </button>
-              <button
-                type="button"
-                className="rounded-lg border border-line bg-white p-4 text-left transition-colors hover:border-teal-600 hover:bg-teal-50"
-                onClick={() => submitWithPayment('credits')}
-              >
-                <span className="block font-bold">扣除积分</span>
-                <span className="mt-1 block text-sm text-muted">每次生成扣 1 积分，任务失败自动返还。</span>
-              </button>
-              <button
-                type="button"
-                className="rounded-lg border border-line bg-white p-4 text-left transition-colors hover:border-teal-600 hover:bg-teal-50"
-                onClick={() => submitWithPayment('single')}
-              >
-                <span className="block font-bold">单次付费</span>
-                <span className="mt-1 block text-sm text-muted">0.5 元/次；当前后端会要求先完成单次支付订单。</span>
-              </button>
-            </div>
-          </div>
-        </div>
       )}
 
       {displayedPaymentOrder && (
@@ -1486,7 +1440,6 @@ function ResultPanel({
               className="inline-flex min-h-11 cursor-pointer items-center justify-center gap-2 rounded-lg bg-teal-600 px-4 font-semibold text-white transition-colors hover:bg-teal-700"
               href={output.url}
               download
-              target="_blank"
             >
               <Download size={18} aria-hidden />
               下载结果

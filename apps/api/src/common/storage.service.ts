@@ -61,19 +61,53 @@ export class StorageService {
   }
 
   async addFile(file: UploadedFileRecord) {
-    const created = await this.prisma.fileRecord.create({
-      data: {
-        id: file.id,
-        userId: file.userId,
-        url: file.url,
-        mimeType: file.mimeType,
-        size: file.size,
-        width: file.width,
-        height: file.height,
-        createdAt: new Date(file.createdAt)
-      }
-    });
+    const created = file.hash && file.userId
+      ? await this.prisma.fileRecord.upsert({
+          where: {
+            userId_hash: {
+              userId: file.userId,
+              hash: file.hash
+            }
+          },
+          update: {
+            url: file.url,
+            mimeType: file.mimeType,
+            size: file.size,
+            width: file.width,
+            height: file.height
+          },
+          create: {
+            id: file.id,
+            userId: file.userId,
+            hash: file.hash,
+            url: file.url,
+            mimeType: file.mimeType,
+            size: file.size,
+            width: file.width,
+            height: file.height,
+            createdAt: new Date(file.createdAt)
+          }
+        })
+      : await this.prisma.fileRecord.create({
+          data: {
+            id: file.id,
+            userId: file.userId,
+            url: file.url,
+            mimeType: file.mimeType,
+            size: file.size,
+            width: file.width,
+            height: file.height,
+            createdAt: new Date(file.createdAt)
+          }
+        });
     return this.toUploadedFile(created);
+  }
+
+  async findFileByHash(hash: string, userId?: string) {
+    const file = await this.prisma.fileRecord.findFirst({
+      where: userId ? { hash, userId } : { hash }
+    });
+    return file ? this.toUploadedFile(file) : null;
   }
 
   async getFiles(ids: string[], userId?: string) {
@@ -488,6 +522,7 @@ export class StorageService {
     return {
       id: file.id,
       userId: file.userId ?? undefined,
+      hash: file.hash ?? undefined,
       url: file.url,
       mimeType: file.mimeType,
       size: file.size,

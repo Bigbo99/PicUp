@@ -1,9 +1,9 @@
 import { Inject, Injectable } from '@nestjs/common';
 import type { ImageProviderName } from '@picup/shared';
 import { GeminiProvider } from './gemini.provider';
-import { GrsAiProvider } from './grsai.provider';
 import { MockProvider } from './mock.provider';
 import type { ImageProvider } from './provider.types';
+import { TokenRunProvider } from './tokenrun.provider';
 
 @Injectable()
 export class ProviderRegistry {
@@ -12,8 +12,8 @@ export class ProviderRegistry {
     private readonly mock: MockProvider,
     @Inject(GeminiProvider)
     private readonly gemini: GeminiProvider,
-    @Inject(GrsAiProvider)
-    private readonly grsai: GrsAiProvider
+    @Inject(TokenRunProvider)
+    private readonly tokenrun: TokenRunProvider
   ) {}
 
   get(provider: Exclude<ImageProviderName, 'auto'>): ImageProvider {
@@ -24,6 +24,6 @@ export class ProviderRegistry {
     }
     console.log(`[provider] using ${provider}`);
     if (provider === 'gemini') return this.gemini;
-    return this.grsai;
+    return this.tokenrun;
   }
 }

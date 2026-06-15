@@ -1,5 +1,5 @@
 export type ImageJobMode = 'generate' | 'edit';
-export type ImageProviderName = 'auto' | 'gemini' | 'grsai';
+export type ImageProviderName = 'auto' | 'gemini' | 'tokenrun';
 export type ImageJobStatus = 'queued' | 'running' | 'retrying' | 'succeeded' | 'failed' | 'refunded';
 export type ImageQuality = '512' | '1K' | '2K' | '4K';
 export type UserRole = 'guest' | 'user' | 'admin';
@@ -18,6 +18,7 @@ export type ImageTemplate =
 export interface UploadedFileRecord {
   id: string;
   userId?: string;
+  hash?: string;
   url: string;
   mimeType: string;
   size: number;
@@ -50,6 +51,7 @@ export interface ImageJobCreateResponse {
   jobId?: string;
   status?: ImageJobStatus;
   creditsReserved?: number;
+  paymentMode?: 'credits' | 'single' | 'free';
   paymentRequired?: boolean;
   paymentOrder?: PaymentOrderResponse;
 }
@@ -127,6 +129,7 @@ export interface AuthMeResponse {
 export interface AuthCredentials {
   email: string;
   password: string;
+  termsAccepted?: boolean;
 }
 
 export type EmailAuthMode = 'register' | 'login';
@@ -135,6 +138,7 @@ export interface EmailAuthStartRequest {
   email: string;
   password?: string;
   mode: EmailAuthMode;
+  termsAccepted?: boolean;
 }
 
 export interface EmailAuthStartResponse {
@@ -211,11 +215,13 @@ export const aspectRatioOptions = [
 ] as const;
 
 export const resolutionOptions: Array<{ label: string; value: ImageQuality; description: string }> = [
-  { label: '512', value: '512', description: 'Gemini 3.1 Flash Image 预览分辨率' },
-  { label: '1K', value: '1K', description: 'Gemini 默认图片分辨率' },
-  { label: '2K', value: '2K', description: '更高清输出' },
-  { label: '4K', value: '4K', description: 'Gemini 3 图片最高分辨率' }
+  { label: '512', value: '512', description: '快速预览，适合轻量测试' },
+  { label: '1K', value: '1K', description: '标准清晰度，适合日常使用' },
+  { label: '2K', value: '2K', description: '高清输出，细节更丰富' },
+  { label: '4K', value: '4K', description: '最高质量，适合海报和商品图' }
 ];
+
+export * from './model-catalog';
 
 export const templateOptions: Array<{ label: string; value: ImageTemplate; description: string }> = [
   { label: '改字', value: 'replace_text', description: '修改图片内文字并保持版式' },

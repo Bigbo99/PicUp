@@ -7,6 +7,9 @@ packages/shared/dist
 storage
 output
 .playwright-cli
+.codex
+apps/web/public/layout-test.html
+nul
 *.log
 .env
 .git
