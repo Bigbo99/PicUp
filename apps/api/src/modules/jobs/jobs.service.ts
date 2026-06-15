@@ -79,7 +79,7 @@ export class JobsService {
 
     await this.storage.upsertJob(job);
     await this.queue.enqueueJob(job.id);
-    return { jobId: job.id, status: job.status, creditsReserved: job.creditsReserved };
+    return { jobId: job.id, status: job.status, creditsReserved: job.creditsReserved, paymentMode: payment.mode };
   }
 
   async get(id: string, user?: AuthUser) {
@@ -174,7 +174,8 @@ export class JobsService {
     const model = requestedModel === 'auto'
       ? this.defaultModelFor(input, provider)
       : requestedModel;
-    const config = available.find((item) => item.provider === provider && item.model === model)
+    const canonicalModel = this.models.canonicalModel(provider, model);
+    const config = available.find((item) => item.provider === provider && item.model === canonicalModel)
       ?? available.find((item) => item.provider === provider);
 
     if (!config) throw new BadRequestException('当前模型不可用');
@@ -199,15 +200,20 @@ export class JobsService {
       return { mode: 'free' as const, orderId: null };
     }
 
-    const usedToday = await this.storage.countDailyJobs(user.id, new Date().toISOString().slice(0, 10));
-    if (usedToday < 1 && !input.paymentMode) {
-      return { mode: 'free' as const, orderId: null };
-    }
-
     if (input.paymentMode === 'credits') {
       const ok = await this.storage.debitCredits(user.id, costCredits);
       if (!ok) throw new BadRequestException('积分不足，请充值后再生成');
       return { mode: 'credits' as const, orderId: null };
+    }
+
+    if (!input.paymentMode && costCredits > 0) {
+      const ok = await this.storage.debitCredits(user.id, costCredits);
+      if (ok) return { mode: 'credits' as const, orderId: null };
+    }
+
+    const usedToday = await this.storage.countDailyJobs(user.id, new Date().toISOString().slice(0, 10));
+    if (usedToday < 1 && !input.paymentMode) {
+      return { mode: 'free' as const, orderId: null };
     }
 
     if (input.paymentMode === 'single') {
@@ -229,7 +235,7 @@ export class JobsService {
       return { mode: 'single' as const, orderId: order.id };
     }
 
-    throw new BadRequestException('今日免费额度已用完，请选择积分扣除或单次付费');
+    throw new BadRequestException('积分和今日免费次数都不足，请先充值积分后再生成');
   }
 
   private async refundFailedJob(job: ImageJobRecord) {
@@ -250,10 +256,10 @@ export class JobsService {
   }
 
   private defaultModelFor(input: ImageJobCreateRequest, provider: Exclude<ImageProviderName, 'auto'>) {
-    if (provider === 'grsai') return 'gpt-image-2';
-    if (input.quality === '512') return 'gemini-3.1-flash-image-preview';
-    if (input.quality === '4K' || input.template === 'product') return 'gemini-3-pro-image-preview';
-    return 'gemini-3.1-flash-image-preview';
+    if (provider === 'tokenrun') return 'gpt-image-2';
+    if (input.quality === '512') return 'gemini-3.1-flash-image';
+    if (input.quality === '4K' || input.template === 'product') return 'gemini-3-pro-image';
+    return 'gemini-3.1-flash-image';
   }
 
   private async cleanupOutputFiles(job: ImageJobRecord) {

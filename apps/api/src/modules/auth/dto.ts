@@ -1,4 +1,4 @@
-import { IsEmail, IsIn, IsObject, IsOptional, IsString, MinLength } from 'class-validator';
+import { IsBoolean, IsEmail, IsIn, IsObject, IsOptional, IsString, MinLength } from 'class-validator';
 import type { AuthProfileUpdateRequest, EmailAuthMode } from '@picup/shared';
 
 export class AuthCredentialsDto {
@@ -8,6 +8,10 @@ export class AuthCredentialsDto {
   @IsString()
   @MinLength(8)
   password!: string;
+
+  @IsOptional()
+  @IsBoolean()
+  termsAccepted?: boolean;
 }
 
 export class EmailAuthStartDto {
@@ -21,6 +25,10 @@ export class EmailAuthStartDto {
   @IsString()
   @MinLength(8)
   password?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  termsAccepted?: boolean;
 }
 
 export class EmailAuthVerifyDto {

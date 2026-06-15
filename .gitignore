@@ -20,3 +20,5 @@ apps/api/storage/outputs/*
 *.log
 picup_actions_server*
 output/playwright/
+/.env.bak*
+.codex/

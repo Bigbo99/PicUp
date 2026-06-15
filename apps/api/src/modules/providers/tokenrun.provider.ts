@@ -3,24 +3,26 @@ import { Agent, FormData, ProxyAgent, type Dispatcher } from 'undici';
 import { ObjectStorageService } from '../../common/object-storage.service';
 import type { ImageProvider, ProviderImageInput, ProviderImageResult } from './provider.types';
 
-const DEFAULT_NEWAPI_TIMEOUT_MS = 10 * 60 * 1000;
-const DEFAULT_NEWAPI_BASE_URL = 'https://tokenrun.ai-mendao.xyz';
+const DEFAULT_TOKENRUN_TIMEOUT_MS = 10 * 60 * 1000;
+const DEFAULT_TOKENRUN_BASE_URL = 'https://tokenrun.ai-mendao.xyz';
 
 @Injectable()
-export class GrsAiProvider implements ImageProvider {
+export class TokenRunProvider implements ImageProvider {
   constructor(@Inject(ObjectStorageService) private readonly objectStorage: ObjectStorageService) {}
 
   async generate(input: ProviderImageInput): Promise<ProviderImageResult> {
-    const apiKey = process.env.NEWAPI_GPT_IMAGE_KEY ?? process.env.GRSAI_API_KEY;
-    if (!apiKey) throw new Error('NEWAPI_GPT_IMAGE_KEY 未配置');
+    const apiKey = process.env.TOKENRUN_API_KEY;
+    if (!apiKey) throw new Error('TOKENRUN_API_KEY is not configured');
 
-    const baseUrl = this.normalizeBaseUrl(process.env.NEWAPI_GPT_IMAGE_BASE_URL ?? process.env.GRSAI_BASE_URL ?? DEFAULT_NEWAPI_BASE_URL);
+    const baseUrl = this.normalizeBaseUrl(
+      process.env.TOKENRUN_BASE_URL ?? DEFAULT_TOKENRUN_BASE_URL
+    );
     const endpoint = input.images.length > 0 ? '/v1/images/edits' : '/v1/images/generations';
     const body = input.images.length > 0
       ? await this.buildEditRequest(input)
       : this.buildGenerationRequest(input);
 
-    console.log(`[newapi] request job=${input.jobId} model=${input.model} endpoint=${endpoint} ratio=${input.aspectRatio} quality=${input.quality}`);
+    console.log(`[tokenrun] request job=${input.jobId} model=${input.model} endpoint=${endpoint} ratio=${input.aspectRatio} quality=${input.quality}`);
     const response = await fetch(`${baseUrl}${endpoint}`, {
       method: 'POST',
       headers: {
@@ -33,10 +35,10 @@ export class GrsAiProvider implements ImageProvider {
 
     if (!response.ok) {
       const message = await response.text();
-      throw new Error(`NewAPI GPT Image 调用失败：${response.status} ${message}`);
+      throw new Error(`TokenRun GPT Image request failed: ${response.status} ${message}`);
     }
 
-    return this.parseResponse(input.jobId, await response.json() as NewApiImageResponse);
+    return this.parseResponse(input.jobId, await response.json() as TokenRunImageResponse);
   }
 
   private buildGenerationRequest(input: ProviderImageInput) {
@@ -66,14 +68,14 @@ export class GrsAiProvider implements ImageProvider {
     return form;
   }
 
-  private async parseResponse(jobId: string, payload: NewApiImageResponse): Promise<ProviderImageResult> {
+  private async parseResponse(jobId: string, payload: TokenRunImageResponse): Promise<ProviderImageResult> {
     const images: ProviderImageResult['images'] = [];
 
     for (const item of payload.data ?? []) {
       if (item.b64_json) {
         const mimeType = this.mimeTypeFromBase64(item.b64_json);
         const extension = mimeType.includes('jpeg') ? '.jpg' : mimeType.includes('webp') ? '.webp' : '.png';
-        const filename = `${jobId}-newapi-${images.length + 1}${extension}`;
+        const filename = `${jobId}-tokenrun-${images.length + 1}${extension}`;
         const url = await this.objectStorage.save('outputs', filename, Buffer.from(item.b64_json, 'base64'), mimeType);
         images.push({ url, mimeType });
         continue;
@@ -84,17 +86,17 @@ export class GrsAiProvider implements ImageProvider {
       }
     }
 
-    if (images.length === 0) throw new Error('NewAPI GPT Image 未返回图片');
+    if (images.length === 0) throw new Error('TokenRun GPT Image returned no images');
     return { images, textOutputs: [] };
   }
 
   private async downloadOutput(jobId: string, sourceUrl: string, index: number) {
     const response = await fetch(sourceUrl, { dispatcher: this.createDispatcher() } as RequestInit & { dispatcher: Dispatcher });
-    if (!response.ok) throw new Error(`下载 NewAPI 图片失败：${response.status}`);
+    if (!response.ok) throw new Error(`TokenRun image download failed: ${response.status}`);
 
     const mimeType = response.headers.get('content-type') ?? 'image/png';
     const extension = mimeType.includes('jpeg') ? '.jpg' : mimeType.includes('webp') ? '.webp' : '.png';
-    const filename = `${jobId}-newapi-${index}${extension}`;
+    const filename = `${jobId}-tokenrun-${index}${extension}`;
     const outputUrl = await this.objectStorage.save('outputs', filename, Buffer.from(await response.arrayBuffer()), mimeType);
     return { url: outputUrl, mimeType };
   }
@@ -130,13 +132,15 @@ export class GrsAiProvider implements ImageProvider {
   }
 
   private createDispatcher(): Dispatcher {
-    const timeoutMs = Number(process.env.NEWAPI_GPT_IMAGE_TIMEOUT_MS ?? process.env.GEMINI_REQUEST_TIMEOUT_MS) || DEFAULT_NEWAPI_TIMEOUT_MS;
+    const timeoutMs = Number(
+      process.env.TOKENRUN_TIMEOUT_MS ?? process.env.GEMINI_REQUEST_TIMEOUT_MS
+    ) || DEFAULT_TOKENRUN_TIMEOUT_MS;
     const options = {
       headersTimeout: timeoutMs,
       bodyTimeout: timeoutMs,
       connectTimeout: Math.min(timeoutMs, 120_000)
     };
-    const proxy = process.env.NEWAPI_GPT_IMAGE_PROXY_URL?.trim()
+    const proxy = process.env.TOKENRUN_PROXY_URL?.trim()
       || process.env.HTTPS_PROXY?.trim()
       || process.env.HTTP_PROXY?.trim()
       || undefined;
@@ -149,7 +153,7 @@ export class GrsAiProvider implements ImageProvider {
   }
 }
 
-interface NewApiImageResponse {
+interface TokenRunImageResponse {
   data?: Array<{
     b64_json?: string;
     url?: string;

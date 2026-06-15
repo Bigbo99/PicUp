@@ -79,6 +79,10 @@ export class AuthService {
   }
 
   async register(input: AuthCredentials, res: Response): Promise<AuthMeResponse> {
+    if (input.termsAccepted !== true) {
+      throw new BadRequestException('注册前请先阅读并同意用户协议和隐私政策');
+    }
+
     const email = this.normalizeEmail(input.email);
     const existing = await this.storage.getUserByEmail(email);
     if (existing && !existing.isGuest) {
@@ -129,6 +133,9 @@ export class AuthService {
     const existing = await this.storage.getUserByEmail(email);
 
     if (mode === 'register') {
+      if (input.termsAccepted !== true) {
+        throw new BadRequestException('注册前请先阅读并同意用户协议和隐私政策');
+      }
       if (!input.password || input.password.length < 8) {
         throw new BadRequestException('Password must be at least 8 characters');
       }
