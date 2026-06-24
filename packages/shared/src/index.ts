@@ -196,6 +196,101 @@ export interface AuthProfileUpdateRequest {
   password?: string;
 }
 
+export interface AdminStatsResponse {
+  users: number;
+  files: number;
+  jobs: number;
+  failedJobs: number;
+  succeededJobs: number;
+  settings: number;
+  auditLogs: number;
+}
+
+export interface AdminOverviewResponse {
+  totals: {
+    users: number;
+    guests: number;
+    registeredUsers: number;
+    admins: number;
+    activeUsers: number;
+    disabledUsers: number;
+    pendingUsers: number;
+    files: number;
+    jobs: number;
+    settings: number;
+    auditLogs: number;
+  };
+  jobs: {
+    queued: number;
+    running: number;
+    retrying: number;
+    succeeded: number;
+    failed: number;
+    refunded: number;
+    successRate: number;
+    rangeCreated: number;
+  };
+  models: Array<{
+    provider: string;
+    model: string;
+    jobs: number;
+    succeeded: number;
+    failed: number;
+  }>;
+  recentFailures: ImageJobRecord[];
+}
+
+export interface AdminUserListEnvelope {
+  users: AuthUser[];
+  nextCursor?: string;
+}
+
+export type AdminUsersResponse = AuthUser[] | AdminUserListEnvelope;
+
+export interface AdminJobListEnvelope {
+  jobs: ImageJobRecord[];
+  nextCursor?: string;
+}
+
+export type AdminJobsResponse = ImageJobRecord[] | AdminJobListEnvelope;
+
+export interface AdminAppSettingRecord {
+  key: string;
+  value: unknown;
+  updatedBy: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AdminAuditLogRecord {
+  id: string;
+  actorId: string | null;
+  action: string;
+  target: string;
+  before: unknown;
+  after: unknown;
+  ip?: string | null;
+  userAgent?: string | null;
+  requestId?: string | null;
+  createdAt: string;
+}
+
+export interface AdminAuditLogListResponse {
+  logs: AdminAuditLogRecord[];
+  nextCursor?: string;
+}
+
+export interface AdminProviderHealthResponse {
+  providers: Array<{
+    provider: Exclude<ImageProviderName, 'auto'>;
+    configured: boolean;
+    enabledModels: number;
+    lastCheckedAt: string;
+    status: 'healthy' | 'degraded' | 'disabled' | 'unknown';
+    message?: string;
+  }>;
+}
+
 export const aspectRatioOptions = [
   { label: '跟随原图', value: 'auto' },
   { label: '正方形', value: '1:1' },

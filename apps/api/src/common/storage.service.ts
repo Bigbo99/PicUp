@@ -34,7 +34,43 @@ export interface AuditLogRecord {
   target: string;
   before: Prisma.JsonValue | null;
   after: Prisma.JsonValue | null;
+  ip?: string | null;
+  userAgent?: string | null;
+  requestId?: string | null;
   createdAt: string;
+}
+
+export interface AuditMetadata {
+  ip?: string;
+  userAgent?: string;
+  requestId?: string;
+}
+
+export interface UserListFilters {
+  query?: string;
+  role?: UserRole;
+  status?: UserStatus;
+  isGuest?: boolean;
+  quotaUnlimited?: boolean;
+  cursor?: string;
+  limit?: number;
+}
+
+export interface JobListFilters {
+  status?: ImageJobStatus;
+  provider?: string;
+  model?: string;
+  userId?: string;
+  cursor?: string;
+  limit?: number;
+}
+
+export interface AuditLogFilters {
+  action?: string;
+  target?: string;
+  actorId?: string;
+  cursor?: string;
+  limit?: number;
 }
 
 export interface LocalDbSnapshot {
@@ -234,7 +270,35 @@ export class StorageService {
     return users.map((user) => this.toStoredUser(user));
   }
 
-  async updateUserQuotaUnlimited(id: string, quotaUnlimited: boolean, actorId?: string) {
+  async listUsersFiltered(filters: UserListFilters = {}) {
+    const limit = this.normalizedLimit(filters.limit, 50, 100);
+    const query = filters.query?.trim();
+    const where: Prisma.UserWhereInput = {
+      ...(filters.role ? { role: filters.role } : {}),
+      ...(filters.status ? { status: filters.status } : {}),
+      ...(typeof filters.isGuest === 'boolean' ? { isGuest: filters.isGuest } : {}),
+      ...(typeof filters.quotaUnlimited === 'boolean' ? { quotaUnlimited: filters.quotaUnlimited } : {}),
+      ...(query ? {
+        OR: [
+          { id: this.uuidOrNever(query) },
+          { email: { contains: query, mode: 'insensitive' } },
+          { displayName: { contains: query, mode: 'insensitive' } }
+        ]
+      } : {})
+    };
+    const users = await this.prisma.user.findMany({
+      where,
+      orderBy: { createdAt: 'desc' },
+      take: limit + 1,
+      ...(filters.cursor ? { cursor: { id: filters.cursor }, skip: 1 } : {})
+    });
+    return {
+      users: users.slice(0, limit).map((user) => this.toStoredUser(user)),
+      nextCursor: users.length > limit ? users[limit].id : undefined
+    };
+  }
+
+  async updateUserQuotaUnlimited(id: string, quotaUnlimited: boolean, actorId?: string, metadata?: AuditMetadata) {
     const before = await this.prisma.user.findUnique({ where: { id } });
     if (!before) return null;
     const after = await this.prisma.user.update({
@@ -247,8 +311,57 @@ export class StorageService {
       target: `users:${id}`,
       before: this.toStoredUser(before) as unknown as Prisma.JsonObject,
       after: this.toStoredUser(after) as unknown as Prisma.JsonObject
-    });
+    }, metadata);
     return this.toStoredUser(after);
+  }
+
+  async updateUserStatus(id: string, status: UserStatus, actorId?: string, reason?: string, metadata?: AuditMetadata) {
+    const before = await this.prisma.user.findUnique({ where: { id } });
+    if (!before) return null;
+    const after = await this.prisma.user.update({
+      where: { id },
+      data: { status }
+    });
+    await this.addAuditLog({
+      actorId,
+      action: 'user.status.update',
+      target: `users:${id}`,
+      before: { ...this.toStoredUser(before), reason: reason ?? null } as unknown as Prisma.JsonObject,
+      after: { ...this.toStoredUser(after), reason: reason ?? null } as unknown as Prisma.JsonObject
+    }, metadata);
+    return this.toStoredUser(after);
+  }
+
+  async adjustUserCredits(id: string, delta: number, actorId?: string, reason?: string, metadata?: AuditMetadata) {
+    const before = await this.prisma.user.findUnique({ where: { id } });
+    if (!before) return null;
+    if (before.creditBalance + delta < 0) return null;
+    const after = await this.prisma.user.update({
+      where: { id },
+      data: { creditBalance: { increment: delta } }
+    });
+    await this.addAuditLog({
+      actorId,
+      action: 'user.credits.adjust',
+      target: `users:${id}`,
+      before: { ...this.toStoredUser(before), delta, reason: reason ?? null } as unknown as Prisma.JsonObject,
+      after: { ...this.toStoredUser(after), delta, reason: reason ?? null } as unknown as Prisma.JsonObject
+    }, metadata);
+    return this.toStoredUser(after);
+  }
+
+  async deleteUser(id: string, actorId?: string, metadata?: AuditMetadata) {
+    const before = await this.prisma.user.findUnique({ where: { id } });
+    if (!before) return null;
+    const deleted = await this.prisma.user.delete({ where: { id } });
+    await this.addAuditLog({
+      actorId,
+      action: 'user.delete',
+      target: `users:${id}`,
+      before: this.toStoredUser(before) as unknown as Prisma.JsonObject,
+      after: null
+    }, metadata);
+    return this.toStoredUser(deleted);
   }
 
   async countDailyJobs(userId: string, datePrefix: string) {
@@ -330,7 +443,7 @@ export class StorageService {
     ));
   }
 
-  async updateModelConfig(id: string, input: Partial<ModelConfig>, actorId?: string) {
+  async updateModelConfig(id: string, input: Partial<ModelConfig>, actorId?: string, metadata?: AuditMetadata) {
     const before = await this.prisma.modelConfig.findUnique({ where: { id } });
     if (!before) return null;
     const after = await this.prisma.modelConfig.update({
@@ -352,7 +465,7 @@ export class StorageService {
       target: `model_configs:${id}`,
       before: this.toModelConfig(before) as unknown as Prisma.JsonObject,
       after: this.toModelConfig(after) as unknown as Prisma.JsonObject
-    });
+    }, metadata);
     return this.toModelConfig(after);
   }
 
@@ -367,7 +480,7 @@ export class StorageService {
     }));
   }
 
-  async upsertSetting(key: string, value: Prisma.InputJsonValue, actorId?: string) {
+  async upsertSetting(key: string, value: Prisma.InputJsonValue, actorId?: string, metadata?: AuditMetadata) {
     const before = await this.prisma.appSetting.findUnique({ where: { key } });
     const after = await this.prisma.appSetting.upsert({
       where: { key },
@@ -403,6 +516,35 @@ export class StorageService {
     }));
   }
 
+  async listAuditLogsFiltered(filters: AuditLogFilters = {}) {
+    const limit = this.normalizedLimit(filters.limit, 100, 200);
+    const logs = await this.prisma.auditLog.findMany({
+      where: {
+        ...(filters.action ? { action: { contains: filters.action, mode: 'insensitive' } } : {}),
+        ...(filters.target ? { target: { contains: filters.target, mode: 'insensitive' } } : {}),
+        ...(filters.actorId ? { actorId: filters.actorId } : {})
+      },
+      orderBy: { createdAt: 'desc' },
+      take: limit + 1,
+      ...(filters.cursor ? { cursor: { id: filters.cursor }, skip: 1 } : {})
+    });
+    return {
+      logs: logs.slice(0, limit).map((log) => ({
+        id: log.id,
+        actorId: log.actorId,
+        action: log.action,
+        target: log.target,
+        before: log.before,
+        after: log.after,
+        ip: log.ip,
+        userAgent: log.userAgent,
+        requestId: log.requestId,
+        createdAt: log.createdAt.toISOString()
+      })),
+      nextCursor: logs.length > limit ? logs[limit].id : undefined
+    };
+  }
+
   async stats() {
     const [users, files, jobs, failedJobs, succeededJobs, settings, auditLogs] = await Promise.all([
       this.prisma.user.count(),
@@ -414,6 +556,123 @@ export class StorageService {
       this.prisma.auditLog.count()
     ]);
     return { users, files, jobs, failedJobs, succeededJobs, settings, auditLogs };
+  }
+
+  async overview(range: string) {
+    const since = this.rangeStart(range);
+    const [
+      users,
+      guests,
+      registeredUsers,
+      admins,
+      activeUsers,
+      disabledUsers,
+      pendingUsers,
+      files,
+      jobs,
+      settings,
+      auditLogs,
+      queued,
+      running,
+      retrying,
+      succeeded,
+      failed,
+      refunded,
+      rangeCreated,
+      modelGroups,
+      recentFailures
+    ] = await Promise.all([
+      this.prisma.user.count(),
+      this.prisma.user.count({ where: { isGuest: true } }),
+      this.prisma.user.count({ where: { isGuest: false } }),
+      this.prisma.user.count({ where: { role: 'admin' } }),
+      this.prisma.user.count({ where: { status: 'active' } }),
+      this.prisma.user.count({ where: { status: 'disabled' } }),
+      this.prisma.user.count({ where: { status: 'pending' } }),
+      this.prisma.fileRecord.count(),
+      this.prisma.imageJob.count(),
+      this.prisma.appSetting.count(),
+      this.prisma.auditLog.count(),
+      this.prisma.imageJob.count({ where: { status: 'queued' } }),
+      this.prisma.imageJob.count({ where: { status: 'running' } }),
+      this.prisma.imageJob.count({ where: { status: 'retrying' } }),
+      this.prisma.imageJob.count({ where: { status: 'succeeded' } }),
+      this.prisma.imageJob.count({ where: { status: 'failed' } }),
+      this.prisma.imageJob.count({ where: { status: 'refunded' } }),
+      this.prisma.imageJob.count({ where: since ? { createdAt: { gte: since } } : {} }),
+      this.prisma.imageJob.groupBy({
+        by: ['selectedProvider', 'selectedModel', 'status'],
+        _count: { _all: true },
+        where: since ? { createdAt: { gte: since } } : undefined
+      }),
+      this.prisma.imageJob.findMany({
+        where: { status: 'failed' },
+        orderBy: { createdAt: 'desc' },
+        take: 8
+      })
+    ]);
+    const byModel = new Map<string, { provider: string; model: string; jobs: number; succeeded: number; failed: number }>();
+    for (const group of modelGroups) {
+      const key = `${group.selectedProvider}:${group.selectedModel}`;
+      const current = byModel.get(key) ?? {
+        provider: group.selectedProvider,
+        model: group.selectedModel,
+        jobs: 0,
+        succeeded: 0,
+        failed: 0
+      };
+      current.jobs += group._count._all;
+      if (group.status === 'succeeded') current.succeeded += group._count._all;
+      if (group.status === 'failed') current.failed += group._count._all;
+      byModel.set(key, current);
+    }
+    const completed = succeeded + failed;
+    return {
+      totals: {
+        users,
+        guests,
+        registeredUsers,
+        admins,
+        activeUsers,
+        disabledUsers,
+        pendingUsers,
+        files,
+        jobs,
+        settings,
+        auditLogs
+      },
+      jobs: {
+        queued,
+        running,
+        retrying,
+        succeeded,
+        failed,
+        refunded,
+        successRate: completed > 0 ? Math.round((succeeded / completed) * 1000) / 10 : 0,
+        rangeCreated
+      },
+      models: [...byModel.values()].sort((left, right) => right.jobs - left.jobs),
+      recentFailures: recentFailures.map((job) => this.toImageJob(job))
+    };
+  }
+
+  async listJobsFiltered(filters: JobListFilters = {}) {
+    const limit = this.normalizedLimit(filters.limit, 50, 100);
+    const jobs = await this.prisma.imageJob.findMany({
+      where: {
+        ...(filters.status ? { status: filters.status } : {}),
+        ...(filters.provider ? { selectedProvider: filters.provider } : {}),
+        ...(filters.model ? { selectedModel: filters.model } : {}),
+        ...(filters.userId ? { userId: filters.userId } : {})
+      },
+      orderBy: { createdAt: 'desc' },
+      take: limit + 1,
+      ...(filters.cursor ? { cursor: { id: filters.cursor }, skip: 1 } : {})
+    });
+    return {
+      jobs: jobs.slice(0, limit).map((job) => this.toImageJob(job)),
+      nextCursor: jobs.length > limit ? jobs[limit].id : undefined
+    };
   }
 
   async debitCredits(userId: string, credits: number) {
@@ -470,6 +729,14 @@ export class StorageService {
     return order ? this.toPaymentOrder(order) : null;
   }
 
+  async getPaymentOrderExternalId(id: string) {
+    const order = await this.prisma.paymentOrder.findUnique({
+      where: { id },
+      select: { externalOrderId: true }
+    });
+    return order?.externalOrderId ?? null;
+  }
+
   async isPaymentOrderUsed(paymentOrderId: string) {
     const count = await this.prisma.imageJob.count({ where: { paymentOrderId } });
     return count > 0;
@@ -506,14 +773,17 @@ export class StorageService {
     target: string;
     before: Prisma.InputJsonValue | null;
     after: Prisma.InputJsonValue | null;
-  }) {
+  }, metadata?: AuditMetadata) {
     await this.prisma.auditLog.create({
       data: {
         actorId: input.actorId,
         action: input.action,
         target: input.target,
         before: input.before ?? undefined,
-        after: input.after ?? undefined
+        after: input.after ?? undefined,
+        ip: metadata?.ip,
+        userAgent: metadata?.userAgent,
+        requestId: metadata?.requestId
       }
     });
   }
@@ -644,5 +914,25 @@ export class StorageService {
 
   private jsonArray<T>(value: Prisma.JsonValue): T[] {
     return Array.isArray(value) ? value as T[] : [];
+  }
+
+  private normalizedLimit(value: number | undefined, fallback: number, max: number) {
+    const limit = Number(value ?? fallback);
+    if (!Number.isFinite(limit) || limit <= 0) return fallback;
+    return Math.min(Math.floor(limit), max);
+  }
+
+  private uuidOrNever(value: string) {
+    return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)
+      ? value
+      : '00000000-0000-0000-0000-000000000000';
+  }
+
+  private rangeStart(range: string) {
+    const now = Date.now();
+    if (range === '7d') return new Date(now - 7 * 24 * 60 * 60 * 1000);
+    if (range === '30d') return new Date(now - 30 * 24 * 60 * 60 * 1000);
+    if (range === 'all') return null;
+    return new Date(now - 24 * 60 * 60 * 1000);
   }
 }

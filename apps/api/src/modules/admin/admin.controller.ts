@@ -1,14 +1,17 @@
-import { Body, Controller, Get, Inject, Param, Patch, Put, Query, Req, UseGuards } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Delete, Get, Inject, NotFoundException, Param, Patch, Put, Query, Req, UseGuards } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
+import type { ImageJobStatus, ImageProviderName, UserRole, UserStatus } from '@picup/shared';
 import { AuthService } from '../auth/auth.service';
 import { AdminGuard } from '../auth/admin.guard';
+import { AdminOriginGuard } from './admin-origin.guard';
+import { AdminRateLimitGuard } from './admin-rate-limit.guard';
 import { StorageService } from '../../common/storage.service';
 import { ModelsService } from '../models/models.service';
 import type { AuthenticatedRequest } from '../auth/auth.types';
-import { UpdateModelConfigDto, UpdateUserQuotaDto, UpsertSettingDto } from './dto';
+import { UpdateModelConfigDto, UpdateUserCreditsDto, UpdateUserQuotaDto, UpdateUserStatusDto, UpsertSettingDto } from './dto';
 
 @Controller('api/admin')
-@UseGuards(AdminGuard)
+@UseGuards(AdminGuard, AdminRateLimitGuard, AdminOriginGuard)
 export class AdminController {
   constructor(
     @Inject(StorageService) private readonly storage: StorageService,
@@ -17,9 +20,28 @@ export class AdminController {
   ) {}
 
   @Get('users')
-  async users(@Query('limit') limit?: string) {
-    const users = await this.storage.listUsers(Number(limit ?? 50));
-    return users.map((user) => this.auth.toPublicUser(user));
+  async users(
+    @Query('query') query?: string,
+    @Query('role') role?: UserRole,
+    @Query('status') status?: UserStatus,
+    @Query('isGuest') isGuest?: string,
+    @Query('quotaUnlimited') quotaUnlimited?: string,
+    @Query('cursor') cursor?: string,
+    @Query('limit') limit?: string
+  ) {
+    const result = await this.storage.listUsersFiltered({
+      query,
+      role: this.userRole(role),
+      status: this.userStatus(status),
+      isGuest: this.optionalBoolean(isGuest),
+      quotaUnlimited: this.optionalBoolean(quotaUnlimited),
+      cursor,
+      limit: Number(limit ?? 50)
+    });
+    return {
+      users: result.users.map((user) => this.auth.toPublicUser(user)),
+      nextCursor: result.nextCursor
+    };
   }
 
   @Patch('users/:id/quota')
@@ -28,13 +50,82 @@ export class AdminController {
     @Body() body: UpdateUserQuotaDto,
     @Req() req: AuthenticatedRequest
   ) {
-    const user = await this.storage.updateUserQuotaUnlimited(id, body.quotaUnlimited, req.authUser.id);
+    const user = await this.storage.updateUserQuotaUnlimited(id, body.quotaUnlimited, req.authUser.id, this.auditMetadata(req));
     return user ? this.auth.toPublicUser(user) : null;
+  }
+
+  @Patch('users/:id/status')
+  async updateUserStatus(
+    @Param('id') id: string,
+    @Body() body: UpdateUserStatusDto,
+    @Req() req: AuthenticatedRequest
+  ) {
+    if (id === req.authUser.id && body.status !== 'active') {
+      throw new BadRequestException('不能禁用当前登录的管理员');
+    }
+    const user = await this.storage.updateUserStatus(id, body.status, req.authUser.id, body.reason, this.auditMetadata(req));
+    if (!user) throw new NotFoundException('用户不存在');
+    return this.auth.toPublicUser(user);
+  }
+
+  @Patch('users/:id/credits')
+  async updateUserCredits(
+    @Param('id') id: string,
+    @Body() body: UpdateUserCreditsDto,
+    @Req() req: AuthenticatedRequest
+  ) {
+    const user = await this.storage.adjustUserCredits(id, body.delta, req.authUser.id, body.reason, this.auditMetadata(req));
+    if (!user) throw new BadRequestException('用户不存在，或调整后余额不能为负数');
+    return this.auth.toPublicUser(user);
+  }
+
+  @Delete('users/:id')
+  async deleteUser(
+    @Param('id') id: string,
+    @Req() req: AuthenticatedRequest
+  ) {
+    if (id === req.authUser.id) {
+      throw new BadRequestException('不能删除当前登录的管理员');
+    }
+    const user = await this.storage.deleteUser(id, req.authUser.id, this.auditMetadata(req));
+    if (!user) throw new NotFoundException('用户不存在');
+    return this.auth.toPublicUser(user);
   }
 
   @Get('stats')
   async stats() {
     return this.storage.stats();
+  }
+
+  @Get('overview')
+  async overview(@Query('range') range?: string) {
+    return this.storage.overview(range ?? '24h');
+  }
+
+  @Get('jobs')
+  async jobs(
+    @Query('status') status?: ImageJobStatus,
+    @Query('provider') provider?: string,
+    @Query('model') model?: string,
+    @Query('userId') userId?: string,
+    @Query('cursor') cursor?: string,
+    @Query('limit') limit?: string
+  ) {
+    return this.storage.listJobsFiltered({
+      status: this.jobStatus(status),
+      provider,
+      model,
+      userId,
+      cursor,
+      limit: Number(limit ?? 50)
+    });
+  }
+
+  @Get('jobs/:id')
+  async job(@Param('id') id: string) {
+    const job = await this.storage.getJob(id, undefined, true);
+    if (!job) throw new NotFoundException('任务不存在');
+    return job;
   }
 
   @Get('models')
@@ -48,7 +139,7 @@ export class AdminController {
     @Body() body: UpdateModelConfigDto,
     @Req() req: AuthenticatedRequest
   ) {
-    return this.storage.updateModelConfig(id, body, req.authUser.id);
+    return this.storage.updateModelConfig(id, body, req.authUser.id, this.auditMetadata(req));
   }
 
   @Get('settings')
@@ -62,11 +153,75 @@ export class AdminController {
     @Body() body: UpsertSettingDto,
     @Req() req: AuthenticatedRequest
   ) {
-    return this.storage.upsertSetting(key, body.value as Prisma.InputJsonObject, req.authUser.id);
+    return this.storage.upsertSetting(key, body.value as Prisma.InputJsonObject, req.authUser.id, this.auditMetadata(req));
   }
 
   @Get('audit-logs')
-  async auditLogs(@Query('limit') limit?: string) {
-    return this.storage.listAuditLogs(Number(limit ?? 100));
+  async auditLogs(
+    @Query('action') action?: string,
+    @Query('target') target?: string,
+    @Query('actorId') actorId?: string,
+    @Query('cursor') cursor?: string,
+    @Query('limit') limit?: string
+  ) {
+    return this.storage.listAuditLogsFiltered({
+      action,
+      target,
+      actorId,
+      cursor,
+      limit: Number(limit ?? 100)
+    });
+  }
+
+  @Get('providers/health')
+  async providerHealth() {
+    const models = (await this.models.getModels()).models;
+    return {
+      providers: (['gemini', 'tokenrun'] satisfies Array<Exclude<ImageProviderName, 'auto'>>).map((provider) => {
+        const enabledModels = models.filter((model) => model.provider === provider && model.enabled).length;
+        const configured = provider === 'gemini'
+          ? Boolean(process.env.GEMINI_API_KEY || process.env.PROVIDER_MOCK_ENABLED !== 'false')
+          : Boolean(process.env.TOKENRUN_API_KEY || process.env.PROVIDER_MOCK_ENABLED !== 'false');
+        return {
+          provider,
+          configured,
+          enabledModels,
+          lastCheckedAt: new Date().toISOString(),
+          status: configured && enabledModels > 0 ? 'healthy' : enabledModels > 0 ? 'degraded' : 'disabled',
+          message: configured ? undefined : `${provider} 密钥未配置`
+        };
+      })
+    };
+  }
+
+  private optionalBoolean(value?: string) {
+    if (value === undefined || value === '') return undefined;
+    if (value === 'true') return true;
+    if (value === 'false') return false;
+    return undefined;
+  }
+
+  private userRole(value?: string) {
+    return value === 'guest' || value === 'user' || value === 'admin' ? value : undefined;
+  }
+
+  private userStatus(value?: string) {
+    return value === 'pending' || value === 'active' || value === 'disabled' ? value : undefined;
+  }
+
+  private jobStatus(value?: string) {
+    return value === 'queued' || value === 'running' || value === 'retrying' || value === 'succeeded' || value === 'failed' || value === 'refunded'
+      ? value
+      : undefined;
+  }
+
+  private auditMetadata(req: AuthenticatedRequest) {
+    const forwardedFor = req.headers['x-forwarded-for'];
+    const requestId = req.headers['x-request-id'];
+    return {
+      ip: Array.isArray(forwardedFor) ? forwardedFor[0] : forwardedFor?.split(',')[0]?.trim() || req.socket.remoteAddress,
+      userAgent: req.headers['user-agent'],
+      requestId: Array.isArray(requestId) ? requestId[0] : requestId
+    };
   }
 }

@@ -1,4 +1,5 @@
-import { Body, Controller, Delete, Get, Inject, Param, Post, Query, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Inject, Param, Post, Query, Req, Res, UseGuards } from '@nestjs/common';
+import type { Response } from 'express';
 import { JobsService } from './jobs.service';
 import { CreateImageJobDto } from './dto';
 import { AuthGuard } from '../auth/auth.guard';
@@ -27,6 +28,20 @@ export class JobsController {
   @Get(':id')
   get(@Param('id') id: string, @Req() req: AuthenticatedRequest) {
     return this.jobs.get(id, req.authUser);
+  }
+
+  @Get(':id/download/:index')
+  async download(
+    @Param('id') id: string,
+    @Param('index') index: string,
+    @Req() req: AuthenticatedRequest,
+    @Res() res: Response
+  ) {
+    const user = await this.auth.requireUser(req);
+    const file = await this.jobs.downloadOutput(id, Number(index), user);
+    res.setHeader('Content-Type', file.mimeType);
+    res.setHeader('Content-Disposition', `attachment; filename="${file.filename}"`);
+    res.send(file.body);
   }
 
   @Delete(':id')

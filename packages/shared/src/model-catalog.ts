@@ -18,7 +18,7 @@ export const MODEL_CATALOG: ModelCatalogEntry[] = [
     enabled: true,
     priority: 10,
     maxInputImages: 14,
-    supportedRatios: ['1:1', '1:8', '1:4', '2:3', '3:2', '3:4', '8:1', '4:1', '4:3', '4:5', '5:4', '16:9', '9:16', '21:9'],
+    supportedRatios: ['auto', '1:1', '1:8', '1:4', '2:3', '3:2', '3:4', '8:1', '4:1', '4:3', '4:5', '5:4', '16:9', '9:16', '21:9'],
     supportedQualities: ['512', '1K', '2K', '4K'],
     costCredits: 1
   },
@@ -33,7 +33,7 @@ export const MODEL_CATALOG: ModelCatalogEntry[] = [
     enabled: true,
     priority: 20,
     maxInputImages: 14,
-    supportedRatios: ['1:1', '2:3', '3:2', '3:4', '4:3', '4:5', '5:4', '16:9', '9:16', '21:9'],
+    supportedRatios: ['auto', '1:1', '2:3', '3:2', '3:4', '4:3', '4:5', '5:4', '16:9', '9:16', '21:9'],
     supportedQualities: ['1K', '2K', '4K'],
     costCredits: 2
   },
@@ -49,7 +49,7 @@ export const MODEL_CATALOG: ModelCatalogEntry[] = [
     priority: 30,
     maxInputImages: 4,
     supportedRatios: ['1:1', '16:9', '9:16', '3:4', '4:5'],
-    supportedQualities: ['512', '1K', '2K', '4K'],
+    supportedQualities: ['2K'],
     costCredits: 1
   }
 ];

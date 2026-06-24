@@ -132,7 +132,7 @@ function modelShortDescription(model: ModelConfig) {
   const catalog = findModelCatalogEntry(model.provider, model.model);
   if (catalog?.model === 'gemini-3.1-flash-image') return '适合日常改图、中文改字和多参考图编辑';
   if (catalog?.model === 'gemini-3-pro-image') return '适合复杂构图、商品图和高质量输出';
-  if (catalog?.model === 'gpt-image-2') return '适合通用生成与参考图编辑';
+  if (catalog?.model === 'gpt-image-2') return '固定比例输出，建议 2K 起步，适合通用生成与参考图编辑';
   return model.description;
 }
 
@@ -334,12 +334,10 @@ export default function HomePage() {
   }, [model, modelOptions, modelsQuery.data?.defaultModel, provider]);
 
   const availableRatios = useMemo(() => {
-    const autoRatio = aspectRatioOptions.find((item) => item.value === 'auto');
     const supported = selectedModelConfig?.supportedRatios;
-    const ratios = supported
-      ? aspectRatioOptions.filter((item) => item.value !== 'auto' && supported.includes(item.value))
-      : aspectRatioOptions.filter((item) => item.value !== 'auto');
-    return autoRatio ? [autoRatio, ...ratios] : ratios;
+    return supported
+      ? aspectRatioOptions.filter((item) => supported.includes(item.value))
+      : aspectRatioOptions;
   }, [selectedModelConfig]);
 
   const availableResolutions = useMemo(() => {
@@ -740,6 +738,15 @@ export default function HomePage() {
                     >
                       账户编辑
                     </button>
+                    {meQuery.data?.user.role === 'admin' && (
+                      <Link
+                        className="mt-2 inline-flex min-h-10 w-full items-center justify-center gap-2 rounded-lg bg-slate-950 px-3 text-sm font-semibold text-white transition-colors hover:bg-slate-800"
+                        href="/admin"
+                        onClick={() => setAccountMenuOpen(false)}
+                      >
+                        管理后台
+                      </Link>
+                    )}
                     <button
                       className="mt-2 inline-flex min-h-10 w-full cursor-pointer items-center justify-center gap-2 rounded-lg border border-red-200 bg-white px-3 text-sm font-semibold text-red-600 transition-colors hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
                       onClick={() => logoutMutation.mutate()}
@@ -950,6 +957,7 @@ export default function HomePage() {
             <MobileAccountPanel
               active
               isGuest={isGuest}
+              isAdmin={meQuery.data?.user.role === 'admin'}
               credits={meQuery.data?.credits ? { ...meQuery.data.credits, rechargePlans } : undefined}
               rechargePending={rechargeMutation.isPending}
               onRecharge={(planId) => rechargeMutation.mutate({ planId })}
@@ -1137,6 +1145,7 @@ function ContentPlatformLink({ className = '' }: { className?: string }) {
 function MobileAccountPanel({
   active,
   isGuest,
+  isAdmin,
   credits,
   rechargePending,
   onRecharge,
@@ -1145,6 +1154,7 @@ function MobileAccountPanel({
 }: {
   active: boolean;
   isGuest: boolean;
+  isAdmin: boolean;
   credits?: {
     balance: number;
     rechargePlans: Array<Pick<CreditRechargePlan, 'id' | 'amountCents' | 'credits'>>;
@@ -1203,14 +1213,24 @@ function MobileAccountPanel({
             登录 / 注册
           </Link>
         ) : (
-          <button
-            className="inline-flex min-h-12 w-full cursor-pointer items-center justify-center gap-2 rounded-lg border border-line bg-white px-4 font-bold text-ink transition-colors hover:border-teal-600 hover:text-teal-700 disabled:cursor-not-allowed disabled:opacity-60"
-            onClick={onLogout}
-            disabled={logoutPending}
-          >
-            {logoutPending ? <Loader2 className="animate-spin" size={20} aria-hidden /> : <LogOut size={20} aria-hidden />}
-            退出登录
-          </button>
+          <div className="grid gap-2">
+            {isAdmin && (
+              <Link
+                className="inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-lg bg-slate-950 px-4 font-bold text-white transition-colors hover:bg-slate-800"
+                href="/admin"
+              >
+                管理后台
+              </Link>
+            )}
+            <button
+              className="inline-flex min-h-12 w-full cursor-pointer items-center justify-center gap-2 rounded-lg border border-line bg-white px-4 font-bold text-ink transition-colors hover:border-teal-600 hover:text-teal-700 disabled:cursor-not-allowed disabled:opacity-60"
+              onClick={onLogout}
+              disabled={logoutPending}
+            >
+              {logoutPending ? <Loader2 className="animate-spin" size={20} aria-hidden /> : <LogOut size={20} aria-hidden />}
+              退出登录
+            </button>
+          </div>
         )}
         <ContentPlatformLink className="mt-3 w-full" />
       </div>
@@ -1438,7 +1458,7 @@ function ResultPanel({
           <div className="mt-3 flex flex-col gap-3 sm:flex-row">
             <a
               className="inline-flex min-h-11 cursor-pointer items-center justify-center gap-2 rounded-lg bg-teal-600 px-4 font-semibold text-white transition-colors hover:bg-teal-700"
-              href={output.url}
+              href={`/api/image/jobs/${job.id}/download/0`}
               download
             >
               <Download size={18} aria-hidden />

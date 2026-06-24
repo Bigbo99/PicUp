@@ -9,7 +9,7 @@ export class AdminGuard implements CanActivate {
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context.switchToHttp().getRequest<AuthenticatedRequest>();
     const user = await this.auth.requireUser(request);
-    if (user.role !== 'admin') {
+    if (user.role !== 'admin' || user.status !== 'active' || user.isGuest) {
       throw new ForbiddenException('Admin role required');
     }
     return true;
