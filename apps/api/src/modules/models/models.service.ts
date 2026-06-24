@@ -24,7 +24,11 @@ export class ModelsService {
         provider: catalog.provider,
         model: catalog.model,
         displayName: catalog.displayName,
-        description: catalog.description
+        description: catalog.description,
+        maxInputImages: catalog.maxInputImages,
+        supportedRatios: [...catalog.supportedRatios],
+        supportedQualities: [...catalog.supportedQualities],
+        costCredits: catalog.costCredits
       });
     }
 

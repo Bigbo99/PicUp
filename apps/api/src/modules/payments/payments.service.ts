@@ -5,7 +5,7 @@ import { StorageService } from '../../common/storage.service';
 import { singleUsePriceCents } from '../auth/auth.service';
 
 const paymentRechargePlans: CreditRechargePlan[] = [
-  { id: 'credits_10_trial', title: '10 积分', amountCents: 10, credits: 10 },
+  // { id: 'credits_10_trial', title: '10 积分', amountCents: 10, credits: 10 },
   { id: 'credits_20', title: '20 积分', amountCents: 990, credits: 20 },
   { id: 'credits_45', title: '45 积分', amountCents: 1990, credits: 45 }
 ];
@@ -21,6 +21,19 @@ export class PaymentsService {
   async getOrder(id: string, userId: string) {
     const order = await this.storage.getPaymentOrder(id, userId);
     if (!order) throw new NotFoundException('支付订单不存在');
+    if (order.status === 'paid' || !order.id) return order;
+
+    const queryResult = await this.queryWechatOrder(order.id).catch((error) => {
+      console.warn(`[payment] query order failed id=${order.id}: ${error instanceof Error ? error.message : String(error)}`);
+      return null;
+    });
+    if (!queryResult) return order;
+
+    if (queryResult.return_code === 'SUCCESS' && queryResult.result_code === 'SUCCESS' && queryResult.trade_state === 'SUCCESS') {
+      const paid = await this.storage.markPaymentOrderPaid(queryResult.out_trade_no);
+      return paid ?? order;
+    }
+
     return order;
   }
 
@@ -128,6 +141,33 @@ export class PaymentsService {
       throw new ServiceUnavailableException(this.wechatErrorMessage(result, text));
     }
     return result.code_url;
+  }
+
+  private async queryWechatOrder(orderId: string) {
+    const order = await this.storage.getPaymentOrder(orderId);
+    if (!order) return null;
+    const externalOrderId = await this.storage.getPaymentOrderExternalId(orderId);
+    if (!externalOrderId) return null;
+
+    const appid = this.env('WECHAT_PAY_APPID');
+    const mchId = this.env('WECHAT_PAY_MCH_ID');
+    const apiKey = this.env('WECHAT_PAY_API_KEY');
+    if (!appid || !mchId || !apiKey) return null;
+
+    const params: Record<string, string> = {
+      appid,
+      mch_id: mchId,
+      out_trade_no: externalOrderId,
+      nonce_str: randomBytes(16).toString('hex')
+    };
+    params.sign = this.wechatSign(params);
+
+    const response = await fetch('https://api.mch.weixin.qq.com/pay/orderquery', {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/xml; charset=utf-8' },
+      body: this.toXml(params)
+    });
+    return this.parseXml(await response.text());
   }
 
   private wechatErrorMessage(result: Record<string, string>, raw: string) {

@@ -131,3 +131,108 @@ a:focus-visible {
     transition-duration: 0.01ms !important;
   }
 }
+
+.admin-primary-button {
+  display: inline-flex;
+  min-height: 2.5rem;
+  cursor: pointer;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  border-radius: 0.5rem;
+  background: #0f172a;
+  padding: 0 0.875rem;
+  font-size: 0.875rem;
+  font-weight: 800;
+  color: #fff;
+  transition: background-color 160ms ease, border-color 160ms ease, color 160ms ease;
+}
+
+.admin-primary-button:hover {
+  background: #1e293b;
+}
+
+.admin-secondary-button {
+  display: inline-flex;
+  min-height: 2.5rem;
+  cursor: pointer;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  border-radius: 0.5rem;
+  border: 1px solid #cbd5e1;
+  background: #fff;
+  padding: 0 0.75rem;
+  font-size: 0.875rem;
+  font-weight: 800;
+  color: #334155;
+  transition: background-color 160ms ease, border-color 160ms ease, color 160ms ease;
+}
+
+.admin-secondary-button:hover {
+  border-color: #0f766e;
+  color: #0f766e;
+}
+
+.admin-secondary-button:disabled,
+.admin-primary-button:disabled,
+.admin-icon-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.admin-secondary-button:disabled:hover {
+  border-color: #cbd5e1;
+  color: #475569;
+}
+
+.admin-icon-button {
+  display: inline-flex;
+  height: 2.5rem;
+  width: 2.5rem;
+  cursor: pointer;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0.5rem;
+  border: 1px solid #cbd5e1;
+  background: #fff;
+  color: #475569;
+  transition: background-color 160ms ease, border-color 160ms ease, color 160ms ease;
+}
+
+.admin-icon-button:hover {
+  border-color: #0f766e;
+  color: #0f766e;
+}
+
+.admin-table-wrap {
+  overflow-x: auto;
+}
+
+.admin-table {
+  width: 100%;
+  min-width: 860px;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 0.875rem;
+}
+
+.admin-table th {
+  border-bottom: 1px solid #e2e8f0;
+  padding: 0.75rem;
+  text-align: left;
+  font-size: 0.75rem;
+  font-weight: 900;
+  color: #64748b;
+  text-transform: uppercase;
+}
+
+.admin-table td {
+  border-bottom: 1px solid #e2e8f0;
+  padding: 0.75rem;
+  vertical-align: middle;
+}
+
+.admin-table tbody tr:hover {
+  background: #f8fafc;
+}

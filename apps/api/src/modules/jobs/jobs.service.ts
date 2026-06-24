@@ -88,6 +88,20 @@ export class JobsService {
     return job;
   }
 
+  async downloadOutput(id: string, outputIndex: number, user: AuthUser) {
+    const job = await this.storage.getJob(id, user.id, user.role === 'admin');
+    if (!job) throw new NotFoundException('任务不存在');
+    const output = job.outputImages[outputIndex];
+    if (!output) throw new NotFoundException('下载文件不存在');
+    const body = await this.objectStorage.readByUrl(output.url);
+    const extension = this.extensionForMimeType(output.mimeType) ?? this.extensionFromUrl(output.url);
+    return {
+      body,
+      mimeType: output.mimeType || 'application/octet-stream',
+      filename: `picup-${job.id}-${outputIndex + 1}${extension}`
+    };
+  }
+
   async list(limit = 20, user?: AuthUser) {
     return this.storage.listJobs(limit, user?.id, user?.role === 'admin');
   }
@@ -182,7 +196,7 @@ export class JobsService {
     if (input.imageIds.length > config.maxInputImages) {
       throw new BadRequestException(`当前模型最多支持 ${config.maxInputImages} 张参考图`);
     }
-    if (input.aspectRatio !== 'auto' && !config.supportedRatios.includes(input.aspectRatio)) {
+    if (!config.supportedRatios.includes(input.aspectRatio)) {
       throw new BadRequestException(`当前模型不支持 ${input.aspectRatio} 图片比例`);
     }
     if (!config.supportedQualities.includes(input.quality)) {
@@ -266,5 +280,18 @@ export class JobsService {
     await Promise.allSettled(job.outputImages.map(async (image) => {
       await this.objectStorage.deleteByUrl(image.url);
     }));
+  }
+
+  private extensionForMimeType(mimeType: string) {
+    if (mimeType === 'image/jpeg') return '.jpg';
+    if (mimeType === 'image/png') return '.png';
+    if (mimeType === 'image/webp') return '.webp';
+    return '';
+  }
+
+  private extensionFromUrl(url: string) {
+    const filename = this.objectStorage.filenameFromUrl(url);
+    const match = filename.match(/\.[A-Za-z0-9]+$/);
+    return match?.[0] ?? '';
   }
 }

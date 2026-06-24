@@ -1,4 +1,4 @@
-import { IsArray, IsBoolean, IsInt, IsObject, IsOptional, IsString, Min } from 'class-validator';
+import { IsArray, IsBoolean, IsIn, IsInt, IsObject, IsOptional, IsString, Max, Min } from 'class-validator';
 import type { ImageQuality } from '@picup/shared';
 
 export class UpdateModelConfigDto {
@@ -46,4 +46,23 @@ export class UpsertSettingDto {
 export class UpdateUserQuotaDto {
   @IsBoolean()
   quotaUnlimited!: boolean;
+}
+
+export class UpdateUserStatusDto {
+  @IsIn(['pending', 'active', 'disabled'])
+  status!: 'pending' | 'active' | 'disabled';
+
+  @IsOptional()
+  @IsString()
+  reason?: string;
+}
+
+export class UpdateUserCreditsDto {
+  @IsInt()
+  @Min(-1000)
+  @Max(1000)
+  delta!: number;
+
+  @IsString()
+  reason!: string;
 }
