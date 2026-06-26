@@ -1,5 +1,6 @@
 import { CanActivate, ExecutionContext, HttpException, HttpStatus, Injectable } from '@nestjs/common';
 import type { Request } from 'express';
+import { clientIp } from '../../common/request-ip';
 
 const unsafeMethods = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 
@@ -44,9 +45,7 @@ export class AdminRateLimitGuard implements CanActivate {
   }
 
   private ipFor(request: Request) {
-    const forwardedFor = request.headers['x-forwarded-for'];
-    if (Array.isArray(forwardedFor)) return forwardedFor[0];
-    return forwardedFor?.split(',')[0]?.trim() || request.socket.remoteAddress;
+    return clientIp(request);
   }
 
   private cleanup(now: number) {

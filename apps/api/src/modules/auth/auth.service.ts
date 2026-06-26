@@ -23,6 +23,7 @@ import type {
 } from '@picup/shared';
 import { StorageService, type StoredUser, type VisitorMetadata } from '../../common/storage.service';
 import { PrismaService } from '../../common/database/prisma.service';
+import { clientIp } from '../../common/request-ip';
 import type { AuthenticatedRequest } from './auth.types';
 import type { WechatAuthCallbackDto } from './dto';
 
@@ -498,9 +499,7 @@ export class AuthService {
   }
 
   private async visitorMetadata(req: AuthenticatedRequest, lookup = true): Promise<VisitorMetadata> {
-    const forwardedFor = req.headers['x-forwarded-for'];
-    const forwardedIp = Array.isArray(forwardedFor) ? forwardedFor[0] : forwardedFor?.split(',')[0]?.trim();
-    const ip = forwardedIp || req.socket.remoteAddress;
+    const ip = clientIp(req);
     const headerCountry = this.headerString(req.headers['cf-ipcountry'])
       || this.headerString(req.headers['x-vercel-ip-country'])
       || this.headerString(req.headers['x-appengine-country']);

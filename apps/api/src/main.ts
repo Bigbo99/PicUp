@@ -31,6 +31,7 @@ function getCorsOrigins() {
 async function bootstrap() {
   const storage = await ensureStorage();
   const app = await NestFactory.create(AppModule);
+  app.getHttpAdapter().getInstance().set('trust proxy', true);
   app.use('/api/payments/wechat/notify', express.text({ type: ['text/xml', 'application/xml', '*/*'] }));
   app.enableCors({
     origin: getCorsOrigins(),

@@ -236,3 +236,7 @@ a:focus-visible {
 .admin-table tbody tr:hover {
   background: #f7faf8;
 }
+
+.admin-mobile-tabs::-webkit-scrollbar {
+  display: none;
+}
