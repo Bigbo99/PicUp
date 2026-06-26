@@ -6,6 +6,7 @@ import { AdminGuard } from '../auth/admin.guard';
 import { AdminOriginGuard } from './admin-origin.guard';
 import { AdminRateLimitGuard } from './admin-rate-limit.guard';
 import { StorageService } from '../../common/storage.service';
+import { clientIp } from '../../common/request-ip';
 import { ModelsService } from '../models/models.service';
 import type { AuthenticatedRequest } from '../auth/auth.types';
 import { UpdateModelConfigDto, UpdateUserCreditsDto, UpdateUserDto, UpdateUserQuotaDto, UpdateUserStatusDto, UpsertSettingDto } from './dto';
@@ -274,10 +275,9 @@ export class AdminController {
   }
 
   private auditMetadata(req: AuthenticatedRequest) {
-    const forwardedFor = req.headers['x-forwarded-for'];
     const requestId = req.headers['x-request-id'];
     return {
-      ip: Array.isArray(forwardedFor) ? forwardedFor[0] : forwardedFor?.split(',')[0]?.trim() || req.socket.remoteAddress,
+      ip: clientIp(req),
       userAgent: req.headers['user-agent'],
       requestId: Array.isArray(requestId) ? requestId[0] : requestId
     };

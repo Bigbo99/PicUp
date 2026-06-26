@@ -184,27 +184,32 @@ export default function AdminPage() {
   return (
     <main className="min-h-screen bg-[#f4f7f5] text-[#083b2d]">
       <div className="mx-auto flex min-h-screen max-w-[1680px] flex-col lg:flex-row">
-        <aside className={`flex border-b border-emerald-950/10 bg-white/95 px-4 py-4 shadow-sm transition-all lg:sticky lg:top-0 lg:h-screen lg:flex-col lg:border-b-0 lg:border-r ${sidebarCollapsed ? 'lg:w-24' : 'lg:w-72'}`}>
+        <aside className={`grid border-b border-emerald-950/10 bg-white/95 px-4 py-3 shadow-sm transition-all lg:sticky lg:top-0 lg:h-screen lg:flex lg:flex-col lg:px-4 lg:py-4 lg:border-b-0 lg:border-r ${sidebarCollapsed ? 'lg:w-24' : 'lg:w-72'}`}>
           <div className="flex items-center justify-between gap-3">
             <div className={`flex min-w-0 items-center gap-3 ${sidebarCollapsed ? 'lg:justify-center' : ''}`}>
-              <span className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-emerald-100 text-emerald-700">
+              <span className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-emerald-100 text-emerald-700 sm:h-11 sm:w-11">
                 <Wand2 size={20} aria-hidden />
               </span>
-              <div className={sidebarCollapsed ? 'lg:hidden' : ''}>
-                <p className="text-xs font-bold uppercase tracking-[0.16em] text-emerald-700">PicUp Admin</p>
-                <h1 className="mt-0.5 text-xl font-black tracking-normal">后台管理</h1>
+              <div className={`min-w-0 ${sidebarCollapsed ? 'lg:hidden' : ''}`}>
+                <p className="text-[11px] font-black uppercase leading-none tracking-[0.18em] text-emerald-700">PicUp Admin</p>
+                <h1 className="mt-1 truncate text-lg font-black tracking-normal sm:text-xl">后台</h1>
               </div>
             </div>
-            <Link className="admin-icon-button lg:hidden" href="/" title="返回工作台" aria-label="返回工作台">
-              <Home size={18} aria-hidden />
-            </Link>
+            <div className="flex items-center gap-2 lg:hidden">
+              <span className="max-w-28 truncate rounded-full bg-emerald-50 px-3 py-2 text-xs font-black text-emerald-800">
+                {user.isSuperAdmin ? '超级管理员' : '管理员'}
+              </span>
+              <Link className="admin-icon-button" href="/" title="返回工作台" aria-label="返回工作台">
+                <Home size={18} aria-hidden />
+              </Link>
+            </div>
           </div>
 
-          <nav className="mt-6 flex gap-2 overflow-x-auto lg:grid lg:gap-4 lg:overflow-visible">
+          <nav className="admin-mobile-tabs -mx-4 mt-3 flex gap-2 overflow-x-auto border-t border-emerald-950/10 px-4 pt-3 [scrollbar-width:none] lg:mx-0 lg:mt-6 lg:grid lg:gap-4 lg:overflow-visible lg:border-t-0 lg:px-0 lg:pt-0">
             {tabs.map((tab) => (
               <button
                 key={tab.id}
-                className={`inline-flex h-11 shrink-0 items-center gap-2 rounded-lg text-sm font-bold transition-colors ${sidebarCollapsed ? 'lg:w-11 lg:justify-center lg:px-0' : 'px-3'} ${
+                className={`inline-flex h-10 shrink-0 items-center gap-2 rounded-lg text-sm font-black transition-colors sm:h-11 ${sidebarCollapsed ? 'lg:w-11 lg:justify-center lg:px-0' : 'px-3'} ${
                   activeTab === tab.id
                     ? 'bg-emerald-50 text-emerald-800 shadow-[inset_3px_0_0_#059669]'
                     : 'text-slate-500 hover:bg-slate-50 hover:text-emerald-800'
@@ -257,13 +262,13 @@ export default function AdminPage() {
           </div>
         </aside>
 
-        <section className="min-w-0 flex-1 px-4 py-5 lg:px-7">
-          <header className="mb-5 flex flex-col gap-3 border-b border-emerald-950/10 pb-4 md:flex-row md:items-end md:justify-between">
+        <section className="min-w-0 flex-1 px-4 py-4 lg:px-7 lg:py-5">
+          <header className="mb-4 flex flex-row items-end justify-between gap-3 border-b border-emerald-950/10 pb-4">
             <div>
-              <p className="text-sm font-bold text-emerald-700">{activeTab === 'overview' ? 'Dashboard' : 'Management'}</p>
-              <h2 className="mt-1 text-3xl font-black tracking-normal">{activeTab === 'overview' ? '数据看板' : tabs.find((tab) => tab.id === activeTab)?.label}</h2>
+              <p className="text-xs font-black text-emerald-700 sm:text-sm">{activeTab === 'overview' ? 'Dashboard' : 'Management'}</p>
+              <h2 className="mt-1 text-2xl font-black tracking-normal sm:text-3xl">{activeTab === 'overview' ? '数据看板' : tabs.find((tab) => tab.id === activeTab)?.label}</h2>
             </div>
-            <div className="flex items-center gap-2 text-sm text-slate-500">
+            <div className="flex shrink-0 items-center gap-2 text-sm text-slate-500">
               <span className="hidden rounded-lg border border-emerald-950/10 bg-white px-3 py-2 text-xs font-bold text-slate-500 md:inline-flex">
                 自动刷新 30 秒
               </span>
