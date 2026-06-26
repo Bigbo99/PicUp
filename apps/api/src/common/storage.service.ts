@@ -46,6 +46,13 @@ export interface AuditMetadata {
   requestId?: string;
 }
 
+export interface VisitorMetadata {
+  ip?: string;
+  country?: string;
+  region?: string;
+  city?: string;
+}
+
 export interface UserListFilters {
   query?: string;
   role?: UserRole;
@@ -71,6 +78,15 @@ export interface AuditLogFilters {
   actorId?: string;
   cursor?: string;
   limit?: number;
+}
+
+export interface AdminUserUpdateInput {
+  displayName?: string | null;
+  email?: string | null;
+  role?: Exclude<UserRole, 'guest'>;
+  status?: UserStatus;
+  quotaUnlimited?: boolean;
+  creditBalance?: number;
 }
 
 export interface LocalDbSnapshot {
@@ -214,6 +230,11 @@ export class StorageService {
         isGuest: user.isGuest,
         quotaUnlimited: user.quotaUnlimited,
         creditBalance: user.creditBalance,
+        lastIp: user.lastIp,
+        lastCountry: user.lastCountry,
+        lastRegion: user.lastRegion,
+        lastCity: user.lastCity,
+        lastSeenAt: user.lastSeenAt ? new Date(user.lastSeenAt) : undefined,
         emailVerifiedAt: user.emailVerifiedAt ? new Date(user.emailVerifiedAt) : undefined,
         createdAt: new Date(user.createdAt),
         updatedAt: new Date(user.updatedAt)
@@ -234,6 +255,11 @@ export class StorageService {
         isGuest: user.isGuest,
         quotaUnlimited: user.quotaUnlimited,
         creditBalance: user.creditBalance,
+        lastIp: user.lastIp,
+        lastCountry: user.lastCountry,
+        lastRegion: user.lastRegion,
+        lastCity: user.lastCity,
+        lastSeenAt: user.lastSeenAt ? new Date(user.lastSeenAt) : null,
         emailVerifiedAt: user.emailVerifiedAt ? new Date(user.emailVerifiedAt) : null,
         updatedAt: new Date()
       },
@@ -247,6 +273,11 @@ export class StorageService {
         isGuest: user.isGuest,
         quotaUnlimited: user.quotaUnlimited,
         creditBalance: user.creditBalance,
+        lastIp: user.lastIp,
+        lastCountry: user.lastCountry,
+        lastRegion: user.lastRegion,
+        lastCity: user.lastCity,
+        lastSeenAt: user.lastSeenAt ? new Date(user.lastSeenAt) : undefined,
         emailVerifiedAt: user.emailVerifiedAt ? new Date(user.emailVerifiedAt) : undefined,
         createdAt: new Date(user.createdAt),
         updatedAt: new Date(user.updatedAt)
@@ -387,6 +418,7 @@ export class StorageService {
     quotaUnlimited?: boolean;
     creditBalance?: number;
     emailVerifiedAt?: string | null;
+    visitor?: VisitorMetadata;
   }): StoredUser {
     const now = new Date().toISOString();
     return {
@@ -400,9 +432,67 @@ export class StorageService {
       creditBalance: input.creditBalance ?? 0,
       passwordHash: input.passwordHash ?? null,
       emailVerifiedAt: input.emailVerifiedAt ?? undefined,
+      lastIp: input.visitor?.ip ?? null,
+      lastCountry: input.visitor?.country ?? null,
+      lastRegion: input.visitor?.region ?? null,
+      lastCity: input.visitor?.city ?? null,
+      lastSeenAt: input.visitor?.ip ? now : null,
       createdAt: now,
       updatedAt: now
     };
+  }
+
+  async updateGuestVisit(id: string, visitor: VisitorMetadata) {
+    if (!visitor.ip && !visitor.country && !visitor.region && !visitor.city) return;
+    await this.prisma.user.updateMany({
+      where: { id, isGuest: true },
+      data: {
+        ...(visitor.ip ? { lastIp: visitor.ip } : {}),
+        ...(visitor.country ? { lastCountry: visitor.country } : {}),
+        ...(visitor.region ? { lastRegion: visitor.region } : {}),
+        ...(visitor.city ? { lastCity: visitor.city } : {}),
+        lastSeenAt: new Date()
+      }
+    });
+  }
+
+  async updateUserAdmin(id: string, input: AdminUserUpdateInput, actorId?: string, metadata?: AuditMetadata) {
+    const before = await this.prisma.user.findUnique({ where: { id } });
+    if (!before) return null;
+    const after = await this.prisma.user.update({
+      where: { id },
+      data: {
+        ...(input.displayName !== undefined ? { displayName: input.displayName?.trim() || null } : {}),
+        ...(input.email !== undefined ? { email: input.email?.trim().toLowerCase() || null } : {}),
+        ...(input.role ? { role: input.role, isGuest: false } : {}),
+        ...(input.status ? { status: input.status } : {}),
+        ...(typeof input.quotaUnlimited === 'boolean' ? { quotaUnlimited: input.quotaUnlimited } : {}),
+        ...(typeof input.creditBalance === 'number' ? { creditBalance: input.creditBalance } : {})
+      }
+    });
+    await this.addAuditLog({
+      actorId,
+      action: 'user.profile.update',
+      target: `users:${id}`,
+      before: this.toStoredUser(before) as unknown as Prisma.JsonObject,
+      after: this.toStoredUser(after) as unknown as Prisma.JsonObject
+    }, metadata);
+    return this.toStoredUser(after);
+  }
+
+  async enrichUserIp(id: string, visitor: VisitorMetadata) {
+    await this.prisma.user.updateMany({
+      where: { id },
+      data: {
+        ...(visitor.ip ? { lastIp: visitor.ip } : {}),
+        ...(visitor.country ? { lastCountry: visitor.country } : {}),
+        ...(visitor.region ? { lastRegion: visitor.region } : {}),
+        ...(visitor.city ? { lastCity: visitor.city } : {}),
+        lastSeenAt: new Date()
+      }
+    });
+    const user = await this.prisma.user.findUnique({ where: { id } });
+    return user ? this.toStoredUser(user) : null;
   }
 
   async getModelConfigs(defaults: ModelConfig[]) {
@@ -580,7 +670,8 @@ export class StorageService {
       refunded,
       rangeCreated,
       modelGroups,
-      recentFailures
+      recentFailures,
+      guestGeoGroups
     ] = await Promise.all([
       this.prisma.user.count(),
       this.prisma.user.count({ where: { isGuest: true } }),
@@ -609,6 +700,21 @@ export class StorageService {
         where: { status: 'failed' },
         orderBy: { createdAt: 'desc' },
         take: 8
+      }),
+      this.prisma.user.groupBy({
+        by: ['lastCountry', 'lastRegion', 'lastCity'],
+        _count: { _all: true },
+        _max: { lastSeenAt: true },
+        where: {
+          isGuest: true,
+          ...(since ? { lastSeenAt: { gte: since } } : {}),
+          OR: [
+            { lastIp: { not: null } },
+            { lastCountry: { not: null } },
+            { lastRegion: { not: null } },
+            { lastCity: { not: null } }
+          ]
+        }
       })
     ]);
     const byModel = new Map<string, { provider: string; model: string; jobs: number; succeeded: number; failed: number }>();
@@ -641,6 +747,16 @@ export class StorageService {
         settings,
         auditLogs
       },
+      guestGeo: guestGeoGroups
+        .map((group) => ({
+          country: group.lastCountry || '未知',
+          region: group.lastRegion,
+          city: group.lastCity,
+          guests: group._count._all,
+          lastSeenAt: group._max.lastSeenAt?.toISOString() ?? null
+        }))
+        .sort((left, right) => right.guests - left.guests)
+        .slice(0, 12),
       jobs: {
         queued,
         running,
@@ -814,6 +930,11 @@ export class StorageService {
       creditBalance: user.creditBalance,
       passwordHash: user.passwordHash,
       emailVerifiedAt: user.emailVerifiedAt?.toISOString(),
+      lastIp: user.lastIp,
+      lastCountry: user.lastCountry,
+      lastRegion: user.lastRegion,
+      lastCity: user.lastCity,
+      lastSeenAt: user.lastSeenAt?.toISOString() ?? null,
       createdAt: user.createdAt.toISOString(),
       updatedAt: user.updatedAt.toISOString()
     };

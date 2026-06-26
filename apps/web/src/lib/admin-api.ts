@@ -5,6 +5,7 @@ import type {
   AdminOverviewResponse,
   AdminProviderHealthResponse,
   AdminStatsResponse,
+  AdminUserUpdateRequest,
   AdminUsersResponse,
   AuthUser,
   ModelConfig
@@ -55,6 +56,19 @@ export function updateAdminUserQuota(id: string, quotaUnlimited: boolean) {
   return adminRequest<AuthUser>(`/api/admin/users/${id}/quota`, {
     method: 'PATCH',
     body: JSON.stringify({ quotaUnlimited })
+  });
+}
+
+export function updateAdminUser(id: string, input: AdminUserUpdateRequest) {
+  return adminRequest<AuthUser>(`/api/admin/users/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(input)
+  });
+}
+
+export function refreshAdminUserIp(id: string) {
+  return adminRequest<AuthUser>(`/api/admin/users/${id}/ip-lookup`, {
+    method: 'PATCH'
   });
 }
 

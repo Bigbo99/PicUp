@@ -532,11 +532,9 @@ export default function HomePage() {
   const isGuest = forceGuest || (meQuery.data?.user.isGuest ?? true);
   const rechargePlans: CreditRechargePlan[] = useMemo(() => {
     const plans = meQuery.data?.credits.rechargePlans ?? [];
-    const hasTrial = plans.some((plan) => plan.id === 'credits_10_trial');
-    const merged = hasTrial
-      ? plans
-      : [{ id: 'credits_10_trial' as const, title: '10 积分', amountCents: 10, credits: 10 }, ...plans];
-    return [...merged].sort((a, b) => a.amountCents - b.amountCents);
+    // 0.1 元 10 积分试用包已下线，保留注释方便需要时恢复。
+    // const trialPlan = { id: 'credits_10_trial' as const, title: '10 积分', amountCents: 10, credits: 10 };
+    return [...plans].sort((a, b) => a.amountCents - b.amountCents);
   }, [meQuery.data?.credits.rechargePlans]);
   const displayedPaymentOrder = paymentOrderQuery.data ?? activePaymentOrder;
   const paymentQrUrl = displayedPaymentOrder?.codeUrl
@@ -716,11 +714,7 @@ export default function HomePage() {
                           <button
                             key={plan.id}
                             type="button"
-                            className={`flex min-h-10 items-center justify-between rounded-md px-3 py-2 text-xs font-bold transition-colors disabled:opacity-60 ${
-                              plan.id === 'credits_10_trial'
-                                ? 'border border-amber-200 bg-amber-50 text-amber-800 hover:bg-amber-100'
-                                : 'bg-teal-600 text-white hover:bg-teal-700'
-                            }`}
+                            className="flex min-h-10 items-center justify-between rounded-md bg-teal-600 px-3 py-2 text-xs font-bold text-white transition-colors hover:bg-teal-700 disabled:opacity-60"
                             onClick={() => rechargeMutation.mutate({ planId: plan.id })}
                             disabled={rechargeMutation.isPending}
                           >
@@ -1189,11 +1183,7 @@ function MobileAccountPanel({
                 <button
                   key={plan.id}
                   type="button"
-                  className={`flex min-h-11 items-center justify-between rounded-lg px-3 text-sm font-bold disabled:opacity-60 ${
-                    plan.id === 'credits_10_trial'
-                      ? 'border border-amber-200 bg-amber-50 text-amber-800 hover:bg-amber-100'
-                      : 'bg-teal-600 text-white hover:bg-teal-700'
-                  }`}
+                  className="flex min-h-11 items-center justify-between rounded-lg bg-teal-600 px-3 text-sm font-bold text-white hover:bg-teal-700 disabled:opacity-60"
                   onClick={() => onRecharge(plan.id)}
                   disabled={rechargePending}
                 >

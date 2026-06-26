@@ -140,7 +140,7 @@ a:focus-visible {
   justify-content: center;
   gap: 0.5rem;
   border-radius: 0.5rem;
-  background: #0f172a;
+  background: #064e3b;
   padding: 0 0.875rem;
   font-size: 0.875rem;
   font-weight: 800;
@@ -149,7 +149,7 @@ a:focus-visible {
 }
 
 .admin-primary-button:hover {
-  background: #1e293b;
+  background: #047857;
 }
 
 .admin-secondary-button {
@@ -160,18 +160,18 @@ a:focus-visible {
   justify-content: center;
   gap: 0.5rem;
   border-radius: 0.5rem;
-  border: 1px solid #cbd5e1;
+  border: 1px solid #d8e2dd;
   background: #fff;
   padding: 0 0.75rem;
   font-size: 0.875rem;
   font-weight: 800;
-  color: #334155;
+  color: #345047;
   transition: background-color 160ms ease, border-color 160ms ease, color 160ms ease;
 }
 
 .admin-secondary-button:hover {
-  border-color: #0f766e;
-  color: #0f766e;
+  border-color: #059669;
+  color: #047857;
 }
 
 .admin-secondary-button:disabled,
@@ -194,15 +194,15 @@ a:focus-visible {
   align-items: center;
   justify-content: center;
   border-radius: 0.5rem;
-  border: 1px solid #cbd5e1;
+  border: 1px solid #d8e2dd;
   background: #fff;
-  color: #475569;
+  color: #4f635c;
   transition: background-color 160ms ease, border-color 160ms ease, color 160ms ease;
 }
 
 .admin-icon-button:hover {
-  border-color: #0f766e;
-  color: #0f766e;
+  border-color: #059669;
+  color: #047857;
 }
 
 .admin-table-wrap {
@@ -218,7 +218,7 @@ a:focus-visible {
 }
 
 .admin-table th {
-  border-bottom: 1px solid #e2e8f0;
+  border-bottom: 1px solid #d8e2dd;
   padding: 0.75rem;
   text-align: left;
   font-size: 0.75rem;
@@ -228,11 +228,11 @@ a:focus-visible {
 }
 
 .admin-table td {
-  border-bottom: 1px solid #e2e8f0;
+  border-bottom: 1px solid #d8e2dd;
   padding: 0.75rem;
   vertical-align: middle;
 }
 
 .admin-table tbody tr:hover {
-  background: #f8fafc;
+  background: #f7faf8;
 }

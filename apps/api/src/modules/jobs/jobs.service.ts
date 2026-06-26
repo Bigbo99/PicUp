@@ -83,13 +83,13 @@ export class JobsService {
   }
 
   async get(id: string, user?: AuthUser) {
-    const job = await this.storage.getJob(id, user?.id, user?.role === 'admin');
+    const job = await this.storage.getJob(id, user?.id, false);
     if (!job) throw new NotFoundException('任务不存在');
     return job;
   }
 
   async downloadOutput(id: string, outputIndex: number, user: AuthUser) {
-    const job = await this.storage.getJob(id, user.id, user.role === 'admin');
+    const job = await this.storage.getJob(id, user.id, false);
     if (!job) throw new NotFoundException('任务不存在');
     const output = job.outputImages[outputIndex];
     if (!output) throw new NotFoundException('下载文件不存在');
@@ -103,11 +103,11 @@ export class JobsService {
   }
 
   async list(limit = 20, user?: AuthUser) {
-    return this.storage.listJobs(limit, user?.id, user?.role === 'admin');
+    return this.storage.listJobs(limit, user?.id, false);
   }
 
   async delete(id: string, user: AuthUser) {
-    const deleted = await this.storage.deleteJob(id, user.id, user.role === 'admin');
+    const deleted = await this.storage.deleteJob(id, user.id, false);
     if (!deleted) throw new NotFoundException('任务不存在');
     await this.cleanupOutputFiles(deleted);
     return { ok: true, jobId: id };

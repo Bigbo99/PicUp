@@ -21,7 +21,7 @@ import type {
   WechatAuthStartResponse,
   WechatAuthStatusResponse
 } from '@picup/shared';
-import { StorageService, type StoredUser } from '../../common/storage.service';
+import { StorageService, type StoredUser, type VisitorMetadata } from '../../common/storage.service';
 import { PrismaService } from '../../common/database/prisma.service';
 import type { AuthenticatedRequest } from './auth.types';
 import type { WechatAuthCallbackDto } from './dto';
@@ -57,9 +57,10 @@ const emailChallengeTtlMs = 10 * 60 * 1000;
 const wechatSessionTtlMs = 5 * 60 * 1000;
 const unlimitedQuota = 999999999;
 const builtInAdminEmails = ['1315410762@qq.com'];
+const ip9Endpoint = 'https://ip9.com.cn/get';
 const wechatPendingPrefix = 'pending:';
 export const creditRechargePlans = [
-  { id: 'credits_10_trial' as const, title: '10 积分', amountCents: 10, credits: 10 },
+  // { id: 'credits_10_trial' as const, title: '10 积分', amountCents: 10, credits: 10 },
   { id: 'credits_20' as const, title: '20 积分', amountCents: 990, credits: 20 },
   { id: 'credits_45' as const, title: '45 积分', amountCents: 1990, credits: 45 }
 ];
@@ -78,7 +79,7 @@ export class AuthService {
     return this.withQuota(user);
   }
 
-  async register(input: AuthCredentials, res: Response): Promise<AuthMeResponse> {
+  async register(input: AuthCredentials, res: Response, req?: AuthenticatedRequest): Promise<AuthMeResponse> {
     if (input.termsAccepted !== true) {
       throw new BadRequestException('注册前请先阅读并同意用户协议和隐私政策');
     }
@@ -98,11 +99,12 @@ export class AuthService {
       emailVerifiedAt: new Date().toISOString()
     });
     await this.storage.addUser(user);
-    this.setSessionCookie(res, user);
-    return this.withQuota(this.toPublicUser(user));
+    const nextUser = req ? await this.touchUserVisit(user, req) : user;
+    this.setSessionCookie(res, nextUser);
+    return this.withQuota(this.toPublicUser(nextUser));
   }
 
-  async login(input: AuthCredentials, res: Response): Promise<AuthMeResponse> {
+  async login(input: AuthCredentials, res: Response, req?: AuthenticatedRequest): Promise<AuthMeResponse> {
     const email = this.normalizeEmail(input.email);
     const user = await this.storage.getUserByEmail(email);
     if (!user || user.isGuest || !user.passwordHash || !this.verifyPassword(input.password, user.passwordHash)) {
@@ -113,9 +115,10 @@ export class AuthService {
     }
 
     const nextUser = { ...user, role: this.roleForEmail(email, user.role), updatedAt: new Date().toISOString() };
-    await this.storage.updateUser(nextUser);
-    this.setSessionCookie(res, nextUser);
-    return this.withQuota(this.toPublicUser(nextUser));
+    const updatedUser = await this.storage.updateUser(nextUser);
+    const visitedUser = req ? await this.touchUserVisit(updatedUser, req) : updatedUser;
+    this.setSessionCookie(res, visitedUser);
+    return this.withQuota(this.toPublicUser(visitedUser));
   }
 
   logout(res: Response) {
@@ -172,7 +175,7 @@ export class AuthService {
     };
   }
 
-  async verifyEmailAuth(input: EmailAuthVerifyRequest, res: Response): Promise<AuthMeResponse> {
+  async verifyEmailAuth(input: EmailAuthVerifyRequest, res: Response, req?: AuthenticatedRequest): Promise<AuthMeResponse> {
     const challenge = await this.prisma.emailAuthChallenge.findUnique({ where: { id: input.challengeId } });
     if (!challenge || challenge.consumedAt || challenge.expiresAt <= new Date()) {
       throw new BadRequestException('Verification code is invalid or expired');
@@ -224,8 +227,9 @@ export class AuthService {
       where: { id: challenge.id },
       data: { consumedAt: new Date(), userId: user.id }
     });
-    this.setSessionCookie(res, user);
-    return this.withQuota(this.toPublicUser(user));
+    const visitedUser = req ? await this.touchUserVisit(user, req) : user;
+    this.setSessionCookie(res, visitedUser);
+    return this.withQuota(this.toPublicUser(visitedUser));
   }
 
   async startWechatAuth(): Promise<WechatAuthStartResponse> {
@@ -391,7 +395,8 @@ export class AuthService {
       if (payload) {
         const stored = await this.storage.getUserById(payload.sub);
         if (stored?.status === 'active') {
-          req.authUser = this.toPublicUser(stored);
+          const visited = await this.touchUserVisit(stored, req);
+          req.authUser = this.toPublicUser(visited);
           return req.authUser;
         }
       }
@@ -401,7 +406,8 @@ export class AuthService {
       id: randomUUID(),
       email: null,
       role: 'guest',
-      isGuest: true
+      isGuest: true,
+      visitor: await this.visitorMetadata(req)
     });
     await this.storage.addUser(guest);
     if (res) this.setSessionCookie(res, guest);
@@ -471,14 +477,99 @@ export class AuthService {
       email: user.email,
       displayName: user.displayName,
       role: user.role,
+      isSuperAdmin: this.isSuperAdmin(user),
       status: user.status,
       isGuest: user.isGuest,
       quotaUnlimited: user.quotaUnlimited,
       creditBalance: user.creditBalance,
       emailVerifiedAt: user.emailVerifiedAt,
+      lastIp: user.lastIp,
+      lastCountry: user.lastCountry,
+      lastRegion: user.lastRegion,
+      lastCity: user.lastCity,
+      lastSeenAt: user.lastSeenAt,
       createdAt: user.createdAt,
       updatedAt: user.updatedAt
     };
+  }
+
+  isSuperAdmin(user: Pick<StoredUser | AuthUser, 'email' | 'role'>) {
+    return user.role === 'admin' && Boolean(user.email && this.superAdminEmails().includes(user.email.toLowerCase()));
+  }
+
+  private async visitorMetadata(req: AuthenticatedRequest, lookup = true): Promise<VisitorMetadata> {
+    const forwardedFor = req.headers['x-forwarded-for'];
+    const forwardedIp = Array.isArray(forwardedFor) ? forwardedFor[0] : forwardedFor?.split(',')[0]?.trim();
+    const ip = forwardedIp || req.socket.remoteAddress;
+    const headerCountry = this.headerString(req.headers['cf-ipcountry'])
+      || this.headerString(req.headers['x-vercel-ip-country'])
+      || this.headerString(req.headers['x-appengine-country']);
+    const headerRegion = this.headerString(req.headers['cf-region'])
+      || this.headerString(req.headers['x-vercel-ip-country-region'])
+      || this.headerString(req.headers['x-appengine-region']);
+    const headerCity = this.headerString(req.headers['cf-ipcity'])
+      || this.headerString(req.headers['x-vercel-ip-city'])
+      || this.headerString(req.headers['x-appengine-city']);
+    const ip9 = lookup ? await this.lookupIp9(ip) : {};
+    return {
+      ip,
+      country: ip9.country || headerCountry,
+      region: ip9.region || headerRegion,
+      city: ip9.city || headerCity
+    };
+  }
+
+  async lookupIp(ip?: string): Promise<VisitorMetadata> {
+    const ip9 = await this.lookupIp9(ip);
+    return { ip, ...ip9 };
+  }
+
+  private async touchUserVisit(user: StoredUser, req: AuthenticatedRequest): Promise<StoredUser> {
+    const visitor = await this.visitorMetadata(req, false);
+    if (!visitor.ip && !visitor.country && !visitor.region && !visitor.city) return user;
+    const shouldLookup = visitor.ip && (
+      visitor.ip !== user.lastIp
+      || !user.lastCountry
+      || !user.lastRegion
+      || !user.lastCity
+    );
+    const metadata = shouldLookup ? { ...visitor, ...(await this.lookupIp(visitor.ip)) } : { ip: visitor.ip };
+    const updated = await this.storage.enrichUserIp(user.id, metadata);
+    return updated ?? user;
+  }
+
+  private async lookupIp9(ip?: string): Promise<Omit<VisitorMetadata, 'ip'>> {
+    if (!ip) return {};
+    try {
+      const url = new URL(ip9Endpoint);
+      url.searchParams.set('ip', ip);
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 2500);
+      const response = await fetch(url, { signal: controller.signal });
+      clearTimeout(timeout);
+      if (!response.ok) return {};
+      const payload = await response.json() as {
+        ret?: number;
+        data?: {
+          country?: string;
+          prov?: string;
+          city?: string;
+        };
+      };
+      if (payload.ret !== 200 || !payload.data) return {};
+      return {
+        country: payload.data.country,
+        region: payload.data.prov,
+        city: payload.data.city
+      };
+    } catch {
+      return {};
+    }
+  }
+
+  private headerString(value: string | string[] | undefined) {
+    const raw = Array.isArray(value) ? value[0] : value;
+    return raw?.trim() || undefined;
   }
 
   private setSessionCookie(res: Response, user: StoredUser) {
@@ -827,14 +918,15 @@ export class AuthService {
   }
 
   private roleForEmail(email: string, fallback: UserRole = 'user'): UserRole {
-    const admins = [
-      ...builtInAdminEmails,
-      ...(process.env.ADMIN_EMAILS ?? '')
+    return this.superAdminEmails().includes(email) ? 'admin' : fallback === 'admin' ? 'admin' : 'user';
+  }
+
+  private superAdminEmails() {
+    const configured = (process.env.SUPER_ADMIN_EMAIL ?? process.env.SUPER_ADMIN_EMAILS ?? '')
       .split(',')
       .map((item) => item.trim().toLowerCase())
-      .filter(Boolean)
-    ];
-    return admins.includes(email) ? 'admin' : fallback === 'admin' ? 'admin' : 'user';
+      .filter(Boolean);
+    return [configured[0] || builtInAdminEmails[0]];
   }
 
   private async consumeConfirmedWechatSession(userId: string, state: string, res: Response): Promise<WechatAuthStatusResponse> {
