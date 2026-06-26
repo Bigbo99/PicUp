@@ -16,8 +16,8 @@ export class AuthController {
   }
 
   @Post('register')
-  register(@Body() body: AuthCredentialsDto, @Res({ passthrough: true }) res: Response) {
-    return this.auth.register(body, res);
+  register(@Body() body: AuthCredentialsDto, @Req() req: AuthenticatedRequest, @Res({ passthrough: true }) res: Response) {
+    return this.auth.register(body, res, req);
   }
 
   @Post('email/start')
@@ -26,13 +26,13 @@ export class AuthController {
   }
 
   @Post('email/verify')
-  verifyEmail(@Body() body: EmailAuthVerifyDto, @Res({ passthrough: true }) res: Response) {
-    return this.auth.verifyEmailAuth(body, res);
+  verifyEmail(@Body() body: EmailAuthVerifyDto, @Req() req: AuthenticatedRequest, @Res({ passthrough: true }) res: Response) {
+    return this.auth.verifyEmailAuth(body, res, req);
   }
 
   @Post('login')
-  login(@Body() body: AuthCredentialsDto, @Res({ passthrough: true }) res: Response) {
-    return this.auth.login(body, res);
+  login(@Body() body: AuthCredentialsDto, @Req() req: AuthenticatedRequest, @Res({ passthrough: true }) res: Response) {
+    return this.auth.login(body, res, req);
   }
 
   @Post('logout')

@@ -103,11 +103,17 @@ export interface AuthUser {
   email: string | null;
   displayName?: string | null;
   role: UserRole;
+  isSuperAdmin?: boolean;
   status: UserStatus;
   isGuest: boolean;
   quotaUnlimited: boolean;
   creditBalance: number;
   emailVerifiedAt?: string;
+  lastIp?: string | null;
+  lastCountry?: string | null;
+  lastRegion?: string | null;
+  lastCity?: string | null;
+  lastSeenAt?: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -169,7 +175,7 @@ export interface WechatAuthStatusResponse {
 }
 
 export interface CreditRechargePlan {
-  id: 'credits_10_trial' | 'credits_20' | 'credits_45';
+  id: 'credits_20' | 'credits_45';
   title: string;
   amountCents: number;
   credits: number;
@@ -220,6 +226,13 @@ export interface AdminOverviewResponse {
     settings: number;
     auditLogs: number;
   };
+  guestGeo: Array<{
+    country: string;
+    region?: string | null;
+    city?: string | null;
+    guests: number;
+    lastSeenAt?: string | null;
+  }>;
   jobs: {
     queued: number;
     running: number;
@@ -246,6 +259,15 @@ export interface AdminUserListEnvelope {
 }
 
 export type AdminUsersResponse = AuthUser[] | AdminUserListEnvelope;
+
+export interface AdminUserUpdateRequest {
+  displayName?: string | null;
+  email?: string | null;
+  role?: Extract<UserRole, 'user' | 'admin'>;
+  status?: UserStatus;
+  quotaUnlimited?: boolean;
+  creditBalance?: number;
+}
 
 export interface AdminJobListEnvelope {
   jobs: ImageJobRecord[];

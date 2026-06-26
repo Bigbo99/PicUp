@@ -39,6 +39,11 @@ model User {
   quotaUnlimited Boolean      @default(false) @map("quota_unlimited")
   creditBalance Int           @default(0) @map("credit_balance")
   emailVerifiedAt DateTime?   @map("email_verified_at")
+  lastIp       String?        @map("last_ip") @db.VarChar(80)
+  lastCountry  String?        @map("last_country") @db.VarChar(120)
+  lastRegion   String?        @map("last_region") @db.VarChar(120)
+  lastCity     String?        @map("last_city") @db.VarChar(120)
+  lastSeenAt   DateTime?      @map("last_seen_at")
   createdAt    DateTime       @default(now()) @map("created_at")
   updatedAt    DateTime       @updatedAt @map("updated_at")
   files        FileRecord[]
@@ -49,6 +54,8 @@ model User {
   wechatSessions WechatLoginSession[]
 
   @@index([role, status])
+  @@index([isGuest, lastCountry])
+  @@index([isGuest, lastSeenAt])
   @@map("users")
 }
 

@@ -22,7 +22,8 @@
     ".next/types/**/*.ts",
     "next-env.d.ts",
     "src/**/*.ts",
-    "src/**/*.tsx"
+    "src/**/*.tsx",
+    ".next-admin-design/types/**/*.ts"
   ],
   "exclude": [
     "node_modules"

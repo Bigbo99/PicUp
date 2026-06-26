@@ -1,4 +1,4 @@
-import { IsArray, IsBoolean, IsIn, IsInt, IsObject, IsOptional, IsString, Max, Min } from 'class-validator';
+import { IsArray, IsBoolean, IsEmail, IsIn, IsInt, IsObject, IsOptional, IsString, Max, Min } from 'class-validator';
 import type { ImageQuality } from '@picup/shared';
 
 export class UpdateModelConfigDto {
@@ -65,4 +65,32 @@ export class UpdateUserCreditsDto {
 
   @IsString()
   reason!: string;
+}
+
+export class UpdateUserDto {
+  @IsOptional()
+  @IsString()
+  displayName?: string | null;
+
+  @IsOptional()
+  @IsEmail()
+  email?: string | null;
+
+  @IsOptional()
+  @IsIn(['user', 'admin'])
+  role?: 'user' | 'admin';
+
+  @IsOptional()
+  @IsIn(['pending', 'active', 'disabled'])
+  status?: 'pending' | 'active' | 'disabled';
+
+  @IsOptional()
+  @IsBoolean()
+  quotaUnlimited?: boolean;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(999999999)
+  creditBalance?: number;
 }
