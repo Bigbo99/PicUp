@@ -2,6 +2,10 @@
   "name": "@picup/api",
   "version": "0.1.0",
   "private": true,
+  "files": [
+    "dist",
+    "prisma"
+  ],
   "scripts": {
     "dev": "tsx watch src/main.ts",
     "dev:worker": "tsx watch src/workers/image-worker.ts",
@@ -27,6 +31,7 @@
     "express": "^4.21.2",
     "multer": "^1.4.5-lts.1",
     "nodemailer": "^8.0.7",
+    "prisma": "^6.19.0",
     "redis": "^5.8.2",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1",
@@ -37,7 +42,6 @@
     "@types/multer": "^1.4.12",
     "@types/node": "^22.10.7",
     "@types/nodemailer": "^8.0.0",
-    "prisma": "^6.19.0",
     "tsx": "^4.19.2"
   }
 }

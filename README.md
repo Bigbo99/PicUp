@@ -69,10 +69,11 @@ docker build -t picup-app:local .
 
 ```bash
 cp .env.example .env
-docker compose up -d --build
+docker compose build api
+docker compose up -d --no-build
 ```
 
-同一个应用镜像会分别启动 `web`、`api`、`worker` 三个容器，并配套启动 `postgres`、`redis` 和一次性 `migrate` 服务。
+Compose 只通过 `api` 构建一次应用镜像。同一个精简镜像会分别启动 `web`、`api`、`worker` 三个容器，并配套启动 `postgres`、`redis` 和一次性 `migrate` 服务。
 
 ## Docker Hub 拉取失败
 
@@ -109,7 +110,7 @@ docker build --build-arg NODE_IMAGE=your-registry.example.com/library/node:20-al
 Docker Compose 也支持传入该参数：
 
 ```bash
-docker compose build --build-arg NODE_IMAGE=your-registry.example.com/library/node:20-alpine
+docker compose build api --build-arg NODE_IMAGE=your-registry.example.com/library/node:20-alpine
 ```
 
 ## Auth
@@ -209,8 +210,8 @@ Content-Type: application/json
 本地和 Docker Compose 使用：
 
 ```bash
-docker compose build
-docker compose up -d
+docker compose build api
+docker compose up -d --no-build
 ```
 
 Compose 会启动 `postgres`，然后运行一次 `migrate` 服务执行：
@@ -274,11 +275,10 @@ REDIS_URL=redis://localhost:6379
 
 1. 安装依赖
 2. 类型检查
-3. Lint
-4. 构建
-5. 在 GitHub Runner 构建镜像并推送到阿里云 ACR
-6. SSH 到服务器，执行 `git pull` + `docker compose pull` + `docker compose up -d --no-build`
-7. 清理未使用镜像和历史构建缓存，减少服务器磁盘占用
+3. 在 GitHub Runner 构建一次精简镜像并推送到阿里云 ACR
+4. SSH 到服务器更新代码并调用 `deploy/deploy.sh`
+5. 拉取 SHA 镜像、执行迁移，只更新 `api`、`worker` 和 `web`
+6. API 和 Web 健康检查通过后持久化本次 SHA 镜像
 
 需要在 GitHub 仓库中配置 Actions Secrets：
 
@@ -306,8 +306,10 @@ cd /opt/PicUp
 cp .env.example .env
 nano .env
 export APP_IMAGE=crpi-dcv2ij8qo3puovop.cn-hangzhou.personal.cr.aliyuncs.com/dani_repo/picup:latest
-docker compose pull migrate api web worker
-docker compose up -d --no-build
+export ACR_REGISTRY=crpi-dcv2ij8qo3puovop.cn-hangzhou.personal.cr.aliyuncs.com
+export ACR_USERNAME=your_user
+export ACR_PASSWORD=your_password
+bash deploy/deploy.sh
 ```
 
 ## 宝塔面板部署（Docker + Nginx 反代）
@@ -343,6 +345,6 @@ docker compose up -d --no-build
 
 ### 常见问题
 
-- **前端请求指向 localhost**：重新构建镜像 `docker compose build --no-cache && docker compose up -d`，确保 `NEXT_PUBLIC_API_BASE_URL` 为空。
+- **前端请求指向 localhost**：重新构建镜像 `docker compose build --no-cache api && docker compose up -d --no-build`，确保 `NEXT_PUBLIC_API_BASE_URL` 为空。
 - **Cookie 不生效**：确认 `APP_ENV=production`（Cookie 需要 HTTPS）且 Nginx 有 `proxy_set_header X-Forwarded-Proto $scheme`。
 - **CORS 报错**：确认 `WEB_PUBLIC_URL` 设为实际域名（含 https://）。

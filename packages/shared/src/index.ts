@@ -314,22 +314,72 @@ export interface AdminProviderHealthResponse {
 }
 
 export const aspectRatioOptions = [
-  { label: '跟随原图', value: 'auto' },
+  { label: '自动', value: 'auto' },
   { label: '正方形', value: '1:1' },
-  { label: '极窄竖幅', value: '1:8' },
-  { label: '长竖幅', value: '1:4' },
-  { label: '竖构图', value: '2:3' },
-  { label: '横构图', value: '3:2' },
-  { label: '商品竖图', value: '3:4' },
-  { label: '极宽横幅', value: '8:1' },
-  { label: '长横幅', value: '4:1' },
-  { label: '横版', value: '4:3' },
-  { label: '海报', value: '4:5' },
-  { label: '商品横图', value: '5:4' },
   { label: '宽屏横版', value: '16:9' },
   { label: '竖屏', value: '9:16' },
-  { label: '超宽横幅', value: '21:9' }
+  { label: '横版', value: '4:3' },
+  { label: '商品竖图', value: '3:4' },
+  { label: '横构图', value: '3:2' },
+  { label: '竖构图', value: '2:3' },
+  { label: '商品横图', value: '5:4' },
+  { label: '海报', value: '4:5' },
+  { label: '超宽横幅', value: '21:9' },
+  { label: '长横幅', value: '4:1' },
+  { label: '长竖幅', value: '1:4' },
+  { label: '极宽横幅', value: '8:1' },
+  { label: '极窄竖幅', value: '1:8' }
 ] as const;
+
+const TOKENRUN_MIN_PIXELS = 655_360;
+const TOKENRUN_MAX_PIXELS = 8_294_400;
+const TOKENRUN_MAX_EDGE = 3840;
+
+export function tokenRunSizeFor(aspectRatio: string, quality: ImageQuality) {
+  if (aspectRatio === 'auto') return 'auto';
+
+  const [rawWidth, rawHeight] = aspectRatio.split(':').map(Number);
+  if (!rawWidth || !rawHeight) throw new Error(`Unsupported GPT Image 2 aspect ratio: ${aspectRatio}`);
+  const divisor = greatestCommonDivisor(rawWidth, rawHeight);
+  const widthUnits = rawWidth / divisor;
+  const heightUnits = rawHeight / divisor;
+  const longUnits = Math.max(widthUnits, heightUnits);
+  const shortUnits = Math.min(widthUnits, heightUnits);
+  const ratio = longUnits / shortUnits;
+  if (ratio > 3) throw new Error(`GPT Image 2 aspect ratio exceeds 3:1: ${aspectRatio}`);
+
+  if (rawWidth === rawHeight) {
+    const edge = quality === '4K' ? 2880 : quality === '2K' ? 2048 : 1024;
+    return `${edge}x${edge}`;
+  }
+
+  const targetLongEdge = quality === '4K' ? 3840 : quality === '2K' ? 2048 : 1536;
+  let unit = Math.max(16, Math.floor(targetLongEdge / longUnits / 16) * 16);
+  let longEdge = longUnits * unit;
+  let shortEdge = shortUnits * unit;
+  while (longEdge * shortEdge > TOKENRUN_MAX_PIXELS && unit > 16) {
+    unit -= 16;
+    longEdge = longUnits * unit;
+    shortEdge = shortUnits * unit;
+  }
+  while (
+    longEdge * shortEdge < TOKENRUN_MIN_PIXELS
+    && longUnits * (unit + 16) <= TOKENRUN_MAX_EDGE
+    && longUnits * (unit + 16) * shortUnits * (unit + 16) <= TOKENRUN_MAX_PIXELS
+  ) {
+    unit += 16;
+    longEdge = longUnits * unit;
+    shortEdge = shortUnits * unit;
+  }
+
+  return rawWidth > rawHeight
+    ? `${longEdge}x${shortEdge}`
+    : `${shortEdge}x${longEdge}`;
+}
+
+function greatestCommonDivisor(left: number, right: number): number {
+  return right === 0 ? left : greatestCommonDivisor(right, left % right);
+}
 
 export const resolutionOptions: Array<{ label: string; value: ImageQuality; description: string }> = [
   { label: '512', value: '512', description: '快速预览，适合轻量测试' },

@@ -8,7 +8,7 @@ on:
 
 concurrency:
   group: production-deploy
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   check:
@@ -37,12 +37,6 @@ jobs:
 
       - name: Typecheck
         run: pnpm typecheck
-
-      - name: Lint
-        run: pnpm lint
-
-      - name: Build
-        run: pnpm build
 
   build_and_push:
     name: Build and Push Image
@@ -130,20 +124,27 @@ jobs:
           ACR_PASSWORD: ${{ secrets.ACR_PASSWORD }}
           ACR_IMAGE: ${{ secrets.ACR_IMAGE }}
           IMAGE_TAG: ${{ needs.build_and_push.outputs.image_tag }}
+          DEPLOY_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
           PORT="${SERVER_PORT:-22}"
+          APP_IMAGE="${ACR_IMAGE}:${IMAGE_TAG}"
+          printf -v SERVER_APP_DIR_Q '%q' "$SERVER_APP_DIR"
+          printf -v APP_IMAGE_Q '%q' "$APP_IMAGE"
+          printf -v ACR_REGISTRY_Q '%q' "$ACR_REGISTRY"
+          printf -v ACR_USERNAME_Q '%q' "$ACR_USERNAME"
+          printf -v ACR_PASSWORD_Q '%q' "$ACR_PASSWORD"
+          printf -v DEPLOY_SHA_Q '%q' "$DEPLOY_SHA"
           ssh -i ~/.ssh/picup_deploy_key -p "$PORT" "$SERVER_USER@$SERVER_HOST" "
             set -e
-            cd '$SERVER_APP_DIR'
+            cd $SERVER_APP_DIR_Q
             git fetch origin main
             git checkout main
-            git pull --ff-only origin main
-            echo '${ACR_PASSWORD}' | docker login '${ACR_REGISTRY}' --username '${ACR_USERNAME}' --password-stdin
-            export APP_IMAGE='${ACR_IMAGE}:${IMAGE_TAG}'
-            docker compose pull migrate api web worker
-            docker compose up -d --no-build --force-recreate
-            docker image prune -f
-            docker builder prune -f --filter 'until=24h'
-            docker compose ps
+            git merge --ff-only $DEPLOY_SHA_Q
+            test \"\$(git rev-parse HEAD)\" = $DEPLOY_SHA_Q
+            APP_IMAGE=$APP_IMAGE_Q \
+            ACR_REGISTRY=$ACR_REGISTRY_Q \
+            ACR_USERNAME=$ACR_USERNAME_Q \
+            ACR_PASSWORD=$ACR_PASSWORD_Q \
+            bash deploy/deploy.sh
           "

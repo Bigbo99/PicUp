@@ -1,8 +1,10 @@
-import type { ImageQuality, UploadedFileRecord } from '@picup/shared';
+import type { ImageQuality, ImageTemplate, UploadedFileRecord } from '@picup/shared';
 
 export interface ProviderImageInput {
   jobId: string;
   mode: 'generate' | 'edit';
+  template: ImageTemplate;
+  automaticModelSelection: boolean;
   prompt: string;
   model: string;
   aspectRatio: string;

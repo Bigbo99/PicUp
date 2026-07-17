@@ -1,4 +1,5 @@
 node_modules
+/package-lock.json
 .playwright-cli/
 .claude/
 .next
@@ -19,6 +20,6 @@ apps/api/storage/outputs/*
 !apps/api/storage/outputs/.gitkeep
 *.log
 picup_actions_server*
-output/playwright/
+/output/
 /.env.bak*
 .codex/

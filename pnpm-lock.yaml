@@ -3,6 +3,7 @@ lockfileVersion: '9.0'
 settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
+  injectWorkspacePackages: true
 
 importers:
 
@@ -50,6 +51,9 @@ importers:
       nodemailer:
         specifier: ^8.0.7
         version: 8.0.7
+      prisma:
+        specifier: ^6.19.0
+        version: 6.19.0(typescript@5.9.3)
       redis:
         specifier: ^5.8.2
         version: 5.12.1
@@ -75,9 +79,6 @@ importers:
       '@types/nodemailer':
         specifier: ^8.0.0
         version: 8.0.0
-      prisma:
-        specifier: ^6.19.0
-        version: 6.19.0(typescript@5.9.3)
       tsx:
         specifier: ^4.19.2
         version: 4.21.0

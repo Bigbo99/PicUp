@@ -20,6 +20,8 @@ type ReservedPayment =
   | { mode: 'free' | 'credits' | 'single'; orderId: string | null }
   | { mode: 'single_pending'; order: PaymentOrderResponse };
 
+const professionalTemplates = new Set(['replace_text', 'poster_text', 'product']);
+
 @Injectable()
 export class JobsService {
   constructor(
@@ -142,6 +144,8 @@ export class JobsService {
       const result = await provider.generate({
         jobId: running.id,
         mode: running.mode,
+        template: running.template,
+        automaticModelSelection: running.model === 'auto',
         prompt: running.finalPrompt,
         model: running.selectedModel,
         aspectRatio: running.aspectRatio,
@@ -271,8 +275,11 @@ export class JobsService {
 
   private defaultModelFor(input: ImageJobCreateRequest, provider: Exclude<ImageProviderName, 'auto'>) {
     if (provider === 'tokenrun') return 'gpt-image-2';
-    if (input.quality === '512') return 'gemini-3.1-flash-image';
-    if (input.quality === '4K' || input.template === 'product') return 'gemini-3-pro-image';
+    if (
+      input.quality === '4K'
+      || professionalTemplates.has(input.template)
+      || input.imageIds.length >= 4
+    ) return 'gemini-3-pro-image';
     return 'gemini-3.1-flash-image';
   }
 

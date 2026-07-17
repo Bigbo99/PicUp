@@ -20,6 +20,9 @@ echo '== compose =='
 docker compose ps
 echo '== api health =='
 curl -fsS http://127.0.0.1:4000/api/health
+echo ''
+echo '== web health =='
+curl -fsS -o /dev/null http://127.0.0.1:3000
 "@
 
 & ssh `
