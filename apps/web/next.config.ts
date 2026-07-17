@@ -1,7 +1,16 @@
 import type { NextConfig } from 'next';
+import path from 'node:path';
+
+const standaloneOutput = process.env.NEXT_DISABLE_STANDALONE !== '1';
 
 const nextConfig: NextConfig = {
   distDir: process.env.NEXT_DIST_DIR || '.next',
+  ...(standaloneOutput
+    ? {
+        output: 'standalone' as const,
+        outputFileTracingRoot: path.join(process.cwd(), '../..')
+      }
+    : {}),
   images: {
     remotePatterns: [
       { protocol: 'http', hostname: '**' },

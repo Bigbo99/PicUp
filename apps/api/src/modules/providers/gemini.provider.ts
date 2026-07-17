@@ -3,6 +3,7 @@ import { Agent, ProxyAgent, type Dispatcher } from 'undici';
 import { ObjectStorageService } from '../../common/object-storage.service';
 import type { ImageProvider, ProviderImageInput, ProviderImageResult } from './provider.types';
 
+// Legacy Google implementation retained for reference; ProvidersModule now routes Gemini selections to GrsaiProvider.
 const DEFAULT_GEMINI_TIMEOUT_MS = 10 * 60 * 1000;
 const DEFAULT_GEMINI_RETRY_ATTEMPTS = 3;
 const DEFAULT_GEMINI_RETRY_DELAY_MS = 1500;

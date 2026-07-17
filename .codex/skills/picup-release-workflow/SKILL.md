@@ -24,8 +24,9 @@ Use this skill when the user asks to:
 3. If checks pass, commit and push to `main`.
 4. GitHub Actions should then:
    - run `check`
-   - build and push the image to Aliyun ACR
-   - SSH to the server and deploy with `docker compose pull` and `up -d --no-build --force-recreate`
+   - build and push one immutable application image to Aliyun ACR
+   - SSH to the server and call `deploy/deploy.sh`
+   - run migrations, update only `api`, `worker`, and `web`, then verify health
 5. Verify deployment from the server:
    `pwsh .codex/skills/picup-release-workflow/scripts/server-deploy-check.ps1`
 
@@ -34,7 +35,8 @@ Use this skill when the user asks to:
 - Prefer local or CI build. Do not build the production image on the server unless the user explicitly asks.
 - Keep production pulls pointed at Aliyun ACR:
   `YOUR_REGISTRY/YOUR_NAMESPACE/picup`
-- The production server should keep `APP_IMAGE` in `.env`, but deployments may temporarily override it with an immutable `sha-xxxxxxx` tag for exact releases.
+- The production server should persist the immutable `sha-xxxxxxx` image in `.env` after a successful release.
+- Do not force-recreate PostgreSQL or Redis during an application release.
 - After deployment, clean stale Docker data with the existing workflow or deployment script. Do not prune volumes.
 
 ## Local validation expectations
@@ -42,8 +44,8 @@ Use this skill when the user asks to:
 The local release check script should pass all of these:
 
 - `pnpm typecheck`
-- `pnpm build`
-- `docker compose up -d --build`
+- `docker compose build api`
+- `docker compose up -d --no-build`
 - API health on `http://localhost:4000/api/health`
 - Web responds on `http://localhost:3000`
 
@@ -54,7 +56,7 @@ The server deploy check script confirms:
 - `YOUR_SERVER_APP_DIR` is on the expected commit or newer
 - `APP_IMAGE` points to ACR
 - `docker compose ps` shows `api`, `web`, `worker`, `postgres`, `redis` running
-- API health is good on the server and through the public domain
+- API and web health are good on the server and through the public domain
 
 ## Notes
 

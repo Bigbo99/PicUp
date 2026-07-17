@@ -13,6 +13,7 @@ import {
   History,
   Loader2,
   LogOut,
+  Maximize2,
   QrCode,
   RefreshCw,
   Trash2,
@@ -25,6 +26,7 @@ import {
   aspectRatioOptions,
   findModelCatalogEntry,
   resolutionOptions,
+  tokenRunSizeFor,
   templateOptions,
   type ImageJobRecord,
   type ModelConfig,
@@ -39,7 +41,8 @@ import {
 import { createImageJob, createRechargeOrder, deleteImageJob, getImageJob, getMe, getModels, getPaymentOrder, listImageJobs, logout, updateProfile, uploadImage } from '@/lib/api';
 import { useNotifications } from '@/components/notification-provider';
 
-const FALLBACK_REFERENCE_LIMIT = 14;
+const FALLBACK_REFERENCE_LIMIT = 6;
+const AUTO_PRO_TEMPLATES = new Set<ImageTemplate>(['replace_text', 'poster_text', 'product']);
 
 type PreviewImage = {
   url: string;
@@ -132,7 +135,7 @@ function modelShortDescription(model: ModelConfig) {
   const catalog = findModelCatalogEntry(model.provider, model.model);
   if (catalog?.model === 'gemini-3.1-flash-image') return '适合日常改图、中文改字和多参考图编辑';
   if (catalog?.model === 'gemini-3-pro-image') return '适合复杂构图、商品图和高质量输出';
-  if (catalog?.model === 'gpt-image-2') return '固定比例输出，建议 2K 起步，适合通用生成与参考图编辑';
+  if (catalog?.model === 'gpt-image-2') return '支持自动与自定义尺寸，参考图会以高保真方式处理';
   return model.description;
 }
 
@@ -278,6 +281,156 @@ function DropdownSelect({
   );
 }
 
+type AspectRatioMenuOption = {
+  value: string;
+  label: string;
+  description: string;
+};
+
+function RatioGlyph({ value, active = false }: { value: string; active?: boolean }) {
+  if (value === 'auto') {
+    return (
+      <span className={`flex h-8 w-11 shrink-0 items-center justify-center rounded-md border ${active ? 'border-teal-600 bg-teal-50 text-teal-700' : 'border-slate-200 bg-slate-50 text-slate-500'}`}>
+        <Maximize2 size={17} strokeWidth={2} aria-hidden />
+      </span>
+    );
+  }
+
+  const [widthRatio, heightRatio] = value.split(':').map(Number);
+  const scale = Math.min(34 / widthRatio, 24 / heightRatio);
+  const width = Math.max(4, Math.round(widthRatio * scale));
+  const height = Math.max(4, Math.round(heightRatio * scale));
+  return (
+    <span className="flex h-8 w-11 shrink-0 items-center justify-center" aria-hidden>
+      <span
+        className={`block border-2 ${active ? 'border-teal-600 bg-teal-50' : 'border-slate-400 bg-white'}`}
+        style={{ width, height }}
+      />
+    </span>
+  );
+}
+
+function AspectRatioSelect({
+  value,
+  options,
+  openMenu,
+  setOpenMenu,
+  onChange
+}: {
+  value: string;
+  options: AspectRatioMenuOption[];
+  openMenu: string | null;
+  setOpenMenu: (id: string | null) => void;
+  onChange: (value: string) => void;
+}) {
+  const id = 'aspect_ratio';
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const selected = options.find((item) => item.value === value) ?? options[0];
+  const isOpen = openMenu === id;
+  const [floatingStyle, setFloatingStyle] = useState<{ top: number; left: number; width: number; maxHeight: number }>({
+    top: 0,
+    left: 0,
+    width: 320,
+    maxHeight: 420
+  });
+
+  useLayoutEffect(() => {
+    if (!isOpen) return;
+
+    function updatePosition() {
+      const trigger = triggerRef.current;
+      if (!trigger) return;
+      const rect = trigger.getBoundingClientRect();
+      const viewportPadding = 12;
+      const gap = 8;
+      const menuWidth = Math.min(Math.max(rect.width, 320), window.innerWidth - viewportPadding * 2);
+      const menuMaxHeight = 420;
+      const belowSpace = window.innerHeight - rect.bottom - viewportPadding - gap;
+      const aboveSpace = rect.top - viewportPadding - gap;
+      const placeAbove = belowSpace < Math.min(menuMaxHeight, 260) && aboveSpace > belowSpace;
+      const availableHeight = Math.max(180, Math.min(menuMaxHeight, placeAbove ? aboveSpace : belowSpace));
+      const left = Math.max(viewportPadding, Math.min(rect.left, window.innerWidth - menuWidth - viewportPadding));
+      const top = placeAbove
+        ? Math.max(viewportPadding, rect.top - gap - availableHeight)
+        : Math.min(rect.bottom + gap, window.innerHeight - viewportPadding - availableHeight);
+      setFloatingStyle({ top, left, width: menuWidth, maxHeight: availableHeight });
+    }
+
+    updatePosition();
+    window.addEventListener('resize', updatePosition);
+    window.addEventListener('scroll', updatePosition, true);
+    return () => {
+      window.removeEventListener('resize', updatePosition);
+      window.removeEventListener('scroll', updatePosition, true);
+    };
+  }, [isOpen]);
+
+  return (
+    <div className="relative">
+      <span className="mb-2 block text-sm font-semibold">图片比例</span>
+      <button
+        ref={triggerRef}
+        type="button"
+        className={`flex min-h-12 w-full items-center justify-between gap-3 rounded-lg border bg-white px-3 text-left transition-colors ${
+          isOpen ? 'border-teal-600 ring-2 ring-teal-100' : 'border-line hover:border-teal-600'
+        }`}
+        onClick={() => setOpenMenu(isOpen ? null : id)}
+      >
+        <span className="flex min-w-0 items-center gap-3">
+          <RatioGlyph value={selected?.value ?? 'auto'} active />
+          <span className="min-w-0">
+            <span className="block truncate text-sm font-semibold text-ink">{selected?.label ?? '自动'}</span>
+            <span className="mt-0.5 block truncate text-xs text-muted">{selected?.description}</span>
+          </span>
+        </span>
+        <ChevronDown size={18} className={`shrink-0 text-muted transition-transform ${isOpen ? 'rotate-180' : ''}`} aria-hidden />
+      </button>
+
+      {isOpen && createPortal(
+        <div className="fixed inset-0 z-[70]">
+          <button
+            type="button"
+            className="absolute inset-0 h-full w-full cursor-default bg-transparent"
+            aria-label="关闭图片比例选择"
+            onClick={() => setOpenMenu(null)}
+          />
+          <div
+            className="fixed overflow-hidden rounded-lg border border-line bg-white shadow-[0_16px_48px_rgba(15,23,42,0.18)]"
+            style={{ top: floatingStyle.top, left: floatingStyle.left, width: floatingStyle.width, maxHeight: floatingStyle.maxHeight }}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="overflow-y-auto p-1.5" style={{ maxHeight: floatingStyle.maxHeight }}>
+              {options.map((item) => {
+                const active = item.value === value;
+                return (
+                  <button
+                    key={item.value}
+                    type="button"
+                    className={`flex min-h-14 w-full items-center gap-3 rounded-md px-3 py-2 text-left transition-colors hover:bg-slate-50 ${active ? 'bg-teal-50' : ''}`}
+                    aria-pressed={active}
+                    onClick={() => {
+                      onChange(item.value);
+                      setOpenMenu(null);
+                    }}
+                  >
+                    <RatioGlyph value={item.value} active={active} />
+                    <span className="min-w-0 flex-1">
+                      <span className={`block text-sm font-semibold ${active ? 'text-teal-800' : 'text-ink'}`}>{item.label}</span>
+                      <span className="mt-0.5 block text-xs text-muted">{item.description}</span>
+                    </span>
+                    {active && <CheckCircle2 size={17} className="shrink-0 text-teal-700" aria-hidden />}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
+    </div>
+  );
+}
+
 export default function HomePage() {
   const queryClient = useQueryClient();
   const notifications = useNotifications();
@@ -326,12 +479,18 @@ export default function HomePage() {
   });
 
   const modelOptions = useMemo(() => modelsQuery.data?.models.filter((item) => item.enabled) ?? [], [modelsQuery.data]);
+  const automaticModelConfig = useMemo(() => {
+    const usePro = quality === '4K' || AUTO_PRO_TEMPLATES.has(template) || uploaded.length >= 4;
+    const targetModel = usePro ? 'gemini-3-pro-image' : 'gemini-3.1-flash-image';
+    return modelOptions.find((item) => item.provider === 'gemini' && item.model === targetModel)
+      ?? modelOptions.find((item) => item.provider === 'gemini');
+  }, [modelOptions, quality, template, uploaded.length]);
   const selectedModelConfig = useMemo(() => {
     if (provider !== 'auto' && model !== 'auto') {
       return modelOptions.find((item) => item.provider === provider && item.model === model);
     }
-    return modelOptions.find((item) => item.model === modelsQuery.data?.defaultModel) ?? modelOptions[0];
-  }, [model, modelOptions, modelsQuery.data?.defaultModel, provider]);
+    return automaticModelConfig ?? modelOptions.find((item) => item.model === modelsQuery.data?.defaultModel) ?? modelOptions[0];
+  }, [automaticModelConfig, model, modelOptions, modelsQuery.data?.defaultModel, provider]);
 
   const availableRatios = useMemo(() => {
     const supported = selectedModelConfig?.supportedRatios;
@@ -344,12 +503,17 @@ export default function HomePage() {
     const supported = selectedModelConfig?.supportedQualities;
     return supported ? resolutionOptions.filter((item) => supported.includes(item.value)) : resolutionOptions;
   }, [selectedModelConfig]);
+  const effectiveAspectRatio = availableRatios.some((item) => item.value === aspectRatio)
+    ? aspectRatio
+    : availableRatios[0]?.value ?? 'auto';
 
   const modelChannelOptions = useMemo(() => [
     {
       value: 'auto:auto',
       label: '自动推荐',
-      description: modelsQuery.data?.defaultModel ? `默认使用 ${findModelCatalogEntry('gemini', modelsQuery.data.defaultModel)?.displayName ?? modelsQuery.data.defaultModel}` : '根据当前任务自动选择'
+      description: automaticModelConfig
+        ? `当前任务使用 ${modelDisplayLabel(automaticModelConfig)}${quality === '4K' ? ' · VT 4K' : ''}`
+        : '根据当前任务自动选择'
     },
     ...modelOptions.map((item) => ({
       value: `${item.provider}:${item.model}`,
@@ -358,26 +522,35 @@ export default function HomePage() {
       badge: modelBadge(item).label,
       tone: modelBadge(item).tone
     }))
-  ], [modelOptions, modelsQuery.data?.defaultModel]);
+  ], [automaticModelConfig, modelOptions, quality]);
 
-  const aspectRatioMenuOptions = useMemo<DropdownOption[]>(
-    () => availableRatios.map((item) => ({
-      value: item.value,
-      label: item.label,
-      description: item.value === 'auto'
-        ? uploaded.length > 0 ? '优先保持参考图比例' : '不指定比例，由模型自动决定'
-        : item.value
-    })),
-    [availableRatios, uploaded.length]
-  );
+  const aspectRatioMenuOptions = useMemo<AspectRatioMenuOption[]>(() => {
+    const isTokenRun = selectedModelConfig?.provider === 'tokenrun';
+    return availableRatios.map((item) => {
+      if (item.value === 'auto') {
+        return {
+          value: item.value,
+          label: uploaded.length > 0 ? '自动 / 跟随原图' : '自动构图',
+          description: isTokenRun ? '由 GPT Image 2 自动决定输出尺寸' : uploaded.length > 0 ? '优先保持参考图构图' : '由模型根据内容决定比例'
+        };
+      }
+      return {
+        value: item.value,
+        label: `${item.value} · ${item.label}`,
+        description: isTokenRun ? `${tokenRunSizeFor(item.value, quality)} · ${quality}` : `${quality === '512' ? '1K' : quality} 输出`
+      };
+    });
+  }, [availableRatios, quality, selectedModelConfig?.provider, uploaded.length]);
 
   const qualityMenuOptions = useMemo<DropdownOption[]>(
     () => availableResolutions.map((item) => ({
       value: item.value,
       label: item.label,
-      description: item.description
+      description: selectedModelConfig?.provider === 'tokenrun'
+        ? `${item.value === '1K' ? '快速' : item.value === '2K' ? '均衡' : '精细'}质量 · ${effectiveAspectRatio === 'auto' ? '自动尺寸' : tokenRunSizeFor(effectiveAspectRatio, item.value)}`
+        : item.description
     })),
-    [availableResolutions]
+    [availableResolutions, effectiveAspectRatio, selectedModelConfig?.provider]
   );
 
   const maxReferenceImages = selectedModelConfig?.maxInputImages ?? FALLBACK_REFERENCE_LIMIT;
@@ -874,9 +1047,7 @@ export default function HomePage() {
                 helperText={selectedModelConfig ? modelShortDescription(selectedModelConfig) : undefined}
               />
 
-              <DropdownSelect
-                id="aspect_ratio"
-                label="图片比例"
+              <AspectRatioSelect
                 value={aspectRatio}
                 options={aspectRatioMenuOptions}
                 openMenu={openMenu}

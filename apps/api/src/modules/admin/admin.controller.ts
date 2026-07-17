@@ -239,7 +239,7 @@ export class AdminController {
       providers: (['gemini', 'tokenrun'] satisfies Array<Exclude<ImageProviderName, 'auto'>>).map((provider) => {
         const enabledModels = models.filter((model) => model.provider === provider && model.enabled).length;
         const configured = provider === 'gemini'
-          ? Boolean(process.env.GEMINI_API_KEY || process.env.PROVIDER_MOCK_ENABLED !== 'false')
+          ? Boolean(process.env.GRSAI_API_KEY || process.env.PROVIDER_MOCK_ENABLED !== 'false')
           : Boolean(process.env.TOKENRUN_API_KEY || process.env.PROVIDER_MOCK_ENABLED !== 'false');
         return {
           provider,

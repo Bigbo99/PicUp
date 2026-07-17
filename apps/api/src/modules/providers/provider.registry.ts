@@ -1,6 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common';
 import type { ImageProviderName } from '@picup/shared';
-import { GeminiProvider } from './gemini.provider';
+import { GrsaiProvider } from './grsai.provider';
 import { MockProvider } from './mock.provider';
 import type { ImageProvider } from './provider.types';
 import { TokenRunProvider } from './tokenrun.provider';
@@ -10,8 +10,8 @@ export class ProviderRegistry {
   constructor(
     @Inject(MockProvider)
     private readonly mock: MockProvider,
-    @Inject(GeminiProvider)
-    private readonly gemini: GeminiProvider,
+    @Inject(GrsaiProvider)
+    private readonly grsai: GrsaiProvider,
     @Inject(TokenRunProvider)
     private readonly tokenrun: TokenRunProvider
   ) {}
@@ -23,7 +23,7 @@ export class ProviderRegistry {
       return this.mock;
     }
     console.log(`[provider] using ${provider}`);
-    if (provider === 'gemini') return this.gemini;
+    if (provider === 'gemini') return this.grsai;
     return this.tokenrun;
   }
 }

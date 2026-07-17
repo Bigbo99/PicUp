@@ -1,13 +1,18 @@
 import { Inject, Injectable } from '@nestjs/common';
+import { tokenRunSizeFor } from '@picup/shared';
 import { Agent, FormData, ProxyAgent, type Dispatcher } from 'undici';
 import { ObjectStorageService } from '../../common/object-storage.service';
 import type { ImageProvider, ProviderImageInput, ProviderImageResult } from './provider.types';
 
 const DEFAULT_TOKENRUN_TIMEOUT_MS = 10 * 60 * 1000;
 const DEFAULT_TOKENRUN_BASE_URL = 'https://tokenrun.ai-mendao.xyz';
+const DEFAULT_TOKENRUN_DOWNLOAD_ATTEMPTS = 3;
+const retryableStatusCodes = new Set([408, 429, 500, 502, 503, 504]);
 
 @Injectable()
 export class TokenRunProvider implements ImageProvider {
+  private readonly dispatchers = new Map<string, Dispatcher>();
+
   constructor(@Inject(ObjectStorageService) private readonly objectStorage: ObjectStorageService) {}
 
   async generate(input: ProviderImageInput): Promise<ProviderImageResult> {
@@ -23,15 +28,20 @@ export class TokenRunProvider implements ImageProvider {
       : this.buildGenerationRequest(input);
 
     console.log(`[tokenrun] request job=${input.jobId} model=${input.model} endpoint=${endpoint} ratio=${input.aspectRatio} quality=${input.quality}`);
-    const response = await fetch(`${baseUrl}${endpoint}`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        ...(body instanceof FormData ? {} : { 'Content-Type': 'application/json' })
-      },
-      body: body instanceof FormData ? body : JSON.stringify(body),
-      dispatcher: this.createDispatcher()
-    } as RequestInit & { dispatcher: Dispatcher });
+    let response: Response;
+    try {
+      response = await fetch(`${baseUrl}${endpoint}`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          ...(body instanceof FormData ? {} : { 'Content-Type': 'application/json' })
+        },
+        body: body instanceof FormData ? body : JSON.stringify(body),
+        dispatcher: this.createDispatcher(this.apiProxyUrl())
+      } as RequestInit & { dispatcher: Dispatcher });
+    } catch (error) {
+      throw new Error(`TokenRun API network failed: ${this.describeError(error)}`);
+    }
 
     if (!response.ok) {
       const message = await response.text();
@@ -45,7 +55,7 @@ export class TokenRunProvider implements ImageProvider {
     return {
       model: input.model,
       prompt: input.prompt,
-      size: this.sizeFor(input),
+      size: tokenRunSizeFor(input.aspectRatio, input.quality),
       quality: this.qualityFor(input),
       output_format: 'png'
     };
@@ -55,7 +65,7 @@ export class TokenRunProvider implements ImageProvider {
     const form = new FormData();
     form.set('model', input.model);
     form.set('prompt', input.prompt);
-    form.set('size', this.sizeFor(input));
+    form.set('size', tokenRunSizeFor(input.aspectRatio, input.quality));
     form.set('quality', this.qualityFor(input));
     form.set('output_format', 'png');
 
@@ -91,36 +101,43 @@ export class TokenRunProvider implements ImageProvider {
   }
 
   private async downloadOutput(jobId: string, sourceUrl: string, index: number) {
-    const response = await fetch(sourceUrl, { dispatcher: this.createDispatcher() } as RequestInit & { dispatcher: Dispatcher });
-    if (!response.ok) throw new Error(`TokenRun image download failed: ${response.status}`);
+    const attempts = this.downloadAttempts();
+    const host = this.urlHost(sourceUrl);
+    let lastError = 'unknown error';
 
-    const mimeType = response.headers.get('content-type') ?? 'image/png';
-    const extension = mimeType.includes('jpeg') ? '.jpg' : mimeType.includes('webp') ? '.webp' : '.png';
-    const filename = `${jobId}-tokenrun-${index}${extension}`;
-    const outputUrl = await this.objectStorage.save('outputs', filename, Buffer.from(await response.arrayBuffer()), mimeType);
-    return { url: outputUrl, mimeType };
-  }
+    for (let attempt = 1; attempt <= attempts; attempt += 1) {
+      const proxy = this.downloadProxyForAttempt(attempt);
+      try {
+        const response = await fetch(sourceUrl, {
+          headers: { Referer: `${this.normalizeBaseUrl(process.env.TOKENRUN_BASE_URL ?? DEFAULT_TOKENRUN_BASE_URL)}/` },
+          dispatcher: this.createDispatcher(proxy)
+        } as RequestInit & { dispatcher: Dispatcher });
+        if (!response.ok) {
+          lastError = `HTTP ${response.status}`;
+          if (!retryableStatusCodes.has(response.status)) break;
+          await response.body?.cancel().catch(() => undefined);
+        } else {
+          const mimeType = (response.headers.get('content-type') ?? 'image/png').split(';')[0];
+          if (!mimeType.startsWith('image/')) throw new Error(`unexpected content-type ${mimeType}`);
+          const extension = mimeType.includes('jpeg') ? '.jpg' : mimeType.includes('webp') ? '.webp' : '.png';
+          const filename = `${jobId}-tokenrun-${index}${extension}`;
+          const outputUrl = await this.objectStorage.save('outputs', filename, Buffer.from(await response.arrayBuffer()), mimeType);
+          return { url: outputUrl, mimeType };
+        }
+      } catch (error) {
+        lastError = this.describeError(error);
+      }
 
-  private sizeFor(input: ProviderImageInput) {
-    if (input.aspectRatio === 'auto') return 'auto';
-    if (input.quality === '4K') {
-      if (input.aspectRatio === '9:16' || input.aspectRatio === '3:4' || input.aspectRatio === '4:5') return '2160x3840';
-      if (input.aspectRatio === '16:9' || input.aspectRatio === '4:3') return '3840x2160';
-      return '2880x2880';
+      console.warn(`[tokenrun] output download retry host=${host} attempt=${attempt}/${attempts} proxy=${proxy ? 'yes' : 'no'} error=${lastError}`);
+      await this.sleep(500 * attempt);
     }
-    if (input.quality === '2K') {
-      if (input.aspectRatio === '9:16' || input.aspectRatio === '3:4' || input.aspectRatio === '4:5') return '1152x2048';
-      if (input.aspectRatio === '16:9' || input.aspectRatio === '4:3') return '2048x1152';
-      return '2048x2048';
-    }
-    if (input.aspectRatio === '9:16' || input.aspectRatio === '3:4' || input.aspectRatio === '4:5') return '1024x1536';
-    if (input.aspectRatio === '16:9' || input.aspectRatio === '4:3') return '1536x1024';
-    return '1024x1024';
+
+    throw new Error(`TokenRun image download failed host=${host}: ${lastError}`);
   }
 
   private qualityFor(input: ProviderImageInput) {
     if (input.quality === '4K') return 'high';
-    if (input.quality === '512') return 'low';
+    if (input.quality === '1K' || input.quality === '512') return 'low';
     return 'medium';
   }
 
@@ -131,21 +148,63 @@ export class TokenRunProvider implements ImageProvider {
     return 'image/png';
   }
 
-  private createDispatcher(): Dispatcher {
+  private createDispatcher(proxy: string | undefined): Dispatcher {
     const timeoutMs = Number(
       process.env.TOKENRUN_TIMEOUT_MS ?? process.env.GEMINI_REQUEST_TIMEOUT_MS
     ) || DEFAULT_TOKENRUN_TIMEOUT_MS;
+    const key = `${proxy ?? 'direct'}:${timeoutMs}`;
+    const existing = this.dispatchers.get(key);
+    if (existing) return existing;
+
     const options = {
       headersTimeout: timeoutMs,
       bodyTimeout: timeoutMs,
       connectTimeout: Math.min(timeoutMs, 120_000)
     };
-    const proxy = process.env.TOKENRUN_PROXY_URL?.trim()
+    const dispatcher = proxy ? new ProxyAgent({ uri: proxy, ...options }) : new Agent(options);
+    this.dispatchers.set(key, dispatcher);
+    return dispatcher;
+  }
+
+  private apiProxyUrl() {
+    return process.env.TOKENRUN_PROXY_URL?.trim()
       || process.env.HTTPS_PROXY?.trim()
       || process.env.HTTP_PROXY?.trim()
       || undefined;
-    if (proxy) return new ProxyAgent({ uri: proxy, ...options });
-    return new Agent(options);
+  }
+
+  private downloadProxyForAttempt(attempt: number) {
+    const explicit = process.env.TOKENRUN_DOWNLOAD_PROXY_URL?.trim();
+    if (explicit) return explicit;
+    return attempt % 2 === 0 ? this.apiProxyUrl() : undefined;
+  }
+
+  private downloadAttempts() {
+    const value = Number(process.env.TOKENRUN_DOWNLOAD_RETRY_ATTEMPTS);
+    return Number.isInteger(value) && value > 0 ? value : DEFAULT_TOKENRUN_DOWNLOAD_ATTEMPTS;
+  }
+
+  private describeError(error: unknown) {
+    if (!(error instanceof Error)) return String(error);
+    const cause = error.cause;
+    if (cause && typeof cause === 'object') {
+      const code = 'code' in cause ? String(cause.code) : '';
+      const message = 'message' in cause ? String(cause.message) : '';
+      return [error.message, code, message].filter(Boolean).join(' / ');
+    }
+    return error.message;
+  }
+
+  private urlHost(url: string) {
+    try {
+      return new URL(url).host;
+    } catch {
+      return 'invalid-url';
+    }
+  }
+
+  private sleep(ms: number) {
+    return new Promise((resolveSleep) => setTimeout(resolveSleep, ms));
   }
 
   private normalizeBaseUrl(url: string) {

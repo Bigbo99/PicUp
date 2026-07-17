@@ -2,12 +2,18 @@ import { Injectable } from '@nestjs/common';
 import { createHash, createHmac } from 'node:crypto';
 import { readFile, unlink, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
+import { Agent, ProxyAgent, type Dispatcher } from 'undici';
 import { ensureStorage, publicMediaUrl } from './storage-paths';
 
 type MediaKind = 'inputs' | 'outputs';
+const DEFAULT_QINIU_TIMEOUT_MS = 120_000;
+const DEFAULT_QINIU_RETRY_ATTEMPTS = 3;
+const retryableStatusCodes = new Set([408, 429, 500, 502, 503, 504]);
 
 @Injectable()
 export class ObjectStorageService {
+  private readonly qiniuDispatchers = new Map<string, Dispatcher>();
+
   async save(kind: MediaKind, filename: string, body: Buffer, mimeType: string) {
     if (this.isQiniuEnabled()) {
       const key = this.keyFor(kind, filename);
@@ -124,21 +130,76 @@ export class ObjectStorageService {
       region: config.region
     });
 
-    const response = await fetch(requestUrl, {
-      method,
-      headers: {
-        ...headers,
-        Authorization: authorization
-      },
-      body: method === 'PUT' ? new Uint8Array(payload) : undefined
-    });
+    const attempts = this.qiniuRetryAttempts();
+    let lastError = 'unknown error';
+    for (let attempt = 1; attempt <= attempts; attempt += 1) {
+      try {
+        const response = await fetch(requestUrl, {
+          method,
+          headers: {
+            ...headers,
+            Authorization: authorization
+          },
+          body: method === 'PUT' ? new Uint8Array(payload) : undefined,
+          dispatcher: this.qiniuDispatcher()
+        } as RequestInit & { dispatcher: Dispatcher });
 
-    if (!response.ok) {
-      const message = await response.text().catch(() => '');
-      throw new Error(`Qiniu ${method} failed ${response.status} signed=${signedHeaders} key=${key} ${message}`);
+        if (response.ok) return Buffer.from(await response.arrayBuffer());
+
+        const message = await response.text().catch(() => '');
+        lastError = `HTTP ${response.status} signed=${signedHeaders} ${message}`;
+        if (!retryableStatusCodes.has(response.status)) break;
+      } catch (error) {
+        lastError = this.describeNetworkError(error);
+      }
+
+      console.warn(`[qiniu] ${method} retry key=${key} attempt=${attempt}/${attempts} error=${lastError}`);
+      await this.sleep(500 * attempt);
     }
 
-    return Buffer.from(await response.arrayBuffer());
+    throw new Error(`Qiniu ${method} failed key=${key}: ${lastError}`);
+  }
+
+  private qiniuDispatcher(): Dispatcher {
+    const timeoutMs = this.qiniuTimeoutMs();
+    const proxy = process.env.QINIU_PROXY_URL?.trim();
+    const key = `${proxy ?? 'direct'}:${timeoutMs}`;
+    const existing = this.qiniuDispatchers.get(key);
+    if (existing) return existing;
+
+    const options = {
+      headersTimeout: timeoutMs,
+      bodyTimeout: timeoutMs,
+      connectTimeout: Math.min(timeoutMs, 30_000)
+    };
+    const dispatcher = proxy ? new ProxyAgent({ uri: proxy, ...options }) : new Agent(options);
+    this.qiniuDispatchers.set(key, dispatcher);
+    return dispatcher;
+  }
+
+  private qiniuTimeoutMs() {
+    const value = Number(process.env.QINIU_TIMEOUT_MS);
+    return Number.isFinite(value) && value > 0 ? value : DEFAULT_QINIU_TIMEOUT_MS;
+  }
+
+  private qiniuRetryAttempts() {
+    const value = Number(process.env.QINIU_RETRY_ATTEMPTS);
+    return Number.isInteger(value) && value > 0 ? value : DEFAULT_QINIU_RETRY_ATTEMPTS;
+  }
+
+  private describeNetworkError(error: unknown) {
+    if (!(error instanceof Error)) return String(error);
+    const cause = error.cause;
+    if (cause && typeof cause === 'object') {
+      const code = 'code' in cause ? String(cause.code) : '';
+      const message = 'message' in cause ? String(cause.message) : '';
+      return [error.message, code, message].filter(Boolean).join(' / ');
+    }
+    return error.message;
+  }
+
+  private sleep(ms: number) {
+    return new Promise((resolveSleep) => setTimeout(resolveSleep, ms));
   }
 
   private sign(input: {
