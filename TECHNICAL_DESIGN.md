@@ -488,11 +488,16 @@ POST https://generativelanguage.googleapis.com/v1beta/models/{model}:generateCon
 - 将 base64 图片上传到对象存储。
 - 解析文本说明和 grounding 来源。
 
-环境变量：
+运行时配置：
 
-```env
-GEMINI_API_KEY=
-GEMINI_BASE_URL=https://generativelanguage.googleapis.com
+```json
+{
+  "id": "gemini-official",
+  "type": "gemini-official",
+  "enabled": false,
+  "apiKey": "",
+  "baseUrl": "https://generativelanguage.googleapis.com"
+}
 ```
 
 ### 6.5 GrsAiProvider
@@ -507,11 +512,16 @@ GrsAI 按异步任务模式设计。
 - 轮询 GrsAI 结果接口。
 - 下载结果图并转存到 PicUp 对象存储。
 
-环境变量：
+运行时配置：
 
-```env
-GRSAI_API_KEY=
-GRSAI_BASE_URL=
+```json
+{
+  "id": "grsai",
+  "type": "grsai",
+  "enabled": true,
+  "apiKey": "",
+  "baseUrl": "https://grsai.dakka.com.cn"
+}
 ```
 
 ### 6.6 自动路由
@@ -609,6 +619,8 @@ Provider 健康检查失败时：
 
 #### model_configs
 
+该表为旧版数据库模型配置，保留用于兼容历史部署。当前运行时 Provider、模型、请求路径和自动路由以 `config/ai-config.json` 为准。
+
 | 字段 | 类型 | 说明 |
 |---|---|---|
 | id | uuid | 配置 ID |
@@ -664,9 +676,9 @@ provider:gemini:concurrency
 
 ### 9.1 密钥安全
 
-- `GEMINI_API_KEY`、`GRSAI_API_KEY` 只存放在服务器环境变量或密钥管理系统。
+- Provider API Key 只存放在被 Git 忽略的 `config/ai-config.json` 或外部密钥管理系统。
 - 禁止输出完整密钥到日志。
-- 管理后台只显示密钥后 4 位。
+- 管理后台只显示密钥是否已配置，不回传密钥内容。
 - 已泄露密钥必须立即轮换。
 
 ### 9.2 上传安全
@@ -825,11 +837,7 @@ S3_ACCESS_KEY=
 S3_SECRET_KEY=
 S3_PUBLIC_BASE_URL=https://cdn.picup.example.com
 
-GEMINI_API_KEY=
-GEMINI_BASE_URL=https://generativelanguage.googleapis.com
-
-GRSAI_API_KEY=
-GRSAI_BASE_URL=
+AI_CONFIG_PATH=./config/ai-config.json
 
 JWT_SECRET=
 COOKIE_SECRET=
@@ -973,8 +981,10 @@ GET /api/health/providers
 
 本地开发默认使用 Mock Provider，避免消耗真实 API 额度。
 
-```env
-PROVIDER_MOCK_ENABLED=true
+```json
+{
+  "mockEnabled": true
+}
 ```
 
 Mock 行为：

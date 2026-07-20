@@ -1,4 +1,6 @@
+import { MODEL_CONFIG_DEFAULTS } from '@picup/shared';
 import type {
+  AiProviderType,
   ImageJobCreateRequest,
   ImageJobCreateResponse,
   ImageJobRecord,
@@ -15,6 +17,28 @@ import type {
   WechatAuthStartResponse,
   WechatAuthStatusResponse
 } from '@picup/shared';
+
+const fallbackProviderMeta: Record<string, { displayName: string; type: AiProviderType }> = {
+  grsai: { displayName: 'GrsAI', type: 'grsai' },
+  'gemini-official': { displayName: 'Gemini Official', type: 'gemini-official' },
+  tokenrun: { displayName: 'TokenRun', type: 'openai-images' }
+};
+
+const FALLBACK_MODELS_RESPONSE: ModelsResponse = {
+  models: MODEL_CONFIG_DEFAULTS.map((model) => ({
+    ...model,
+    id: `${model.provider}:${model.model}`,
+    providerDisplayName: fallbackProviderMeta[model.provider]?.displayName ?? model.provider,
+    providerType: fallbackProviderMeta[model.provider]?.type
+  })),
+  defaultProvider: 'auto',
+  defaultModel: 'nano-banana-2',
+  source: 'fallback',
+  routing: {
+    default: { provider: 'grsai', model: 'nano-banana-2' },
+    professional: { provider: 'grsai', model: 'nano-banana-pro' }
+  }
+};
 
 /** Always use relative paths; Next.js rewrites or Nginx forwards requests to the API service. */
 const API_BASE_URL = '';
@@ -79,7 +103,12 @@ export async function deleteImageJob(id: string) {
 }
 
 export async function getModels() {
-  return request<ModelsResponse>('/api/models');
+  try {
+    return await request<ModelsResponse>('/api/models');
+  } catch (error) {
+    console.warn('[models] runtime model API unavailable, using fallback catalog', error);
+    return FALLBACK_MODELS_RESPONSE;
+  }
 }
 
 export async function getMe() {

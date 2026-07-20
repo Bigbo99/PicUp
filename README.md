@@ -8,7 +8,8 @@ PicUp 是一个响应式在线 AI 图片处理工作台。当前 MVP 包含：
 - 本地图片上传与结果存储
 - PostgreSQL + Prisma 数据持久化
 - Redis 图片任务队列
-- Gemini Provider 接入预留
+- GrsAI、Gemini Official 和 OpenAI Images 兼容 Provider
+- JSON 驱动的 AI Provider 与模型配置
 - Mock Provider 本地演示
 - 单应用镜像 Docker 部署
 - GitHub Actions 自动检查与部署
@@ -17,6 +18,7 @@ PicUp 是一个响应式在线 AI 图片处理工作台。当前 MVP 包含：
 
 ```bash
 cp .env.example .env
+cp config/ai-config.example.json config/ai-config.json
 pnpm install
 pnpm dev
 ```
@@ -26,18 +28,28 @@ pnpm dev
 - Web: http://localhost:3000
 - API: http://localhost:4000/api/health
 
-默认 `PROVIDER_MOCK_ENABLED=true`，不需要 API Key 就可以跑通上传、创建任务、轮询和结果预览。
+默认 `config/ai-config.json` 中的 `mockEnabled=true`，不需要 API Key 就可以跑通上传、创建任务、轮询和结果预览。
 
-## 使用 Gemini
+## AI Provider 配置
 
-在 `.env` 中配置：
+AI Provider 不再分别占用大量环境变量。`.env` 只保留配置文件位置：
 
 ```env
-PROVIDER_MOCK_ENABLED=false
-GEMINI_API_KEY=your_key
+AI_CONFIG_PATH=./config/ai-config.json
 ```
 
-然后重启 API 和 Worker。
+`config/ai-config.json` 统一保存：
+
+- Provider ID、类型和启用状态
+- API Key 与 Base URL
+- 生成、查询、编辑等请求路径
+- 模型列表、别名、积分和输入限制
+- 默认路由与专业任务路由
+- 超时、重试和 Provider 代理
+
+默认路由使用 GrsAI。Google Gemini 官方 Provider 作为独立的 `gemini-official` 保留，默认禁用，可在管理后台单独配置和启用。TokenRun 使用 `openai-images` 兼容适配器。
+
+真实调用前，将 `mockEnabled` 改为 `false`，并为启用的 Provider 填写 `apiKey`。运行中的 API 和 Worker 会在配置文件变化后自动重新读取。
 
 如果当前网络需要代理访问 Google API，需要在 `.env` 中配置 Node 可以读取的代理：
 
@@ -69,6 +81,7 @@ docker build -t picup-app:local .
 
 ```bash
 cp .env.example .env
+cp config/ai-config.example.json config/ai-config.json
 docker compose build api
 docker compose up -d --no-build
 ```
@@ -203,9 +216,9 @@ Content-Type: application/json
 - `users`：访客、注册用户、管理员、密码哈希和状态
 - `files`：上传文件元数据和用户归属
 - `image_jobs`：图片任务、输入输出、状态、错误和额度预占
-- `model_configs`：可热更新的模型开关、优先级、支持比例、分辨率和单次额度消耗
+- `model_configs`：旧版模型配置表，保留用于兼容历史部署；运行时模型来源已迁移到 `config/ai-config.json`
 - `app_settings`：后台应用设置，保存为 JSON
-- `audit_logs`：管理员修改模型配置和设置时的审计记录
+- `audit_logs`：管理员操作与设置变更记录
 
 本地和 Docker Compose 使用：
 
@@ -240,6 +253,15 @@ pnpm --filter @picup/api db:generate
 ```http
 GET /api/admin/models
 PATCH /api/admin/models/{id}
+GET /api/admin/ai-config
+POST /api/admin/ai-config/providers
+PATCH /api/admin/ai-config/providers/{providerId}
+DELETE /api/admin/ai-config/providers/{providerId}
+POST /api/admin/ai-config/providers/{providerId}/models
+PATCH /api/admin/ai-config/providers/{providerId}/models/{modelId}
+DELETE /api/admin/ai-config/providers/{providerId}/models/{modelId}
+PATCH /api/admin/ai-config/routing
+PATCH /api/admin/ai-config/mock
 GET /api/admin/settings
 PUT /api/admin/settings/{key}
 GET /api/admin/audit-logs
@@ -304,7 +326,9 @@ ACR_IMAGE
 git clone git@github.com:Bigbo99/PicUp.git /opt/PicUp
 cd /opt/PicUp
 cp .env.example .env
+cp config/ai-config.example.json config/ai-config.json
 nano .env
+nano config/ai-config.json
 export APP_IMAGE=crpi-dcv2ij8qo3puovop.cn-hangzhou.personal.cr.aliyuncs.com/dani_repo/picup:latest
 export ACR_REGISTRY=crpi-dcv2ij8qo3puovop.cn-hangzhou.personal.cr.aliyuncs.com
 export ACR_USERNAME=your_user

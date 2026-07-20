@@ -1,10 +1,13 @@
 export type ImageJobMode = 'generate' | 'edit';
-export type ImageProviderName = 'auto' | 'gemini' | 'tokenrun';
+// Provider ids are runtime-configured. "auto" remains the only reserved id.
+export type ImageProviderName = string;
+export type AiProviderType = 'grsai' | 'gemini-official' | 'openai-images';
 export type ImageJobStatus = 'queued' | 'running' | 'retrying' | 'succeeded' | 'failed' | 'refunded';
 export type ImageQuality = '512' | '1K' | '2K' | '4K';
 export type UserRole = 'guest' | 'user' | 'admin';
 export type UserStatus = 'pending' | 'active' | 'disabled';
 export type ImageTemplate =
+  | 'auto'
   | 'replace_text'
   | 'remove_object'
   | 'add_object'
@@ -81,6 +84,8 @@ export interface ImageJobRecord extends ImageJobCreateRequest {
 export interface ModelConfig {
   id?: string;
   provider: Exclude<ImageProviderName, 'auto'>;
+  providerDisplayName?: string;
+  providerType?: AiProviderType;
   model: string;
   displayName: string;
   description: string;
@@ -96,7 +101,86 @@ export interface ModelsResponse {
   models: ModelConfig[];
   defaultProvider: ImageProviderName;
   defaultModel: string;
+  source?: 'runtime' | 'fallback';
+  routing?: {
+    default: AiRoutingTarget;
+    professional: AiRoutingTarget;
+  };
 }
+
+export interface AiRoutingTarget {
+  provider: string;
+  model: string;
+}
+
+export interface AiRequestPaths {
+  generate?: string;
+  result?: string;
+  generations?: string;
+  edits?: string;
+}
+
+export interface AdminAiModelConfig extends Omit<ModelConfig, 'id' | 'provider' | 'providerDisplayName' | 'providerType'> {
+  upstreamModel?: string;
+  aliases?: string[];
+  qualityModelOverrides?: Partial<Record<ImageQuality, string>>;
+  fallbackModels?: string[];
+}
+
+export interface AdminAiProviderConfig {
+  id: string;
+  type: AiProviderType;
+  displayName: string;
+  enabled: boolean;
+  apiKeyConfigured: boolean;
+  baseUrl: string;
+  paths: AiRequestPaths;
+  defaultModel: string;
+  aliases?: string[];
+  timeoutMs: number;
+  retryAttempts?: number;
+  retryDelayMs?: number;
+  pollIntervalMs?: number;
+  downloadRetryAttempts?: number;
+  proxyUrl?: string;
+  downloadProxyUrl?: string;
+  disableProxy?: boolean;
+  models: AdminAiModelConfig[];
+}
+
+export interface AdminAiConfigResponse {
+  version: number;
+  path: string;
+  mockEnabled: boolean;
+  routing: {
+    default: AiRoutingTarget;
+    professional: AiRoutingTarget;
+  };
+  providers: AdminAiProviderConfig[];
+}
+
+export interface AdminAiProviderInput {
+  id: string;
+  type: AiProviderType;
+  displayName: string;
+  enabled: boolean;
+  apiKey?: string;
+  clearApiKey?: boolean;
+  baseUrl: string;
+  paths: AiRequestPaths;
+  defaultModel: string;
+  aliases?: string[];
+  timeoutMs?: number;
+  retryAttempts?: number;
+  retryDelayMs?: number;
+  pollIntervalMs?: number;
+  downloadRetryAttempts?: number;
+  proxyUrl?: string;
+  downloadProxyUrl?: string;
+  disableProxy?: boolean;
+}
+
+export type AdminAiModelInput = AdminAiModelConfig;
 
 export interface AuthUser {
   id: string;
@@ -389,8 +473,10 @@ export const resolutionOptions: Array<{ label: string; value: ImageQuality; desc
 ];
 
 export * from './model-catalog';
+export * from './image-intent';
 
 export const templateOptions: Array<{ label: string; value: ImageTemplate; description: string }> = [
+  { label: '自动识别', value: 'auto', description: '根据编辑指令自动判断处理方式' },
   { label: '改字', value: 'replace_text', description: '修改图片内文字并保持版式' },
   { label: '去除物体', value: 'remove_object', description: '移除杂物或不需要的元素' },
   { label: '添加元素', value: 'add_object', description: '加入商品、装饰或人物元素' },

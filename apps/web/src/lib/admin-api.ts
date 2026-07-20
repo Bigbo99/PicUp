@@ -1,4 +1,9 @@
 import type {
+  AdminAiConfigResponse,
+  AdminAiModelConfig,
+  AdminAiModelInput,
+  AdminAiProviderConfig,
+  AdminAiProviderInput,
   AdminAppSettingRecord,
   AdminAuditLogListResponse,
   AdminJobsResponse,
@@ -7,8 +12,7 @@ import type {
   AdminStatsResponse,
   AdminUserUpdateRequest,
   AdminUsersResponse,
-  AuthUser,
-  ModelConfig
+  AuthUser
 } from '@picup/shared';
 
 async function adminRequest<T>(path: string, init?: RequestInit): Promise<T> {
@@ -96,10 +100,61 @@ export function listAdminJobs(params = new URLSearchParams()) {
   return adminRequest<AdminJobsResponse>(`/api/admin/jobs?${params.toString()}`);
 }
 
-export function updateAdminModel(id: string, patch: Partial<ModelConfig>) {
-  return adminRequest<ModelConfig>(`/api/admin/models/${id}`, {
+export function getAdminAiConfig() {
+  return adminRequest<AdminAiConfigResponse>('/api/admin/ai-config');
+}
+
+export function createAdminAiProvider(input: AdminAiProviderInput) {
+  return adminRequest<AdminAiProviderConfig>('/api/admin/ai-config/providers', {
+    method: 'POST',
+    body: JSON.stringify(input)
+  });
+}
+
+export function updateAdminAiProvider(providerId: string, patch: Partial<AdminAiProviderInput>) {
+  return adminRequest<AdminAiProviderConfig>(`/api/admin/ai-config/providers/${encodeURIComponent(providerId)}`, {
     method: 'PATCH',
     body: JSON.stringify(patch)
+  });
+}
+
+export function deleteAdminAiProvider(providerId: string) {
+  return adminRequest<{ ok: boolean; providerId: string }>(`/api/admin/ai-config/providers/${encodeURIComponent(providerId)}`, {
+    method: 'DELETE'
+  });
+}
+
+export function createAdminAiModel(providerId: string, input: AdminAiModelInput) {
+  return adminRequest<AdminAiModelConfig>(`/api/admin/ai-config/providers/${encodeURIComponent(providerId)}/models`, {
+    method: 'POST',
+    body: JSON.stringify(input)
+  });
+}
+
+export function updateAdminAiModel(providerId: string, modelId: string, patch: Partial<AdminAiModelInput>) {
+  return adminRequest<AdminAiModelConfig>(`/api/admin/ai-config/providers/${encodeURIComponent(providerId)}/models/${encodeURIComponent(modelId)}`, {
+    method: 'PATCH',
+    body: JSON.stringify(patch)
+  });
+}
+
+export function deleteAdminAiModel(providerId: string, modelId: string) {
+  return adminRequest<{ ok: boolean; providerId: string; modelId: string }>(`/api/admin/ai-config/providers/${encodeURIComponent(providerId)}/models/${encodeURIComponent(modelId)}`, {
+    method: 'DELETE'
+  });
+}
+
+export function updateAdminAiRouting(routing: AdminAiConfigResponse['routing']) {
+  return adminRequest<AdminAiConfigResponse['routing']>('/api/admin/ai-config/routing', {
+    method: 'PATCH',
+    body: JSON.stringify(routing)
+  });
+}
+
+export function updateAdminAiMock(mockEnabled: boolean) {
+  return adminRequest<{ mockEnabled: boolean }>('/api/admin/ai-config/mock', {
+    method: 'PATCH',
+    body: JSON.stringify({ mockEnabled })
   });
 }
 

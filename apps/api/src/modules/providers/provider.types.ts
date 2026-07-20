@@ -2,6 +2,7 @@ import type { ImageQuality, ImageTemplate, UploadedFileRecord } from '@picup/sha
 
 export interface ProviderImageInput {
   jobId: string;
+  provider: string;
   mode: 'generate' | 'edit';
   template: ImageTemplate;
   automaticModelSelection: boolean;

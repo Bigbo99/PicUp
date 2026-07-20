@@ -1,6 +1,6 @@
-import { BadRequestException, Body, Controller, Delete, Get, Inject, NotFoundException, Param, Patch, Put, Query, Req, UseGuards } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Delete, Get, Inject, NotFoundException, Param, Patch, Post, Put, Query, Req, UseGuards } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
-import type { ImageJobStatus, ImageProviderName, UserRole, UserStatus } from '@picup/shared';
+import type { ImageJobStatus, UserRole, UserStatus } from '@picup/shared';
 import { AuthService } from '../auth/auth.service';
 import { AdminGuard } from '../auth/admin.guard';
 import { AdminOriginGuard } from './admin-origin.guard';
@@ -8,8 +8,22 @@ import { AdminRateLimitGuard } from './admin-rate-limit.guard';
 import { StorageService } from '../../common/storage.service';
 import { clientIp } from '../../common/request-ip';
 import { ModelsService } from '../models/models.service';
+import { AiConfigService } from '../../common/ai-config/ai-config.service';
 import type { AuthenticatedRequest } from '../auth/auth.types';
-import { UpdateModelConfigDto, UpdateUserCreditsDto, UpdateUserDto, UpdateUserQuotaDto, UpdateUserStatusDto, UpsertSettingDto } from './dto';
+import {
+  CreateAiModelDto,
+  CreateAiProviderDto,
+  UpdateAiMockDto,
+  UpdateAiModelDto,
+  UpdateAiProviderDto,
+  UpdateAiRoutingDto,
+  UpdateModelConfigDto,
+  UpdateUserCreditsDto,
+  UpdateUserDto,
+  UpdateUserQuotaDto,
+  UpdateUserStatusDto,
+  UpsertSettingDto
+} from './dto';
 
 @Controller('api/admin')
 @UseGuards(AdminGuard, AdminRateLimitGuard, AdminOriginGuard)
@@ -17,7 +31,8 @@ export class AdminController {
   constructor(
     @Inject(StorageService) private readonly storage: StorageService,
     @Inject(AuthService) private readonly auth: AuthService,
-    @Inject(ModelsService) private readonly models: ModelsService
+    @Inject(ModelsService) private readonly models: ModelsService,
+    @Inject(AiConfigService) private readonly aiConfig: AiConfigService
   ) {}
 
   @Get('users')
@@ -195,10 +210,60 @@ export class AdminController {
   @Patch('models/:id')
   async updateModelConfig(
     @Param('id') id: string,
-    @Body() body: UpdateModelConfigDto,
-    @Req() req: AuthenticatedRequest
+    @Body() body: UpdateModelConfigDto
   ) {
-    return this.storage.updateModelConfig(id, body, req.authUser.id, this.auditMetadata(req));
+    const separator = id.indexOf(':');
+    if (separator <= 0) throw new BadRequestException('模型 id 格式错误');
+    return this.aiConfig.updateModel(id.slice(0, separator), id.slice(separator + 1), body);
+  }
+
+  @Get('ai-config')
+  aiConfiguration() {
+    return this.aiConfig.adminConfig();
+  }
+
+  @Post('ai-config/providers')
+  createAiProvider(@Body() body: CreateAiProviderDto) {
+    return this.aiConfig.createProvider(body);
+  }
+
+  @Patch('ai-config/providers/:providerId')
+  updateAiProvider(@Param('providerId') providerId: string, @Body() body: UpdateAiProviderDto) {
+    return this.aiConfig.updateProvider(providerId, body);
+  }
+
+  @Delete('ai-config/providers/:providerId')
+  deleteAiProvider(@Param('providerId') providerId: string) {
+    return this.aiConfig.deleteProvider(providerId);
+  }
+
+  @Post('ai-config/providers/:providerId/models')
+  createAiModel(@Param('providerId') providerId: string, @Body() body: CreateAiModelDto) {
+    return this.aiConfig.createModel(providerId, body);
+  }
+
+  @Patch('ai-config/providers/:providerId/models/:modelId')
+  updateAiModel(
+    @Param('providerId') providerId: string,
+    @Param('modelId') modelId: string,
+    @Body() body: UpdateAiModelDto
+  ) {
+    return this.aiConfig.updateModel(providerId, modelId, body);
+  }
+
+  @Delete('ai-config/providers/:providerId/models/:modelId')
+  deleteAiModel(@Param('providerId') providerId: string, @Param('modelId') modelId: string) {
+    return this.aiConfig.deleteModel(providerId, modelId);
+  }
+
+  @Patch('ai-config/routing')
+  updateAiRouting(@Body() body: UpdateAiRoutingDto) {
+    return this.aiConfig.updateRouting(body);
+  }
+
+  @Patch('ai-config/mock')
+  updateAiMock(@Body() body: UpdateAiMockDto) {
+    return this.aiConfig.setMockEnabled(body.mockEnabled);
   }
 
   @Get('settings')
@@ -234,23 +299,7 @@ export class AdminController {
 
   @Get('providers/health')
   async providerHealth() {
-    const models = (await this.models.getModels()).models;
-    return {
-      providers: (['gemini', 'tokenrun'] satisfies Array<Exclude<ImageProviderName, 'auto'>>).map((provider) => {
-        const enabledModels = models.filter((model) => model.provider === provider && model.enabled).length;
-        const configured = provider === 'gemini'
-          ? Boolean(process.env.GRSAI_API_KEY || process.env.PROVIDER_MOCK_ENABLED !== 'false')
-          : Boolean(process.env.TOKENRUN_API_KEY || process.env.PROVIDER_MOCK_ENABLED !== 'false');
-        return {
-          provider,
-          configured,
-          enabledModels,
-          lastCheckedAt: new Date().toISOString(),
-          status: configured && enabledModels > 0 ? 'healthy' : enabledModels > 0 ? 'degraded' : 'disabled',
-          message: configured ? undefined : `${provider} 密钥未配置`
-        };
-      })
-    };
+    return this.aiConfig.providerHealth();
   }
 
   private optionalBoolean(value?: string) {

@@ -24,15 +24,14 @@ import {
 } from 'lucide-react';
 import {
   aspectRatioOptions,
+  detectImageIntent,
   findModelCatalogEntry,
   resolutionOptions,
   tokenRunSizeFor,
-  templateOptions,
   type ImageJobRecord,
   type ModelConfig,
   type ImageProviderName,
   type ImageQuality,
-  type ImageTemplate,
   type ImageJobCreateRequest,
   type CreditRechargePlan,
   type PaymentOrderResponse,
@@ -42,7 +41,7 @@ import { createImageJob, createRechargeOrder, deleteImageJob, getImageJob, getMe
 import { useNotifications } from '@/components/notification-provider';
 
 const FALLBACK_REFERENCE_LIMIT = 6;
-const AUTO_PRO_TEMPLATES = new Set<ImageTemplate>(['replace_text', 'poster_text', 'product']);
+const AUTO_PRO_TEMPLATES = new Set(['replace_text', 'poster_text', 'product']);
 
 type PreviewImage = {
   url: string;
@@ -108,23 +107,7 @@ function jobLightboxImages(job: ImageJobRecord) {
 }
 
 function modelDisplayLabel(model: ModelConfig) {
-  const catalog = findModelCatalogEntry(model.provider, model.model);
-  if (catalog?.provider === 'tokenrun') return 'GPT Image 2';
-  return catalog?.displayName ?? model.displayName;
-}
-
-function modelBadge(model: ModelConfig) {
-  const catalog = findModelCatalogEntry(model.provider, model.model);
-  if (catalog?.model === 'gemini-3.1-flash-image') {
-    return { label: '推荐日常', tone: 'bg-teal-50 text-teal-700 border-teal-200' };
-  }
-  if (catalog?.model === 'gemini-3-pro-image') {
-    return { label: '高质量', tone: 'bg-amber-50 text-amber-700 border-amber-200' };
-  }
-  if (catalog?.model === 'gpt-image-2') {
-    return { label: '稳定备用', tone: 'bg-slate-50 text-slate-700 border-slate-200' };
-  }
-  return { label: '可用', tone: 'bg-slate-50 text-slate-700 border-slate-200' };
+  return model.displayName;
 }
 
 function formatYuan(amountCents: number) {
@@ -132,10 +115,6 @@ function formatYuan(amountCents: number) {
 }
 
 function modelShortDescription(model: ModelConfig) {
-  const catalog = findModelCatalogEntry(model.provider, model.model);
-  if (catalog?.model === 'gemini-3.1-flash-image') return '适合日常改图、中文改字和多参考图编辑';
-  if (catalog?.model === 'gemini-3-pro-image') return '适合复杂构图、商品图和高质量输出';
-  if (catalog?.model === 'gpt-image-2') return '支持自动与自定义尺寸，参考图会以高保真方式处理';
   return model.description;
 }
 
@@ -143,8 +122,6 @@ type DropdownOption = {
   value: string;
   label: string;
   description?: string;
-  badge?: string;
-  tone?: string;
 };
 
 function DropdownSelect({
@@ -263,11 +240,6 @@ function DropdownSelect({
                     <span className="block truncate text-sm font-semibold text-ink">{item.label}</span>
                     {item.description && <span className="mt-0.5 block text-xs leading-5 text-muted">{item.description}</span>}
                   </span>
-                  {item.badge && (
-                    <span className={`shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${item.tone ?? 'border-slate-200 bg-slate-50 text-slate-700'}`}>
-                      {item.badge}
-                    </span>
-                  )}
                 </button>
               ))}
             </div>
@@ -437,7 +409,6 @@ export default function HomePage() {
   const inputRef = useRef<HTMLInputElement>(null);
   const handledPaidOrderIdRef = useRef<string | null>(null);
   const [uploaded, setUploaded] = useState<UploadedFileRecord[]>([]);
-  const [template, setTemplate] = useState<ImageTemplate>('replace_text');
   const [prompt, setPrompt] = useState('把图片里的文字改成夏日新品，其他不变');
   const [provider, setProvider] = useState<ImageProviderName>('auto');
   const [model, setModel] = useState('auto');
@@ -479,12 +450,14 @@ export default function HomePage() {
   });
 
   const modelOptions = useMemo(() => modelsQuery.data?.models.filter((item) => item.enabled) ?? [], [modelsQuery.data]);
+  const detectedIntent = useMemo(() => detectImageIntent(prompt, uploaded.length > 0), [prompt, uploaded.length]);
   const automaticModelConfig = useMemo(() => {
-    const usePro = quality === '4K' || AUTO_PRO_TEMPLATES.has(template) || uploaded.length >= 4;
-    const targetModel = usePro ? 'gemini-3-pro-image' : 'gemini-3.1-flash-image';
-    return modelOptions.find((item) => item.provider === 'gemini' && item.model === targetModel)
-      ?? modelOptions.find((item) => item.provider === 'gemini');
-  }, [modelOptions, quality, template, uploaded.length]);
+    const usePro = quality === '4K' || AUTO_PRO_TEMPLATES.has(detectedIntent.template) || uploaded.length >= 4;
+    const target = usePro ? modelsQuery.data?.routing?.professional : modelsQuery.data?.routing?.default;
+    return modelOptions.find((item) => item.provider === target?.provider && item.model === target.model)
+      ?? modelOptions.find((item) => item.model === modelsQuery.data?.defaultModel)
+      ?? modelOptions[0];
+  }, [detectedIntent.template, modelOptions, modelsQuery.data?.defaultModel, modelsQuery.data?.routing, quality, uploaded.length]);
   const selectedModelConfig = useMemo(() => {
     if (provider !== 'auto' && model !== 'auto') {
       return modelOptions.find((item) => item.provider === provider && item.model === model);
@@ -510,17 +483,15 @@ export default function HomePage() {
   const modelChannelOptions = useMemo(() => [
     {
       value: 'auto:auto',
-      label: '自动推荐',
+      label: '自动',
       description: automaticModelConfig
-        ? `当前任务使用 ${modelDisplayLabel(automaticModelConfig)}${quality === '4K' ? ' · VT 4K' : ''}`
-        : '根据当前任务自动选择'
+        ? `自动选择 ${modelDisplayLabel(automaticModelConfig)}`
+        : '根据指令和输出要求自动选择'
     },
     ...modelOptions.map((item) => ({
       value: `${item.provider}:${item.model}`,
       label: modelDisplayLabel(item),
-      description: modelShortDescription(item),
-      badge: modelBadge(item).label,
-      tone: modelBadge(item).tone
+      description: modelShortDescription(item)
     }))
   ], [automaticModelConfig, modelOptions, quality]);
 
@@ -701,7 +672,6 @@ export default function HomePage() {
     && !createJobMutation.isPending
     && !uploadMutation.isPending
     && !referenceLimitError;
-  const activeTemplate = templateOptions.find((item) => item.value === template);
   const isGuest = forceGuest || (meQuery.data?.user.isGuest ?? true);
   const rechargePlans: CreditRechargePlan[] = useMemo(() => {
     const plans = meQuery.data?.credits.rechargePlans ?? [];
@@ -777,7 +747,7 @@ export default function HomePage() {
       mode: uploaded.length > 0 ? 'edit' : 'generate',
       provider,
       model,
-      template,
+      template: 'auto',
       prompt,
       imageIds: uploaded.map((file) => file.id),
       aspectRatio,
@@ -787,10 +757,16 @@ export default function HomePage() {
   }
 
   function loadJobIntoEditor(job: ImageJobRecord) {
-    setTemplate(job.template);
+    const normalizedProvider = job.provider === 'gemini' ? 'grsai' : job.provider;
+    const normalizedSelectedProvider = job.selectedProvider === 'gemini' ? 'grsai' : job.selectedProvider;
+    const catalogModel = findModelCatalogEntry(normalizedSelectedProvider, job.selectedModel)?.model;
+    const matchingModel = modelOptions.find((item) =>
+      item.provider === normalizedSelectedProvider
+      && (item.model === job.selectedModel || item.model === catalogModel)
+    );
     setPrompt(job.prompt);
-    setProvider(job.provider);
-    setModel(job.model);
+    setProvider(job.provider === 'auto' ? 'auto' : matchingModel?.provider ?? normalizedProvider);
+    setModel(job.model === 'auto' ? 'auto' : matchingModel?.model ?? job.model);
     setAspectRatio(job.aspectRatio || 'auto');
     setQuality(normalizeResolution(job.quality));
     setUploaded(job.inputFiles);
@@ -988,26 +964,6 @@ export default function HomePage() {
             )}
 
             <div className="mt-5">
-              <label className="mb-2 block text-sm font-semibold">P 图类型</label>
-              <div className="grid grid-cols-2 gap-2">
-                {templateOptions.map((item) => (
-                  <button
-                    key={item.value}
-                    className={`min-h-11 cursor-pointer rounded-lg border px-3 py-2 text-left text-sm transition-colors ${
-                      template === item.value
-                        ? 'border-teal-600 bg-teal-50 text-teal-700'
-                        : 'border-line bg-white hover:border-teal-600'
-                    }`}
-                    onClick={() => setTemplate(item.value)}
-                  >
-                    <span className="block font-semibold">{item.label}</span>
-                    <span className="mt-1 block truncate text-xs text-muted">{item.description}</span>
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <div className="mt-5">
               <div className="mb-2 flex items-center justify-between gap-3">
                 <label htmlFor="prompt" className="block text-sm font-semibold">
                   编辑指令
@@ -1028,13 +984,12 @@ export default function HomePage() {
                 className="w-full resize-none rounded-lg border border-line bg-white px-3 py-3 text-base leading-6 text-ink shadow-sm"
                 placeholder="例如：把背景换成白色，保留商品不变"
               />
-              <p className="mt-2 text-xs text-muted">{activeTemplate?.description}</p>
             </div>
 
             <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-1">
               <DropdownSelect
                 id="model_channel"
-                label="模型通道"
+                label="模型"
                 value={`${provider}:${model}`}
                 options={modelChannelOptions}
                 openMenu={openMenu}
@@ -1044,7 +999,9 @@ export default function HomePage() {
                   setProvider(nextProvider);
                   setModel(nextModel);
                 }}
-                helperText={selectedModelConfig ? modelShortDescription(selectedModelConfig) : undefined}
+                helperText={modelsQuery.data?.source === 'fallback'
+                  ? '模型服务未连接，当前显示默认模型配置'
+                  : selectedModelConfig ? modelShortDescription(selectedModelConfig) : undefined}
               />
 
               <AspectRatioSelect

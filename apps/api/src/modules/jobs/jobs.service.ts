@@ -4,10 +4,10 @@ import type {
   ImageJobCreateRequest,
   ImageJobCreateResponse,
   ImageJobRecord,
-  ImageProviderName,
   PaymentOrderResponse,
   AuthUser
 } from '@picup/shared';
+import { detectImageIntent } from '@picup/shared';
 import { StorageService } from '../../common/storage.service';
 import { RedisQueueService } from '../../common/queue/redis-queue.service';
 import { ModelsService } from '../models/models.service';
@@ -19,8 +19,6 @@ import { PaymentsService } from '../payments/payments.service';
 type ReservedPayment =
   | { mode: 'free' | 'credits' | 'single'; orderId: string | null }
   | { mode: 'single_pending'; order: PaymentOrderResponse };
-
-const professionalTemplates = new Set(['replace_text', 'poster_text', 'product']);
 
 @Injectable()
 export class JobsService {
@@ -50,18 +48,24 @@ export class JobsService {
       throw new BadRequestException('上传图片不存在或已过期');
     }
 
-    const selection = await this.selectProvider(input);
-    const payment = await this.reservePayment(user, input, selection.costCredits);
+    const resolvedInput: ImageJobCreateRequest = {
+      ...input,
+      template: input.template === 'auto'
+        ? detectImageIntent(input.prompt, input.imageIds.length > 0).template
+        : input.template
+    };
+    const selection = await this.selectProvider(resolvedInput);
+    const payment = await this.reservePayment(user, resolvedInput, selection.costCredits);
     if (payment.mode === 'single_pending') {
       return {
         paymentRequired: true,
         paymentOrder: payment.order
       };
     }
-    const finalPrompt = buildFinalPrompt(input.template, input.prompt);
+    const finalPrompt = buildFinalPrompt(resolvedInput.template, resolvedInput.prompt);
     const now = new Date().toISOString();
     const job: ImageJobRecord = {
-      ...input,
+      ...resolvedInput,
       id: randomUUID(),
       userId: user.id,
       status: 'queued',
@@ -143,9 +147,10 @@ export class JobsService {
       const provider = this.providers.get(running.selectedProvider);
       const result = await provider.generate({
         jobId: running.id,
+        provider: running.selectedProvider,
         mode: running.mode,
         template: running.template,
-        automaticModelSelection: running.model === 'auto',
+        automaticModelSelection: running.provider === 'auto' || running.model === 'auto',
         prompt: running.finalPrompt,
         model: running.selectedModel,
         aspectRatio: running.aspectRatio,
@@ -186,27 +191,21 @@ export class JobsService {
   }
 
   private async selectProvider(input: ImageJobCreateRequest) {
-    const available = (await this.models.getModels()).models.filter((model) => model.enabled);
-    const provider = this.resolveProvider(input);
-    const requestedModel = input.model === 'gpt-image2' ? 'gpt-image-2' : input.model;
-    const model = requestedModel === 'auto'
-      ? this.defaultModelFor(input, provider)
-      : requestedModel;
-    const canonicalModel = this.models.canonicalModel(provider, model);
-    const config = available.find((item) => item.provider === provider && item.model === canonicalModel)
-      ?? available.find((item) => item.provider === provider);
-
-    if (!config) throw new BadRequestException('当前模型不可用');
-    if (input.imageIds.length > config.maxInputImages) {
-      throw new BadRequestException(`当前模型最多支持 ${config.maxInputImages} 张参考图`);
+    const selection = this.models.resolveSelection(input);
+    if (input.imageIds.length > selection.model.maxInputImages) {
+      throw new BadRequestException(`当前模型最多支持 ${selection.model.maxInputImages} 张参考图`);
     }
-    if (!config.supportedRatios.includes(input.aspectRatio)) {
+    if (!selection.model.supportedRatios.includes(input.aspectRatio)) {
       throw new BadRequestException(`当前模型不支持 ${input.aspectRatio} 图片比例`);
     }
-    if (!config.supportedQualities.includes(input.quality)) {
+    if (!selection.model.supportedQualities.includes(input.quality)) {
       throw new BadRequestException(`当前模型不支持 ${input.quality} 分辨率`);
     }
-    return { provider, model: config.model, costCredits: config.costCredits };
+    return {
+      provider: selection.provider.id,
+      model: selection.model.model,
+      costCredits: selection.model.costCredits
+    };
   }
 
   private async reservePayment(user: AuthUser, input: ImageJobCreateRequest, costCredits: number): Promise<ReservedPayment> {
@@ -264,23 +263,6 @@ export class JobsService {
       status: 'refunded',
       updatedAt: new Date().toISOString()
     });
-  }
-
-  private resolveProvider(input: ImageJobCreateRequest): Exclude<ImageProviderName, 'auto'> {
-    if (input.provider !== 'auto') return input.provider;
-    if (input.template === 'product' || input.quality === '4K') return 'gemini';
-    if (input.template === 'replace_text' || input.template === 'poster_text') return 'gemini';
-    return 'gemini';
-  }
-
-  private defaultModelFor(input: ImageJobCreateRequest, provider: Exclude<ImageProviderName, 'auto'>) {
-    if (provider === 'tokenrun') return 'gpt-image-2';
-    if (
-      input.quality === '4K'
-      || professionalTemplates.has(input.template)
-      || input.imageIds.length >= 4
-    ) return 'gemini-3-pro-image';
-    return 'gemini-3.1-flash-image';
   }
 
   private async cleanupOutputFiles(job: ImageJobRecord) {

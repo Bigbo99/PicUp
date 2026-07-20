@@ -5,13 +5,14 @@ export class CreateImageJobDto {
   @IsIn(['generate', 'edit'])
   mode!: ImageJobMode;
 
-  @IsIn(['auto', 'gemini', 'tokenrun'])
+  @IsString()
   provider!: ImageProviderName;
 
   @IsString()
   model!: string;
 
   @IsIn([
+    'auto',
     'replace_text',
     'remove_object',
     'add_object',

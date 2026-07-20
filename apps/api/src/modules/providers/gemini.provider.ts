@@ -1,9 +1,10 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { Agent, ProxyAgent, type Dispatcher } from 'undici';
 import { ObjectStorageService } from '../../common/object-storage.service';
+import { AiConfigService } from '../../common/ai-config/ai-config.service';
+import type { AiProviderConfig } from '../../common/ai-config/ai-config.types';
 import type { ImageProvider, ProviderImageInput, ProviderImageResult } from './provider.types';
 
-// Legacy Google implementation retained for reference; ProvidersModule now routes Gemini selections to GrsaiProvider.
 const DEFAULT_GEMINI_TIMEOUT_MS = 10 * 60 * 1000;
 const DEFAULT_GEMINI_RETRY_ATTEMPTS = 3;
 const DEFAULT_GEMINI_RETRY_DELAY_MS = 1500;
@@ -11,16 +12,26 @@ const transientStatusCodes = new Set([408, 429, 500, 502, 503, 504]);
 
 @Injectable()
 export class GeminiProvider implements ImageProvider {
-  constructor(@Inject(ObjectStorageService) private readonly objectStorage: ObjectStorageService) {}
+  constructor(
+    @Inject(ObjectStorageService) private readonly objectStorage: ObjectStorageService,
+    @Inject(AiConfigService) private readonly aiConfig: AiConfigService
+  ) {}
 
   async generate(input: ProviderImageInput): Promise<ProviderImageResult> {
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) throw new Error('GEMINI_API_KEY 未配置');
+    const provider = this.aiConfig.getProvider(input.provider);
+    if (provider.type !== 'gemini-official') throw new Error(`Provider ${provider.id} 不是 Gemini Official 类型`);
+    const modelConfig = this.aiConfig.getModel(provider.id, input.model).model;
+    const apiKey = provider.apiKey.trim();
+    if (!apiKey) throw new Error(`${provider.displayName} API Key 未配置`);
+    const upstreamModel = modelConfig.upstreamModel ?? modelConfig.model;
+    const requestInput = { ...input, model: upstreamModel };
 
-    const body = await this.buildRequest(input);
-    const baseUrl = process.env.GEMINI_BASE_URL ?? 'https://generativelanguage.googleapis.com';
-    console.log(`[gemini] request job=${input.jobId} model=${input.model} ratio=${input.aspectRatio} quality=${input.quality}`);
-    const response = await this.fetchGemini(`${baseUrl}/v1beta/models/${input.model}:generateContent`, apiKey, body);
+    const body = await this.buildRequest(requestInput);
+    const path = (provider.paths.generate || '/v1beta/models/{model}:generateContent')
+      .replace('{model}', encodeURIComponent(upstreamModel));
+    const url = /^https?:\/\//i.test(path) ? path : `${provider.baseUrl.replace(/\/+$/, '')}${path}`;
+    console.log(`[gemini-official] request job=${input.jobId} provider=${provider.id} model=${upstreamModel} ratio=${input.aspectRatio} quality=${input.quality}`);
+    const response = await this.fetchGemini(url, apiKey, body, provider);
 
     if (!response.ok) {
       const message = await response.text();
@@ -28,18 +39,18 @@ export class GeminiProvider implements ImageProvider {
     }
 
     const payload = await response.json() as GeminiResponse;
-    console.log(`[gemini] response job=${input.jobId} status=${response.status}`);
+    console.log(`[gemini-official] response job=${input.jobId} status=${response.status}`);
     return this.parseResponse(input.jobId, payload);
   }
 
-  private async fetchGemini(url: string, apiKey: string, body: unknown) {
-    const retryAttempts = this.getRetryAttempts();
-    const retryDelayMs = this.getRetryDelayMs();
+  private async fetchGemini(url: string, apiKey: string, body: unknown, provider: AiProviderConfig) {
+    const retryAttempts = this.getRetryAttempts(provider);
+    const retryDelayMs = this.getRetryDelayMs(provider);
     let lastError = 'unknown network error';
 
     for (let attempt = 1; attempt <= retryAttempts; attempt += 1) {
       try {
-        const response = await this.fetchGeminiOnce(url, apiKey, body);
+        const response = await this.fetchGeminiOnce(url, apiKey, body, provider);
         if (!transientStatusCodes.has(response.status) || attempt === retryAttempts) return response;
         lastError = `HTTP ${response.status}`;
         await response.text().catch(() => undefined);
@@ -56,9 +67,9 @@ export class GeminiProvider implements ImageProvider {
     throw new Error(`Gemini network request failed: ${lastError}`);
   }
 
-  private async fetchGeminiOnce(url: string, apiKey: string, body: unknown) {
-    const proxy = this.getProxyUrl();
-    const timeoutMs = this.getTimeoutMs();
+  private async fetchGeminiOnce(url: string, apiKey: string, body: unknown, provider: AiProviderConfig) {
+    const proxy = this.getProxyUrl(provider);
+    const timeoutMs = this.getTimeoutMs(provider);
     const init: RequestInit & { dispatcher: Dispatcher } = {
       method: 'POST',
       headers: {
@@ -87,24 +98,24 @@ export class GeminiProvider implements ImageProvider {
     return new Agent(options);
   }
 
-  private getTimeoutMs() {
-    const value = Number(process.env.GEMINI_REQUEST_TIMEOUT_MS);
+  private getTimeoutMs(provider: AiProviderConfig) {
+    const value = Number(provider.timeoutMs);
     return Number.isFinite(value) && value > 0 ? value : DEFAULT_GEMINI_TIMEOUT_MS;
   }
 
-  private getRetryAttempts() {
-    const value = Number(process.env.GEMINI_RETRY_ATTEMPTS);
+  private getRetryAttempts(provider: AiProviderConfig) {
+    const value = Number(provider.retryAttempts);
     return Number.isInteger(value) && value > 0 ? value : DEFAULT_GEMINI_RETRY_ATTEMPTS;
   }
 
-  private getRetryDelayMs() {
-    const value = Number(process.env.GEMINI_RETRY_DELAY_MS);
+  private getRetryDelayMs(provider: AiProviderConfig) {
+    const value = Number(provider.retryDelayMs);
     return Number.isFinite(value) && value >= 0 ? value : DEFAULT_GEMINI_RETRY_DELAY_MS;
   }
 
-  private getProxyUrl() {
-    if (process.env.GEMINI_DISABLE_PROXY === 'true') return undefined;
-    return process.env.GEMINI_PROXY_URL?.trim()
+  private getProxyUrl(provider: AiProviderConfig) {
+    if (provider.disableProxy) return undefined;
+    return provider.proxyUrl?.trim()
       || process.env.HTTPS_PROXY?.trim()
       || process.env.HTTP_PROXY?.trim()
       || undefined;

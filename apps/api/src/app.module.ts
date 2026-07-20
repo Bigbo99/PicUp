@@ -8,8 +8,9 @@ import { AdminModule } from './modules/admin/admin.module';
 import { PaymentsModule } from './modules/payments/payments.module';
 import { DatabaseModule } from './common/database/database.module';
 import { QueueModule } from './common/queue/queue.module';
+import { AiConfigModule } from './common/ai-config/ai-config.module';
 
 @Module({
-  imports: [DatabaseModule, QueueModule, AuthModule, FilesModule, JobsModule, ModelsModule, ProvidersModule, AdminModule, PaymentsModule]
+  imports: [AiConfigModule, DatabaseModule, QueueModule, AuthModule, FilesModule, JobsModule, ModelsModule, ProvidersModule, AdminModule, PaymentsModule]
 })
 export class AppModule {}
