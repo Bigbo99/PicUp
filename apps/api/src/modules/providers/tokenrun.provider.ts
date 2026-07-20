@@ -2,10 +2,11 @@ import { Inject, Injectable } from '@nestjs/common';
 import { tokenRunSizeFor } from '@picup/shared';
 import { Agent, FormData, ProxyAgent, type Dispatcher } from 'undici';
 import { ObjectStorageService } from '../../common/object-storage.service';
+import { AiConfigService } from '../../common/ai-config/ai-config.service';
+import type { AiProviderConfig } from '../../common/ai-config/ai-config.types';
 import type { ImageProvider, ProviderImageInput, ProviderImageResult } from './provider.types';
 
 const DEFAULT_TOKENRUN_TIMEOUT_MS = 10 * 60 * 1000;
-const DEFAULT_TOKENRUN_BASE_URL = 'https://tokenrun.ai-mendao.xyz';
 const DEFAULT_TOKENRUN_DOWNLOAD_ATTEMPTS = 3;
 const retryableStatusCodes = new Set([408, 429, 500, 502, 503, 504]);
 
@@ -13,31 +14,38 @@ const retryableStatusCodes = new Set([408, 429, 500, 502, 503, 504]);
 export class TokenRunProvider implements ImageProvider {
   private readonly dispatchers = new Map<string, Dispatcher>();
 
-  constructor(@Inject(ObjectStorageService) private readonly objectStorage: ObjectStorageService) {}
+  constructor(
+    @Inject(ObjectStorageService) private readonly objectStorage: ObjectStorageService,
+    @Inject(AiConfigService) private readonly aiConfig: AiConfigService
+  ) {}
 
   async generate(input: ProviderImageInput): Promise<ProviderImageResult> {
-    const apiKey = process.env.TOKENRUN_API_KEY;
-    if (!apiKey) throw new Error('TOKENRUN_API_KEY is not configured');
+    const provider = this.aiConfig.getProvider(input.provider);
+    if (provider.type !== 'openai-images') throw new Error(`Provider ${provider.id} 不是 OpenAI Images 类型`);
+    const modelConfig = this.aiConfig.getModel(provider.id, input.model).model;
+    const apiKey = provider.apiKey.trim();
+    if (!apiKey) throw new Error(`${provider.displayName} API Key 未配置`);
+    const requestInput = { ...input, model: modelConfig.upstreamModel ?? modelConfig.model };
 
-    const baseUrl = this.normalizeBaseUrl(
-      process.env.TOKENRUN_BASE_URL ?? DEFAULT_TOKENRUN_BASE_URL
-    );
-    const endpoint = input.images.length > 0 ? '/v1/images/edits' : '/v1/images/generations';
+    const baseUrl = this.normalizeBaseUrl(provider.baseUrl);
+    const endpoint = input.images.length > 0
+      ? provider.paths.edits || '/v1/images/edits'
+      : provider.paths.generations || '/v1/images/generations';
     const body = input.images.length > 0
-      ? await this.buildEditRequest(input)
-      : this.buildGenerationRequest(input);
+      ? await this.buildEditRequest(requestInput)
+      : this.buildGenerationRequest(requestInput);
 
     console.log(`[tokenrun] request job=${input.jobId} model=${input.model} endpoint=${endpoint} ratio=${input.aspectRatio} quality=${input.quality}`);
     let response: Response;
     try {
-      response = await fetch(`${baseUrl}${endpoint}`, {
+      response = await fetch(/^https?:\/\//i.test(endpoint) ? endpoint : `${baseUrl}${endpoint}`, {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${apiKey}`,
           ...(body instanceof FormData ? {} : { 'Content-Type': 'application/json' })
         },
         body: body instanceof FormData ? body : JSON.stringify(body),
-        dispatcher: this.createDispatcher(this.apiProxyUrl())
+        dispatcher: this.createDispatcher(this.apiProxyUrl(provider), provider)
       } as RequestInit & { dispatcher: Dispatcher });
     } catch (error) {
       throw new Error(`TokenRun API network failed: ${this.describeError(error)}`);
@@ -48,7 +56,7 @@ export class TokenRunProvider implements ImageProvider {
       throw new Error(`TokenRun GPT Image request failed: ${response.status} ${message}`);
     }
 
-    return this.parseResponse(input.jobId, await response.json() as TokenRunImageResponse);
+    return this.parseResponse(input.jobId, await response.json() as TokenRunImageResponse, provider);
   }
 
   private buildGenerationRequest(input: ProviderImageInput) {
@@ -78,7 +86,7 @@ export class TokenRunProvider implements ImageProvider {
     return form;
   }
 
-  private async parseResponse(jobId: string, payload: TokenRunImageResponse): Promise<ProviderImageResult> {
+  private async parseResponse(jobId: string, payload: TokenRunImageResponse, provider: AiProviderConfig): Promise<ProviderImageResult> {
     const images: ProviderImageResult['images'] = [];
 
     for (const item of payload.data ?? []) {
@@ -91,7 +99,7 @@ export class TokenRunProvider implements ImageProvider {
         continue;
       }
       if (item.url) {
-        const saved = await this.downloadOutput(jobId, item.url, images.length + 1);
+        const saved = await this.downloadOutput(jobId, item.url, images.length + 1, provider);
         images.push(saved);
       }
     }
@@ -100,17 +108,17 @@ export class TokenRunProvider implements ImageProvider {
     return { images, textOutputs: [] };
   }
 
-  private async downloadOutput(jobId: string, sourceUrl: string, index: number) {
-    const attempts = this.downloadAttempts();
+  private async downloadOutput(jobId: string, sourceUrl: string, index: number, provider: AiProviderConfig) {
+    const attempts = this.downloadAttempts(provider);
     const host = this.urlHost(sourceUrl);
     let lastError = 'unknown error';
 
     for (let attempt = 1; attempt <= attempts; attempt += 1) {
-      const proxy = this.downloadProxyForAttempt(attempt);
+      const proxy = this.downloadProxyForAttempt(provider, attempt);
       try {
         const response = await fetch(sourceUrl, {
-          headers: { Referer: `${this.normalizeBaseUrl(process.env.TOKENRUN_BASE_URL ?? DEFAULT_TOKENRUN_BASE_URL)}/` },
-          dispatcher: this.createDispatcher(proxy)
+          headers: { Referer: `${this.normalizeBaseUrl(provider.baseUrl)}/` },
+          dispatcher: this.createDispatcher(proxy, provider)
         } as RequestInit & { dispatcher: Dispatcher });
         if (!response.ok) {
           lastError = `HTTP ${response.status}`;
@@ -148,10 +156,8 @@ export class TokenRunProvider implements ImageProvider {
     return 'image/png';
   }
 
-  private createDispatcher(proxy: string | undefined): Dispatcher {
-    const timeoutMs = Number(
-      process.env.TOKENRUN_TIMEOUT_MS ?? process.env.GEMINI_REQUEST_TIMEOUT_MS
-    ) || DEFAULT_TOKENRUN_TIMEOUT_MS;
+  private createDispatcher(proxy: string | undefined, provider: AiProviderConfig): Dispatcher {
+    const timeoutMs = Number(provider.timeoutMs) || DEFAULT_TOKENRUN_TIMEOUT_MS;
     const key = `${proxy ?? 'direct'}:${timeoutMs}`;
     const existing = this.dispatchers.get(key);
     if (existing) return existing;
@@ -166,21 +172,22 @@ export class TokenRunProvider implements ImageProvider {
     return dispatcher;
   }
 
-  private apiProxyUrl() {
-    return process.env.TOKENRUN_PROXY_URL?.trim()
+  private apiProxyUrl(provider: AiProviderConfig) {
+    if (provider.disableProxy) return undefined;
+    return provider.proxyUrl?.trim()
       || process.env.HTTPS_PROXY?.trim()
       || process.env.HTTP_PROXY?.trim()
       || undefined;
   }
 
-  private downloadProxyForAttempt(attempt: number) {
-    const explicit = process.env.TOKENRUN_DOWNLOAD_PROXY_URL?.trim();
+  private downloadProxyForAttempt(provider: AiProviderConfig, attempt: number) {
+    const explicit = provider.downloadProxyUrl?.trim();
     if (explicit) return explicit;
-    return attempt % 2 === 0 ? this.apiProxyUrl() : undefined;
+    return attempt % 2 === 0 ? this.apiProxyUrl(provider) : undefined;
   }
 
-  private downloadAttempts() {
-    const value = Number(process.env.TOKENRUN_DOWNLOAD_RETRY_ATTEMPTS);
+  private downloadAttempts(provider: AiProviderConfig) {
+    const value = Number(provider.downloadRetryAttempts);
     return Number.isInteger(value) && value > 0 ? value : DEFAULT_TOKENRUN_DOWNLOAD_ATTEMPTS;
   }
 

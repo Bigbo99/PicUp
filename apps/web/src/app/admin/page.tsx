@@ -40,11 +40,9 @@ import type {
   AdminUsersResponse,
   AuthUser,
   ImageJobRecord,
-  ImageJobStatus,
-  ModelConfig,
-  ModelsResponse
+  ImageJobStatus
 } from '@picup/shared';
-import { getMe, getModels, logout } from '@/lib/api';
+import { getMe, logout } from '@/lib/api';
 import {
   deleteAdminUser,
   getAdminOverview,
@@ -53,12 +51,12 @@ import {
   listAdminJobs,
   listAdminSettings,
   listAdminUsers,
-  updateAdminModel,
   updateAdminUser,
   updateAdminUserStatus,
   upsertAdminSetting
 } from '@/lib/admin-api';
 import { useNotifications } from '@/components/notification-provider';
+import { AiConfigPanel } from '@/components/admin/ai-config-panel';
 
 type AdminTab = 'overview' | 'users' | 'jobs' | 'models' | 'settings' | 'audit';
 type AdminUserDraft = Parameters<typeof updateAdminUser>[1];
@@ -124,6 +122,8 @@ function labelFor(value: string) {
     unknown: '未知',
     enabled: '已启用',
     gemini: 'Gemini',
+    grsai: 'GrsAI',
+    'gemini-official': 'Gemini Official',
     tokenrun: 'TokenRun',
     'user.quota_unlimited.update': '更新用户无限额度',
     'user.status.update': '更新用户状态',
@@ -818,7 +818,7 @@ function JobDetailDialog({
               <UserDetailLine label="用户 ID" value={job.userId ?? '匿名用户'} mono />
               <UserDetailLine label="模型" value={`${labelFor(job.selectedProvider)} / ${job.selectedModel}`} />
               <UserDetailLine label="模式" value={job.mode === 'edit' ? '编辑图片' : '生成图片'} />
-              <UserDetailLine label="模板" value={job.template} />
+              <UserDetailLine label="识别意图" value={job.template} />
               <UserDetailLine label="比例 / 清晰度" value={`${job.aspectRatio} / ${job.quality}`} />
               <UserDetailLine label="消耗额度" value={job.creditsReserved} />
               <UserDetailLine label="支付方式" value={job.paymentMode ?? '免费'} />
@@ -945,62 +945,7 @@ function ImageLightbox({
 }
 
 function ModelsTab() {
-  const queryClient = useQueryClient();
-  const notifications = useNotifications();
-  const modelsQuery = useQuery({ queryKey: ['admin', 'models'], queryFn: getModels });
-  const updateMutation = useMutation({
-    mutationFn: ({ id, patch }: { id: string; patch: Partial<ModelConfig> }) => updateAdminModel(id, patch),
-    onSuccess: () => {
-      notifications.success('模型配置已保存');
-      queryClient.invalidateQueries({ queryKey: ['admin', 'models'] });
-      queryClient.invalidateQueries({ queryKey: ['models'] });
-    },
-    onError: (error) => notifications.error('保存失败', error instanceof Error ? error.message : '请稍后重试')
-  });
-  const models = (modelsQuery.data as ModelsResponse | undefined)?.models ?? [];
-
-  return (
-    <Panel title="模型配置">
-      <div className="grid gap-3">
-        {models.map((model) => (
-          <article key={model.id ?? `${model.provider}:${model.model}`} className="rounded-lg border border-slate-200 bg-white p-4">
-            <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_360px]">
-              <div>
-                <div className="flex flex-wrap items-center gap-2">
-                  <h3 className="text-lg font-black">{model.displayName}</h3>
-                  <Badge value={model.provider} />
-                  <Badge value={model.enabled ? 'enabled' : 'disabled'} />
-                </div>
-                <p className="mt-1 break-all text-sm text-slate-500">{model.model}</p>
-                <p className="mt-2 text-sm leading-6 text-slate-600">{model.description}</p>
-              </div>
-              <div className="grid grid-cols-2 gap-2">
-                <NumberField label="优先级" value={model.priority ?? 100} onSave={(priority) => model.id && updateMutation.mutate({ id: model.id, patch: { priority } })} />
-                <NumberField label="单次额度消耗" value={model.costCredits} onSave={(costCredits) => {
-                  if (model.id && window.confirm(`确认把 ${model.displayName} 单次消耗改为 ${costCredits}？`)) {
-                    updateMutation.mutate({ id: model.id, patch: { costCredits } });
-                  }
-                }} />
-                <NumberField label="输入图上限" value={model.maxInputImages} onSave={(maxInputImages) => model.id && updateMutation.mutate({ id: model.id, patch: { maxInputImages } })} />
-                <button
-                  className="admin-secondary-button min-h-10"
-                  onClick={() => {
-                    if (!model.id) return;
-                    const enabled = !model.enabled;
-                    if (enabled || window.confirm(`确认关闭 ${model.displayName}？前台将不可选择该模型。`)) {
-                      updateMutation.mutate({ id: model.id, patch: { enabled } });
-                    }
-                  }}
-                >
-                  {model.enabled ? '关闭模型' : '启用模型'}
-                </button>
-              </div>
-            </div>
-          </article>
-        ))}
-      </div>
-    </Panel>
-  );
+  return <AiConfigPanel />;
 }
 
 function SettingsTab() {
@@ -1347,28 +1292,6 @@ function SearchBox({ value, onChange, placeholder }: { value: string; onChange: 
         onChange={(event) => onChange(event.target.value)}
         placeholder={placeholder}
       />
-    </label>
-  );
-}
-
-function NumberField({ label, value, onSave }: { label: string; value: number; onSave: (value: number) => void }) {
-  const [draft, setDraft] = useState(String(value));
-  return (
-    <label className="grid gap-1">
-      <span className="text-xs font-bold text-slate-500">{label}</span>
-      <span className="flex gap-1">
-        <input
-          className="h-10 min-w-0 flex-1 rounded-lg border border-slate-200 px-2 text-sm font-bold outline-none focus:border-teal-600"
-          value={draft}
-          onChange={(event) => setDraft(event.target.value)}
-        />
-        <button className="admin-icon-button" onClick={() => {
-          const next = Number(draft);
-          if (Number.isInteger(next) && next >= 0) onSave(next);
-        }} title="保存" aria-label="保存">
-          <Save size={15} aria-hidden />
-        </button>
-      </span>
     </label>
   );
 }

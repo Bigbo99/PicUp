@@ -1,0 +1,217 @@
+{
+  "version": 1,
+  "mockEnabled": true,
+  "routing": {
+    "default": {
+      "provider": "grsai",
+      "model": "nano-banana-2"
+    },
+    "professional": {
+      "provider": "grsai",
+      "model": "nano-banana-pro"
+    }
+  },
+  "providers": [
+    {
+      "id": "grsai",
+      "type": "grsai",
+      "displayName": "GrsAI",
+      "enabled": true,
+      "aliases": ["gemini"],
+      "apiKey": "",
+      "baseUrl": "https://grsai.dakka.com.cn",
+      "paths": {
+        "generate": "/v1/draw/nano-banana",
+        "result": "/v1/draw/result"
+      },
+      "defaultModel": "nano-banana-2",
+      "timeoutMs": 600000,
+      "pollIntervalMs": 2000,
+      "downloadRetryAttempts": 3,
+      "proxyUrl": "",
+      "downloadProxyUrl": "",
+      "disableProxy": false,
+      "models": [
+        {
+          "model": "nano-banana-2",
+          "upstreamModel": "nano-banana-2",
+          "aliases": [
+            "gemini-3.1-flash-image",
+            "gemini-3.1-flash-image-preview"
+          ],
+          "displayName": "Nano Banana 2",
+          "description": "快速生成和编辑图片，适合日常改图",
+          "enabled": true,
+          "priority": 10,
+          "maxInputImages": 6,
+          "supportedRatios": [
+            "auto",
+            "1:1",
+            "1:8",
+            "1:4",
+            "2:3",
+            "3:2",
+            "3:4",
+            "8:1",
+            "4:1",
+            "4:3",
+            "4:5",
+            "5:4",
+            "16:9",
+            "9:16",
+            "21:9"
+          ],
+          "supportedQualities": ["1K", "2K", "4K"],
+          "costCredits": 1
+        },
+        {
+          "model": "nano-banana-pro",
+          "upstreamModel": "nano-banana-pro",
+          "aliases": [
+            "gemini-3-pro-image",
+            "gemini-3-pro-image-preview"
+          ],
+          "qualityModelOverrides": {
+            "4K": "nano-banana-pro-vt"
+          },
+          "fallbackModels": ["nano-banana-pro"],
+          "displayName": "Nano Banana Pro",
+          "description": "高质量生成和编辑图片，适合复杂细节",
+          "enabled": true,
+          "priority": 20,
+          "maxInputImages": 6,
+          "supportedRatios": [
+            "auto",
+            "1:1",
+            "2:3",
+            "3:2",
+            "3:4",
+            "4:3",
+            "4:5",
+            "5:4",
+            "16:9",
+            "9:16",
+            "21:9"
+          ],
+          "supportedQualities": ["1K", "2K", "4K"],
+          "costCredits": 2
+        }
+      ]
+    },
+    {
+      "id": "gemini-official",
+      "type": "gemini-official",
+      "displayName": "Gemini Official",
+      "enabled": false,
+      "apiKey": "",
+      "baseUrl": "https://generativelanguage.googleapis.com",
+      "paths": {
+        "generate": "/v1beta/models/{model}:generateContent"
+      },
+      "defaultModel": "gemini-3.1-flash-image",
+      "timeoutMs": 600000,
+      "retryAttempts": 3,
+      "retryDelayMs": 1500,
+      "proxyUrl": "",
+      "disableProxy": false,
+      "models": [
+        {
+          "model": "gemini-3.1-flash-image",
+          "upstreamModel": "gemini-3.1-flash-image-preview",
+          "displayName": "Gemini 3.1 Flash Image",
+          "description": "Google Gemini 官方快速图片模型",
+          "enabled": true,
+          "priority": 30,
+          "maxInputImages": 6,
+          "supportedRatios": [
+            "auto",
+            "1:1",
+            "1:8",
+            "1:4",
+            "2:3",
+            "3:2",
+            "3:4",
+            "8:1",
+            "4:1",
+            "4:3",
+            "4:5",
+            "5:4",
+            "16:9",
+            "9:16",
+            "21:9"
+          ],
+          "supportedQualities": ["1K", "2K", "4K"],
+          "costCredits": 1
+        },
+        {
+          "model": "gemini-3-pro-image",
+          "upstreamModel": "gemini-3-pro-image-preview",
+          "displayName": "Gemini 3 Pro Image",
+          "description": "Google Gemini 官方专业图片模型",
+          "enabled": true,
+          "priority": 40,
+          "maxInputImages": 6,
+          "supportedRatios": [
+            "auto",
+            "1:1",
+            "2:3",
+            "3:2",
+            "3:4",
+            "4:3",
+            "4:5",
+            "5:4",
+            "16:9",
+            "9:16",
+            "21:9"
+          ],
+          "supportedQualities": ["1K", "2K", "4K"],
+          "costCredits": 2
+        }
+      ]
+    },
+    {
+      "id": "tokenrun",
+      "type": "openai-images",
+      "displayName": "TokenRun",
+      "enabled": true,
+      "apiKey": "",
+      "baseUrl": "https://tokenrun.ai-mendao.xyz",
+      "paths": {
+        "generations": "/v1/images/generations",
+        "edits": "/v1/images/edits"
+      },
+      "defaultModel": "gpt-image-2",
+      "timeoutMs": 600000,
+      "downloadRetryAttempts": 3,
+      "proxyUrl": "",
+      "downloadProxyUrl": "",
+      "models": [
+        {
+          "model": "gpt-image-2",
+          "upstreamModel": "gpt-image-2",
+          "aliases": ["gpt-image2"],
+          "displayName": "GPT Image 2",
+          "description": "擅长文字生成、指令遵循和精细编辑",
+          "enabled": true,
+          "priority": 50,
+          "maxInputImages": 4,
+          "supportedRatios": [
+            "auto",
+            "1:1",
+            "16:9",
+            "9:16",
+            "4:3",
+            "3:4",
+            "3:2",
+            "2:3",
+            "5:4",
+            "4:5",
+            "21:9"
+          ],
+          "supportedQualities": ["1K", "2K", "4K"],
+          "costCredits": 1
+        }
+      ]
+    }
+  ]
+}

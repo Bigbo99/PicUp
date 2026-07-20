@@ -1,6 +1,7 @@
 import type { ImageTemplate } from '@picup/shared';
 
 const templateInstructions: Record<ImageTemplate, string> = {
+  auto: '任务类型：自动识别。根据用户自然语言准确判断并执行图片处理意图。',
   replace_text: '任务类型：改字。保持原图构图、字体风格、光影和背景尽量不变，只修改用户指定文字。',
   remove_object: '任务类型：去除物体。移除指定元素，并自然补全背景，不留下明显痕迹。',
   add_object: '任务类型：添加元素。把新元素自然融入原图，匹配透视、光影和材质。',

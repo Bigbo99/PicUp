@@ -8,6 +8,7 @@ dist
 *.tsbuildinfo
 .env
 .env.local
+/config/ai-config.json
 storage/*.json
 storage/inputs/*
 storage/outputs/*

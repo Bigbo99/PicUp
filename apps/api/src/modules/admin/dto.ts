@@ -1,5 +1,5 @@
 import { IsArray, IsBoolean, IsEmail, IsIn, IsInt, IsObject, IsOptional, IsString, Max, Min } from 'class-validator';
-import type { ImageQuality } from '@picup/shared';
+import type { AiProviderType, AiRequestPaths, AiRoutingTarget, ImageQuality } from '@picup/shared';
 
 export class UpdateModelConfigDto {
   @IsOptional()
@@ -41,6 +41,196 @@ export class UpdateModelConfigDto {
 export class UpsertSettingDto {
   @IsObject()
   value!: Record<string, unknown>;
+}
+
+export class CreateAiProviderDto {
+  @IsString()
+  id!: string;
+
+  @IsIn(['grsai', 'gemini-official', 'openai-images'])
+  type!: AiProviderType;
+
+  @IsString()
+  displayName!: string;
+
+  @IsBoolean()
+  enabled!: boolean;
+
+  @IsOptional()
+  @IsString()
+  apiKey?: string;
+
+  @IsString()
+  baseUrl!: string;
+
+  @IsObject()
+  paths!: AiRequestPaths;
+
+  @IsString()
+  defaultModel!: string;
+
+  @IsOptional()
+  @IsArray()
+  aliases?: string[];
+
+  @IsOptional()
+  @IsInt()
+  @Min(1000)
+  timeoutMs?: number;
+}
+
+export class UpdateAiProviderDto {
+  @IsOptional()
+  @IsIn(['grsai', 'gemini-official', 'openai-images'])
+  type?: AiProviderType;
+
+  @IsOptional()
+  @IsString()
+  displayName?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  enabled?: boolean;
+
+  @IsOptional()
+  @IsString()
+  apiKey?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  clearApiKey?: boolean;
+
+  @IsOptional()
+  @IsString()
+  baseUrl?: string;
+
+  @IsOptional()
+  @IsObject()
+  paths?: AiRequestPaths;
+
+  @IsOptional()
+  @IsString()
+  defaultModel?: string;
+
+  @IsOptional()
+  @IsArray()
+  aliases?: string[];
+
+  @IsOptional()
+  @IsInt()
+  @Min(1000)
+  timeoutMs?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  retryAttempts?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  retryDelayMs?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(100)
+  pollIntervalMs?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  downloadRetryAttempts?: number;
+
+  @IsOptional()
+  @IsString()
+  proxyUrl?: string;
+
+  @IsOptional()
+  @IsString()
+  downloadProxyUrl?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  disableProxy?: boolean;
+}
+
+export class CreateAiModelDto {
+  @IsString()
+  model!: string;
+
+  @IsOptional()
+  @IsString()
+  upstreamModel?: string;
+
+  @IsOptional()
+  @IsArray()
+  aliases?: string[];
+
+  @IsString()
+  displayName!: string;
+
+  @IsString()
+  description!: string;
+
+  @IsBoolean()
+  enabled!: boolean;
+
+  @IsInt()
+  @Min(1)
+  priority!: number;
+
+  @IsInt()
+  @Min(0)
+  maxInputImages!: number;
+
+  @IsArray()
+  supportedRatios!: string[];
+
+  @IsArray()
+  supportedQualities!: ImageQuality[];
+
+  @IsInt()
+  @Min(0)
+  costCredits!: number;
+
+  @IsOptional()
+  @IsObject()
+  qualityModelOverrides?: Partial<Record<ImageQuality, string>>;
+
+  @IsOptional()
+  @IsArray()
+  fallbackModels?: string[];
+}
+
+export class UpdateAiModelDto extends UpdateModelConfigDto {
+  @IsOptional()
+  @IsString()
+  upstreamModel?: string;
+
+  @IsOptional()
+  @IsArray()
+  aliases?: string[];
+
+  @IsOptional()
+  @IsObject()
+  qualityModelOverrides?: Partial<Record<ImageQuality, string>>;
+
+  @IsOptional()
+  @IsArray()
+  fallbackModels?: string[];
+}
+
+export class UpdateAiRoutingDto {
+  @IsObject()
+  default!: AiRoutingTarget;
+
+  @IsObject()
+  professional!: AiRoutingTarget;
+}
+
+export class UpdateAiMockDto {
+  @IsBoolean()
+  mockEnabled!: boolean;
 }
 
 export class UpdateUserQuotaDto {

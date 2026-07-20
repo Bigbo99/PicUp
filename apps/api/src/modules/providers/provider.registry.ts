@@ -1,6 +1,7 @@
 import { Inject, Injectable } from '@nestjs/common';
-import type { ImageProviderName } from '@picup/shared';
+import { AiConfigService } from '../../common/ai-config/ai-config.service';
 import { GrsaiProvider } from './grsai.provider';
+import { GeminiProvider } from './gemini.provider';
 import { MockProvider } from './mock.provider';
 import type { ImageProvider } from './provider.types';
 import { TokenRunProvider } from './tokenrun.provider';
@@ -12,18 +13,24 @@ export class ProviderRegistry {
     private readonly mock: MockProvider,
     @Inject(GrsaiProvider)
     private readonly grsai: GrsaiProvider,
+    @Inject(GeminiProvider)
+    private readonly gemini: GeminiProvider,
     @Inject(TokenRunProvider)
-    private readonly tokenrun: TokenRunProvider
+    private readonly tokenrun: TokenRunProvider,
+    @Inject(AiConfigService)
+    private readonly aiConfig: AiConfigService
   ) {}
 
-  get(provider: Exclude<ImageProviderName, 'auto'>): ImageProvider {
-    const mockEnabled = process.env.PROVIDER_MOCK_ENABLED !== 'false';
-    if (mockEnabled) {
-      console.log(`[provider] mock enabled, requested=${provider}`);
+  get(providerId: string): ImageProvider {
+    if (this.aiConfig.getConfig().mockEnabled) {
+      console.log(`[provider] mock enabled, requested=${providerId}`);
       return this.mock;
     }
-    console.log(`[provider] using ${provider}`);
-    if (provider === 'gemini') return this.grsai;
-    return this.tokenrun;
+    const provider = this.aiConfig.getProvider(providerId);
+    console.log(`[provider] using id=${provider.id} type=${provider.type}`);
+    if (provider.type === 'grsai') return this.grsai;
+    if (provider.type === 'gemini-official') return this.gemini;
+    if (provider.type === 'openai-images') return this.tokenrun;
+    throw new Error(`Unsupported AI provider type: ${provider.type}`);
   }
 }
