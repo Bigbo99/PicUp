@@ -274,7 +274,7 @@ GET /api/admin/audit-logs
 PicUp 使用 Redis 作为图片任务队列，PostgreSQL 作为任务记录的持久化数据源。
 
 - API 将任务元数据写入 Postgres，然后把任务 id 入队到 Redis。
-- Worker 阻塞读取 Redis 队列，不需要每 2 秒轮询数据库。
+- Worker 通过 Redis 原子转移读取任务，空队列时只在 Redis 内短暂等待，不需要轮询数据库。
 - Worker 启动时会把遗留在 processing 列表中的任务移回 ready 队列。
 
 默认配置：
@@ -283,7 +283,10 @@ PicUp 使用 Redis 作为图片任务队列，PostgreSQL 作为任务记录的�
 REDIS_PORT=6379
 REDIS_URL=redis://redis:6379
 REDIS_QUEUE_PREFIX=picup:image-jobs
+IMAGE_WORKER_CONCURRENCY=4
 ```
+
+Worker 会并发消费任务；`IMAGE_WORKER_CONCURRENCY` 是单个 Worker 进程的消费上限。每个 Provider 的 `concurrency` 和 `rpm` 可以在管理后台配置，RPM 为每分钟启动的生成请求数，设置为 `0` 表示不限。
 
 如果 API 在 Docker 外本地运行，而 Redis 暴露在宿主机上，使用：
 

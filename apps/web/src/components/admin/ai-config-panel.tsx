@@ -129,7 +129,7 @@ export function AiConfigPanel() {
                 <ConfigBadge label={provider.apiKeyConfigured ? '密钥已配置' : '密钥未配置'} tone={provider.apiKeyConfigured ? 'success' : 'warning'} />
               </div>
               <p className="mt-1 text-sm font-semibold text-slate-600">{provider.id} · {provider.baseUrl}</p>
-              <p className="mt-1 text-xs text-slate-500">默认模型：{provider.defaultModel || '未设置'} · 请求路径：{Object.values(provider.paths).filter(Boolean).join(' / ') || '未设置'}</p>
+              <p className="mt-1 text-xs text-slate-500">默认模型：{provider.defaultModel || '未设置'} · 并发：{provider.concurrency ?? 4} · RPM：{provider.rpm ?? 0}（0 为不限） · 请求路径：{Object.values(provider.paths).filter(Boolean).join(' / ') || '未设置'}</p>
             </div>
             <div className="flex shrink-0 flex-wrap gap-2">
               <button type="button" className="admin-secondary-button" onClick={() => setModelEditor({ providerId: provider.id })}>
@@ -325,6 +325,8 @@ function ProviderEditorDialog({ provider, pending, onClose, onSave }: {
   const [defaultModel, setDefaultModel] = useState(provider?.defaultModel ?? '');
   const [aliases, setAliases] = useState((provider?.aliases ?? []).join(', '));
   const [timeoutMs, setTimeoutMs] = useState(String(provider?.timeoutMs ?? 600000));
+  const [concurrency, setConcurrency] = useState(String(provider?.concurrency ?? 4));
+  const [rpm, setRpm] = useState(String(provider?.rpm ?? 0));
   const [error, setError] = useState('');
 
   return (
@@ -334,7 +336,14 @@ function ProviderEditorDialog({ provider, pending, onClose, onSave }: {
         try {
           const parsedPaths = JSON.parse(paths) as AdminAiProviderInput['paths'];
           const timeout = Number(timeoutMs);
-          if (!id.trim() || !displayName.trim() || !baseUrl.trim() || !Number.isInteger(timeout)) throw new Error('请完整填写 Provider 信息');
+          const providerConcurrency = Number(concurrency);
+          const providerRpm = Number(rpm);
+          if (!id.trim() || !displayName.trim() || !baseUrl.trim()
+            || !Number.isInteger(timeout)
+            || !Number.isInteger(providerConcurrency) || providerConcurrency < 1 || providerConcurrency > 1000
+            || !Number.isInteger(providerRpm) || providerRpm < 0 || providerRpm > 1000000) {
+            throw new Error('请填写有效的 Provider 信息（并发 1-1000，RPM 0-1000000）');
+          }
           onSave({
             id: id.trim(),
             type,
@@ -345,7 +354,9 @@ function ProviderEditorDialog({ provider, pending, onClose, onSave }: {
             paths: parsedPaths,
             defaultModel: defaultModel.trim(),
             aliases: splitList(aliases),
-            timeoutMs: timeout
+            timeoutMs: timeout,
+            concurrency: providerConcurrency,
+            rpm: providerRpm
           });
         } catch (submitError) {
           setError(submitError instanceof Error ? submitError.message : '配置格式错误');
@@ -369,8 +380,12 @@ function ProviderEditorDialog({ provider, pending, onClose, onSave }: {
           请求路径 JSON
           <textarea className="min-h-28 rounded-lg border border-slate-200 p-3 font-mono text-sm" value={paths} onChange={(event) => setPaths(event.target.value)} />
         </label>
-        <div className="grid gap-3 sm:grid-cols-2">
+        <div className="grid gap-3 sm:grid-cols-3">
           <TextField label="超时毫秒" value={timeoutMs} onChange={setTimeoutMs} inputMode="numeric" />
+          <TextField label="并发数" value={concurrency} onChange={setConcurrency} inputMode="numeric" />
+          <TextField label="RPM（0 为不限）" value={rpm} onChange={setRpm} inputMode="numeric" />
+        </div>
+        <div className="grid gap-3 sm:grid-cols-2">
           <label className="flex min-h-11 items-center gap-2 self-end rounded-lg border border-slate-200 px-3 text-sm font-bold text-slate-700">
             <input type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.target.checked)} />
             启用 Provider

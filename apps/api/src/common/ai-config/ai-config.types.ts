@@ -16,6 +16,8 @@ export interface AiProviderConfig {
   paths: AiRequestPaths;
   defaultModel: string;
   timeoutMs: number;
+  concurrency?: number;
+  rpm?: number;
   retryAttempts?: number;
   retryDelayMs?: number;
   pollIntervalMs?: number;

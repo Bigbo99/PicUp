@@ -134,6 +134,8 @@ export class AiConfigService {
         defaultModel: provider.defaultModel,
         aliases: provider.aliases ? [...provider.aliases] : undefined,
         timeoutMs: provider.timeoutMs,
+        concurrency: provider.concurrency ?? 4,
+        rpm: provider.rpm ?? 0,
         retryAttempts: provider.retryAttempts,
         retryDelayMs: provider.retryDelayMs,
         pollIntervalMs: provider.pollIntervalMs,
@@ -184,6 +186,8 @@ export class AiConfigService {
       paths: input.paths,
       defaultModel: input.defaultModel,
       timeoutMs: input.timeoutMs ?? 600_000,
+      concurrency: input.concurrency ?? 4,
+      rpm: input.rpm ?? 0,
       retryAttempts: input.retryAttempts,
       retryDelayMs: input.retryDelayMs,
       pollIntervalMs: input.pollIntervalMs,
@@ -213,6 +217,8 @@ export class AiConfigService {
     if (input.paths !== undefined) provider.paths = input.paths;
     if (input.defaultModel !== undefined) provider.defaultModel = input.defaultModel;
     if (input.timeoutMs !== undefined) provider.timeoutMs = input.timeoutMs;
+    if (input.concurrency !== undefined) provider.concurrency = input.concurrency;
+    if (input.rpm !== undefined) provider.rpm = input.rpm;
     if (input.retryAttempts !== undefined) provider.retryAttempts = input.retryAttempts;
     if (input.retryDelayMs !== undefined) provider.retryDelayMs = input.retryDelayMs;
     if (input.pollIntervalMs !== undefined) provider.pollIntervalMs = input.pollIntervalMs;
@@ -359,6 +365,14 @@ export class AiConfigService {
       if (providerIds.has(provider.id) || providerAliases.has(provider.id)) throw new BadRequestException(`Provider id 重复或与别名冲突：${provider.id}`);
       if (!providerTypes.has(provider.type)) throw new BadRequestException(`Provider type 不支持：${provider.type}`);
       if (!provider.baseUrl?.trim()) throw new BadRequestException(`${provider.id} Base URL 不能为空`);
+      if (provider.concurrency !== undefined
+        && (!Number.isInteger(provider.concurrency) || provider.concurrency < 1 || provider.concurrency > 1000)) {
+        throw new BadRequestException(`${provider.id} 并发数必须是 1-1000 的整数`);
+      }
+      if (provider.rpm !== undefined
+        && (!Number.isInteger(provider.rpm) || provider.rpm < 0 || provider.rpm > 1_000_000)) {
+        throw new BadRequestException(`${provider.id} RPM 必须是 0-1000000 的整数`);
+      }
       if (provider.type === 'grsai' && (!provider.paths.generate || !provider.paths.result)) {
         throw new BadRequestException(`${provider.id} 需要 generate 和 result 请求路径`);
       }
