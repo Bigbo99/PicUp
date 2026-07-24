@@ -138,6 +138,10 @@ export interface AdminAiProviderConfig {
   defaultModel: string;
   aliases?: string[];
   timeoutMs: number;
+  /** Maximum number of generations allowed to run for this provider at once. */
+  concurrency?: number;
+  /** Maximum number of generation requests started per minute. Zero means unlimited. */
+  rpm?: number;
   retryAttempts?: number;
   retryDelayMs?: number;
   pollIntervalMs?: number;
@@ -171,6 +175,8 @@ export interface AdminAiProviderInput {
   defaultModel: string;
   aliases?: string[];
   timeoutMs?: number;
+  concurrency?: number;
+  rpm?: number;
   retryAttempts?: number;
   retryDelayMs?: number;
   pollIntervalMs?: number;

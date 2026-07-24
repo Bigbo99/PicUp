@@ -15,6 +15,8 @@ import { ProviderRegistry } from '../providers/provider.registry';
 import { buildFinalPrompt } from './prompt-builder';
 import { ObjectStorageService } from '../../common/object-storage.service';
 import { PaymentsService } from '../payments/payments.service';
+import { AiConfigService } from '../../common/ai-config/ai-config.service';
+import type { ProviderSlotLease } from '../../common/queue/redis-queue.service';
 
 type ReservedPayment =
   | { mode: 'free' | 'credits' | 'single'; orderId: string | null }
@@ -34,7 +36,9 @@ export class JobsService {
     @Inject(ObjectStorageService)
     private readonly objectStorage: ObjectStorageService,
     @Inject(PaymentsService)
-    private readonly payments: PaymentsService
+    private readonly payments: PaymentsService,
+    @Inject(AiConfigService)
+    private readonly aiConfig: AiConfigService
   ) {}
 
   async create(input: ImageJobCreateRequest, user: AuthUser): Promise<ImageJobCreateResponse> {
@@ -143,7 +147,15 @@ export class JobsService {
     await this.storage.upsertJob(running);
     console.log(`[job] ${running.id} running provider=${running.selectedProvider} model=${running.selectedModel}`);
 
+    let lease: ProviderSlotLease | undefined;
     try {
+      const providerConfig = this.aiConfig.getProvider(running.selectedProvider);
+      lease = await this.queue.acquireProviderSlot(
+        providerConfig.id,
+        providerConfig.concurrency,
+        providerConfig.rpm,
+        providerConfig.timeoutMs
+      );
       const provider = this.providers.get(running.selectedProvider);
       const result = await provider.generate({
         jobId: running.id,
@@ -183,6 +195,12 @@ export class JobsService {
       await this.refundFailedJob(failed);
       console.error(`[job] ${failed.id} failed ${failed.error?.code}: ${failed.error?.message}`);
       return failed;
+    } finally {
+      if (lease) {
+        await this.queue.releaseProviderSlot(lease).catch((error) => {
+          console.error(`[job] ${running.id} provider slot release failed`, error);
+        });
+      }
     }
   }
 

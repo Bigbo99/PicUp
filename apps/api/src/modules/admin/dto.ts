@@ -77,6 +77,18 @@ export class CreateAiProviderDto {
   @IsInt()
   @Min(1000)
   timeoutMs?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(1000)
+  concurrency?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(1000000)
+  rpm?: number;
 }
 
 export class UpdateAiProviderDto {
@@ -120,6 +132,18 @@ export class UpdateAiProviderDto {
   @IsInt()
   @Min(1000)
   timeoutMs?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(1000)
+  concurrency?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(1000000)
+  rpm?: number;
 
   @IsOptional()
   @IsInt()
