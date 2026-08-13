@@ -124,6 +124,12 @@ docker compose ps --status running --services | grep -qx worker || {
 }
 echo "OK: Worker running"
 
+PAGE_CACHE_DIR="/www/wwwroot/picup.ai-mendao.com/proxy_cache_dir"
+if [ -d "$PAGE_CACHE_DIR" ]; then
+  find "$PAGE_CACHE_DIR" -mindepth 1 -delete
+  echo "OK: cleared stale page cache: $PAGE_CACHE_DIR"
+fi
+
 echo ""
 echo "[8/8] Persist release and clean dangling data..."
 persist_env_value APP_IMAGE "$APP_IMAGE"
