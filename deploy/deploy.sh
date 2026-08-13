@@ -116,7 +116,7 @@ echo ""
 echo "[7/8] Update application services..."
 docker compose up -d --no-build --no-deps api
 wait_for_url "API" "http://127.0.0.1:4000/api/health"
-docker compose up -d --no-build --no-deps worker web
+docker compose up -d --no-build --no-deps --force-recreate worker web
 wait_for_url "Web" "http://127.0.0.1:3000"
 docker compose ps --status running --services | grep -qx worker || {
   echo "ERROR: Worker is not running"

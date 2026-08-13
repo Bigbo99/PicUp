@@ -17,6 +17,32 @@ const nextConfig: NextConfig = {
       { protocol: 'https', hostname: '**' }
     ]
   },
+  async headers() {
+    const noStoreHeaders = [
+      {
+        key: 'Cache-Control',
+        value: 'private, no-cache, no-store, max-age=0, must-revalidate'
+      }
+    ];
+
+    return [
+      // App HTML and RSC payloads reference deploy-specific chunk hashes.
+      // They must not outlive the static files from the same deployment.
+      {
+        source: '/:path((?!_next/static/).*)',
+        headers: noStoreHeaders
+      },
+      {
+        source: '/_next/static/:path*',
+        headers: [
+          {
+            key: 'Cache-Control',
+            value: 'public, max-age=31536000, immutable'
+          }
+        ]
+      }
+    ];
+  },
   async rewrites() {
     // 本地 dev: http://localhost:4000
     // Docker Compose: http://api:4000 (通过 .env 或 docker-compose.yml 设置)
