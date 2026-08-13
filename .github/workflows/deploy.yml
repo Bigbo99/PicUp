@@ -92,6 +92,8 @@ jobs:
             API_INTERNAL_URL=http://api:4000
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          provenance: false
+          sbom: false
 
   deploy:
     name: Deploy
