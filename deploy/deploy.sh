@@ -129,6 +129,11 @@ if [ -d "$PAGE_CACHE_DIR" ]; then
   find "$PAGE_CACHE_DIR" -mindepth 1 -delete
   echo "OK: cleared stale page cache: $PAGE_CACHE_DIR"
 fi
+if command -v nginx >/dev/null 2>&1; then
+  nginx -t
+  nginx -s reload
+  echo "OK: Nginx reloaded"
+fi
 
 echo ""
 echo "[8/8] Persist release and clean dangling data..."
