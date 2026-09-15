@@ -18,12 +18,17 @@
     "isolatedModules": true
   },
   "include": [
+    ".next-admin-design/types/**/*.ts",
+    ".next-board-check/types/**/*.ts",
+    ".next-build-check/types/**/*.ts",
+    ".next-dev-check/types/**/*.ts",
+    ".next-dev-codex/types/**/*.ts",
     ".next-dev/types/**/*.ts",
     ".next/types/**/*.ts",
     "next-env.d.ts",
     "src/**/*.ts",
     "src/**/*.tsx",
-    ".next-admin-design/types/**/*.ts"
+    ".next-mentions/types/**/*.ts"
   ],
   "exclude": [
     "node_modules"

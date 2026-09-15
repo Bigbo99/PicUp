@@ -38,6 +38,12 @@ jobs:
       - name: Typecheck
         run: pnpm typecheck
 
+      - name: Test
+        run: pnpm test
+
+      - name: Build
+        run: pnpm build
+
   build_and_push:
     name: Build and Push Image
     runs-on: ubuntu-latest

@@ -12,11 +12,13 @@ dist
 storage/*.json
 storage/inputs/*
 storage/outputs/*
+storage/cache/
 !storage/inputs/.gitkeep
 !storage/outputs/.gitkeep
 apps/api/storage/*.json
 apps/api/storage/inputs/*
 apps/api/storage/outputs/*
+apps/api/storage/cache/
 !apps/api/storage/inputs/.gitkeep
 !apps/api/storage/outputs/.gitkeep
 *.log

@@ -16,7 +16,6 @@ import {
 import { dirname, isAbsolute, resolve } from 'node:path';
 import type {
   AdminAiConfigResponse,
-  AdminAiModelConfig,
   AdminAiModelInput,
   AdminAiProviderInput,
   AiProviderType,
@@ -365,6 +364,16 @@ export class AiConfigService {
       if (providerIds.has(provider.id) || providerAliases.has(provider.id)) throw new BadRequestException(`Provider id 重复或与别名冲突：${provider.id}`);
       if (!providerTypes.has(provider.type)) throw new BadRequestException(`Provider type 不支持：${provider.type}`);
       if (!provider.baseUrl?.trim()) throw new BadRequestException(`${provider.id} Base URL 不能为空`);
+      try {
+        const parsed = new URL(provider.baseUrl);
+        if (parsed.protocol !== 'https:') throw new Error('HTTPS required');
+      } catch {
+        throw new BadRequestException(`${provider.id} Base URL 必须是有效的 HTTPS URL`);
+      }
+      const pathValues = [provider.paths.generate, provider.paths.result, provider.paths.generations, provider.paths.edits];
+      if (pathValues.some((path) => path !== undefined && (!path.startsWith('/') || path.startsWith('//')))) {
+        throw new BadRequestException(`${provider.id} 请求路径必须是相对路径`);
+      }
       if (provider.concurrency !== undefined
         && (!Number.isInteger(provider.concurrency) || provider.concurrency < 1 || provider.concurrency > 1000)) {
         throw new BadRequestException(`${provider.id} 并发数必须是 1-1000 的整数`);

@@ -12,8 +12,10 @@ export class RedisQueueService implements OnModuleInit, OnModuleDestroy {
   private readonly redisUrl = process.env.REDIS_URL ?? 'redis://redis:6379';
   private readonly queuePrefix = process.env.REDIS_QUEUE_PREFIX ?? 'picup:image-jobs';
   private readonly queueKey = `${this.queuePrefix}:ready`;
+  private readonly readySetKey = `${this.queuePrefix}:ready:set`;
   private readonly processingKey = `${this.queuePrefix}:processing`;
   private readonly providerPrefix = `${this.queuePrefix}:providers`;
+  private readonly workerHeartbeatKey = `${this.queuePrefix}:worker:heartbeat`;
   private client: RedisClientType | null = null;
 
   async onModuleInit() {
@@ -22,6 +24,12 @@ export class RedisQueueService implements OnModuleInit, OnModuleDestroy {
       console.error('[redis] queue client error', error);
     });
     await this.client.connect();
+    // Rebuild the deduplication set only for queues created by the old
+    // list-only implementation. Never delete an active set during a restart.
+    if (!await this.client.exists(this.readySetKey)) {
+      const readyIds = await this.client.lRange(this.queueKey, 0, -1);
+      if (readyIds.length) await this.client.sAdd(this.readySetKey, readyIds);
+    }
   }
 
   async onModuleDestroy() {
@@ -31,9 +39,23 @@ export class RedisQueueService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
+  async ping() {
+    return this.getClient().ping();
+  }
+
+  async heartbeatWorker(ttlSeconds = 30) {
+    await this.getClient().set(this.workerHeartbeatKey, new Date().toISOString(), { EX: ttlSeconds });
+  }
+
+  async workerHeartbeat() {
+    return this.getClient().get(this.workerHeartbeatKey);
+  }
+
   async enqueueJob(jobId: string) {
     const client = this.getClient();
-    await client.rPush(this.queueKey, jobId);
+    await client.sendCommand(['EVAL',
+      'if redis.call("SADD", KEYS[2], ARGV[1]) == 1 then redis.call("RPUSH", KEYS[1], ARGV[1]); return 1 end return 0',
+      '2', this.queueKey, this.readySetKey, jobId]);
   }
 
   async dequeueJob() {
@@ -41,30 +63,24 @@ export class RedisQueueService implements OnModuleInit, OnModuleDestroy {
     // Use an atomic move instead of a blocking command so acknowledgements,
     // leases and multiple worker consumers can share the same Redis client.
     while (true) {
-      const jobId = await client.rPopLPush(this.queueKey, this.processingKey);
-      if (jobId) return jobId;
+      const jobId = await client.sendCommand(['EVAL',
+        'local id = redis.call("LPOP", KEYS[1]); if id then redis.call("SREM", KEYS[3], id); redis.call("RPUSH", KEYS[2], id) end return id',
+        '3', this.queueKey, this.processingKey, this.readySetKey]);
+      if (typeof jobId === 'string' && jobId) return jobId;
       await this.sleep(250);
     }
   }
 
   async ackJob(jobId: string) {
     const client = this.getClient();
-    await client.lRem(this.processingKey, 1, jobId);
+    await client.lRem(this.processingKey, 0, jobId);
   }
 
   async requeueJob(jobId: string) {
     const client = this.getClient();
-    await client.lRem(this.processingKey, 1, jobId);
-    await client.rPush(this.queueKey, jobId);
-  }
-
-  async restoreProcessingJobs() {
-    const client = this.getClient();
-
-    while (true) {
-      const jobId = await client.rPopLPush(this.processingKey, this.queueKey);
-      if (!jobId) break;
-    }
+    await client.sendCommand(['EVAL',
+      'redis.call("LREM", KEYS[2], 0, ARGV[1]); if redis.call("SADD", KEYS[3], ARGV[1]) == 1 then redis.call("RPUSH", KEYS[1], ARGV[1]); return 1 end return 0',
+      '3', this.queueKey, this.processingKey, this.readySetKey, jobId]);
   }
 
   /**
@@ -111,6 +127,13 @@ export class RedisQueueService implements OnModuleInit, OnModuleDestroy {
       lease.key,
       lease.token
     ]);
+  }
+
+  async renewProviderSlot(lease: ProviderSlotLease) {
+    const result = await this.getClient().sendCommand(['EVAL',
+      'if redis.call("GET", KEYS[1]) == ARGV[1] then return redis.call("EXPIRE", KEYS[1], 60) else return 0 end',
+      '1', lease.key, lease.token]);
+    return Number(result) === 1;
   }
 
   private async reserveRpmToken(providerId: string, rpm: number) {

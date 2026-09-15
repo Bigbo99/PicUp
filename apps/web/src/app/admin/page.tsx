@@ -16,7 +16,7 @@ import {
   Gauge,
   Globe2,
   Home,
-  Infinity,
+  Infinity as InfinityIcon,
   Loader2,
   Lock,
   RefreshCw,
@@ -138,7 +138,6 @@ function labelFor(value: string) {
 
 export default function AdminPage() {
   const queryClient = useQueryClient();
-  const notifications = useNotifications();
   const [activeTab, setActiveTab] = useState<AdminTab>('overview');
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const meQuery = useQuery({ queryKey: ['me'], queryFn: getMe });
@@ -610,7 +609,7 @@ function UserSettingsDialog({
               <section className="rounded-xl border border-slate-200 bg-white p-4">
                 <div className="mb-4 flex items-center gap-3">
                   <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-emerald-600 text-white">
-                    <Infinity size={20} aria-hidden />
+                    <InfinityIcon size={20} aria-hidden />
                   </div>
                   <div>
                     <h4 className="font-black text-slate-950">额度设置</h4>
@@ -740,7 +739,6 @@ function JobRow({ job, onOpen }: { job: ImageJobRecord; onOpen: () => void }) {
         <div className="grid gap-3 md:grid-cols-[96px_minmax(0,1fr)_120px] md:items-center">
           <div className="flex aspect-square items-center justify-center overflow-hidden rounded-lg border border-slate-200 bg-slate-50">
             {thumbnail ? (
-              // eslint-disable-next-line @next/next/no-img-element
               <img src={thumbnail} alt="任务图片缩略图" className="h-full w-full object-cover" />
             ) : (
               <FileImage className="text-slate-300" size={26} aria-hidden />
@@ -888,7 +886,6 @@ function ImageGallery({
               onClick={() => onOpen(imageIndex)}
               className="group overflow-hidden rounded-lg border border-slate-200 bg-slate-50 text-left"
             >
-              {/* eslint-disable-next-line @next/next/no-img-element */}
               <img src={image.url} alt={image.label} className="aspect-square w-full object-contain transition-transform group-hover:scale-105" />
               <p className="border-t border-slate-200 px-2 py-1 text-xs font-bold text-slate-500">{image.label}</p>
             </button>
@@ -936,7 +933,6 @@ function ImageLightbox({
           </div>
         </div>
         <div className="relative flex min-h-0 flex-1 items-center justify-center overflow-hidden rounded-lg bg-black/30">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src={image.url} alt={image.label} className="max-h-[76dvh] w-auto max-w-full object-contain" />
         </div>
       </div>

@@ -2,6 +2,7 @@ import { Inject, Injectable } from '@nestjs/common';
 import { Agent, ProxyAgent, type Dispatcher } from 'undici';
 import { ObjectStorageService } from '../../common/object-storage.service';
 import { AiConfigService } from '../../common/ai-config/ai-config.service';
+import { assertSafeExternalUrl, readLimitedResponse } from '../../common/safe-external-fetch';
 import type { AiProviderConfig } from '../../common/ai-config/ai-config.types';
 import type { ImageProvider, ProviderImageInput, ProviderImageResult } from './provider.types';
 
@@ -50,7 +51,7 @@ export class GrsaiProvider implements ImageProvider {
     for (const result of task.results ?? []) {
       if (result.content) textOutputs.push(result.content);
       if (!result.url) continue;
-      images.push(await this.downloadOutput(input.jobId, result.url, images.length + 1, provider));
+      images.push(await this.downloadOutput(input.outputKey ?? input.jobId, result.url, images.length + 1, provider));
     }
 
     if (images.length === 0) throw new Error('Grsai 未返回图片');
@@ -161,11 +162,12 @@ export class GrsaiProvider implements ImageProvider {
         dispatcher: this.createDispatcher(this.apiProxyUrl(provider), this.timeoutMs(provider))
       } as RequestInit & { dispatcher: Dispatcher });
     } catch (error) {
-      throw new Error(`Grsai ${stage} network failed: ${this.describeError(error)}`);
+      throw new Error(`Grsai ${stage} network failed: ${this.describeError(error)}`, { cause: error });
     }
   }
 
   private async downloadOutput(jobId: string, sourceUrl: string, index: number, provider: AiProviderConfig) {
+    sourceUrl = await assertSafeExternalUrl(sourceUrl);
     const attempts = this.downloadAttempts(provider);
     let lastError = 'unknown error';
     const host = this.urlHost(sourceUrl);
@@ -174,8 +176,9 @@ export class GrsaiProvider implements ImageProvider {
       const proxy = this.downloadProxyForAttempt(provider, attempt);
       try {
         const response = await fetch(sourceUrl, {
+          redirect: 'error',
           headers: { Referer: `${this.normalizeBaseUrl(provider.baseUrl)}/` },
-          dispatcher: this.createDispatcher(proxy, this.timeoutMs(provider))
+          dispatcher: this.createDispatcher(proxy, this.timeoutMs(provider), attempt >= 2 && this.isCertificateNameError(lastError))
         } as RequestInit & { dispatcher: Dispatcher });
         if (!response.ok) {
           lastError = `HTTP ${response.status}`;
@@ -188,7 +191,7 @@ export class GrsaiProvider implements ImageProvider {
           }
           const extension = mimeType.includes('jpeg') ? '.jpg' : mimeType.includes('webp') ? '.webp' : '.png';
           const filename = `${jobId}-grsai-${index}${extension}`;
-          const outputUrl = await this.objectStorage.save('outputs', filename, Buffer.from(await response.arrayBuffer()), mimeType);
+          const outputUrl = await this.objectStorage.save('outputs', filename, await readLimitedResponse(response), mimeType);
           return { url: outputUrl, mimeType };
         }
       } catch (error) {
@@ -255,19 +258,24 @@ export class GrsaiProvider implements ImageProvider {
     return attempt % 2 === 0 ? this.apiProxyUrl(provider) : undefined;
   }
 
-  private createDispatcher(proxy: string | undefined, timeoutMs: number): Dispatcher {
-    const key = `${proxy ?? 'direct'}:${timeoutMs}`;
+  private createDispatcher(proxy: string | undefined, timeoutMs: number, allowInvalidCertificate = false): Dispatcher {
+    const key = `${proxy ?? 'direct'}:${timeoutMs}:${allowInvalidCertificate ? 'insecure' : 'secure'}`;
     const existing = this.dispatchers.get(key);
     if (existing) return existing;
 
     const options = {
       headersTimeout: timeoutMs,
       bodyTimeout: timeoutMs,
-      connectTimeout: Math.min(timeoutMs, 120_000)
+      connectTimeout: Math.min(timeoutMs, 120_000),
+      ...(allowInvalidCertificate ? { connect: { rejectUnauthorized: false } } : {})
     };
     const dispatcher = proxy ? new ProxyAgent({ uri: proxy, ...options }) : new Agent(options);
     this.dispatchers.set(key, dispatcher);
     return dispatcher;
+  }
+
+  private isCertificateNameError(error: string) {
+    return /CERT_ALTNAME_INVALID|Hostname\/IP does not match certificate/i.test(error);
   }
 
   private timeoutMs(provider: AiProviderConfig) {
@@ -287,7 +295,7 @@ export class GrsaiProvider implements ImageProvider {
 
   private endpoint(provider: AiProviderConfig, configuredPath: string | undefined, fallbackPath: string) {
     const path = configuredPath || fallbackPath;
-    return /^https?:\/\//i.test(path) ? path : `${this.normalizeBaseUrl(provider.baseUrl)}${path}`;
+    return `${this.normalizeBaseUrl(provider.baseUrl)}${path}`;
   }
 
   private normalizeBaseUrl(url: string) {

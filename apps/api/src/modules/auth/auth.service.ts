@@ -24,6 +24,7 @@ import type {
 import { StorageService, type StoredUser, type VisitorMetadata } from '../../common/storage.service';
 import { PrismaService } from '../../common/database/prisma.service';
 import { clientIp } from '../../common/request-ip';
+import { configuredSuperAdminEmails, sessionSecret } from '../../common/runtime-config';
 import type { AuthenticatedRequest } from './auth.types';
 import type { WechatAuthCallbackDto } from './dto';
 
@@ -57,7 +58,10 @@ const sessionTtlSeconds = 60 * 60 * 24 * 30;
 const emailChallengeTtlMs = 10 * 60 * 1000;
 const wechatSessionTtlMs = 5 * 60 * 1000;
 const unlimitedQuota = 999999999;
-const builtInAdminEmails = ['1315410762@qq.com'];
+// Visit tracking writes the caller's own users row. Polling clients hit guarded
+// endpoints every few seconds, so throttle the write instead of touching the
+// same hot row on every request.
+const visitTouchIntervalMs = 5 * 60 * 1000;
 const ip9Endpoint = 'https://ip9.com.cn/get';
 const wechatPendingPrefix = 'pending:';
 export const creditRechargePlans = [
@@ -94,13 +98,13 @@ export class AuthService {
     const user = this.storage.createStoredUser({
       id: randomUUID(),
       email,
-      role: this.roleForEmail(email),
+      role: 'user',
       isGuest: false,
       passwordHash: this.hashPassword(input.password),
       emailVerifiedAt: new Date().toISOString()
     });
     await this.storage.addUser(user);
-    const nextUser = req ? await this.touchUserVisit(user, req) : user;
+    const nextUser = req ? await this.touchUserVisit(user, req, true) : user;
     this.setSessionCookie(res, nextUser);
     return this.withQuota(this.toPublicUser(nextUser));
   }
@@ -115,9 +119,9 @@ export class AuthService {
       throw new UnauthorizedException('User is disabled');
     }
 
-    const nextUser = { ...user, role: this.roleForEmail(email, user.role), updatedAt: new Date().toISOString() };
+    const nextUser = { ...user, updatedAt: new Date().toISOString() };
     const updatedUser = await this.storage.updateUser(nextUser);
-    const visitedUser = req ? await this.touchUserVisit(updatedUser, req) : updatedUser;
+    const visitedUser = req ? await this.touchUserVisit(updatedUser, req, true) : updatedUser;
     this.setSessionCookie(res, visitedUser);
     return this.withQuota(this.toPublicUser(visitedUser));
   }
@@ -202,7 +206,6 @@ export class AuthService {
       user = existing && !existing.isGuest
         ? await this.storage.updateUser({
           ...existing,
-          role: this.roleForEmail(email, existing.role),
           status: 'active',
           isGuest: false,
           passwordHash: challenge.passwordHash ?? existing.passwordHash,
@@ -211,7 +214,7 @@ export class AuthService {
         : await this.storage.addUser(this.storage.createStoredUser({
           id: randomUUID(),
           email,
-          role: this.roleForEmail(email),
+          role: 'user',
           status: 'active',
           isGuest: false,
           passwordHash: challenge.passwordHash,
@@ -228,7 +231,7 @@ export class AuthService {
       where: { id: challenge.id },
       data: { consumedAt: new Date(), userId: user.id }
     });
-    const visitedUser = req ? await this.touchUserVisit(user, req) : user;
+    const visitedUser = req ? await this.touchUserVisit(user, req, true) : user;
     this.setSessionCookie(res, visitedUser);
     return this.withQuota(this.toPublicUser(visitedUser));
   }
@@ -454,7 +457,7 @@ export class AuthService {
   }
 
   async withQuota(user: AuthUser): Promise<AuthMeResponse> {
-    const dailyTotal = user.role === 'guest' ? 3 : user.role === 'admin' || user.quotaUnlimited ? unlimitedQuota : 10;
+    const dailyTotal = user.isGuest ? 0 : user.role === 'admin' || user.quotaUnlimited ? unlimitedQuota : 1;
     const datePrefix = new Date().toISOString().slice(0, 10);
     const dailyUsed = await this.storage.countDailyJobs(user.id, datePrefix);
     return {
@@ -495,7 +498,7 @@ export class AuthService {
   }
 
   isSuperAdmin(user: Pick<StoredUser | AuthUser, 'email' | 'role'>) {
-    return user.role === 'admin' && Boolean(user.email && this.superAdminEmails().includes(user.email.toLowerCase()));
+    return user.role === 'admin' && Boolean(user.email && configuredSuperAdminEmails().includes(user.email.toLowerCase()));
   }
 
   private async visitorMetadata(req: AuthenticatedRequest, lookup = true): Promise<VisitorMetadata> {
@@ -523,11 +526,15 @@ export class AuthService {
     return { ip, ...ip9 };
   }
 
-  private async touchUserVisit(user: StoredUser, req: AuthenticatedRequest): Promise<StoredUser> {
+  private async touchUserVisit(user: StoredUser, req: AuthenticatedRequest, force = false): Promise<StoredUser> {
     const visitor = await this.visitorMetadata(req, false);
     if (!visitor.ip && !visitor.country && !visitor.region && !visitor.city) return user;
+    const addressChanged = Boolean(visitor.ip) && visitor.ip !== user.lastIp;
+    // Skip repeat visits from the same address. Geo backfill rides along with
+    // the next write that does happen, so a failing lookup cannot defeat this.
+    if (!force && !addressChanged && this.visitedRecently(user)) return user;
     const shouldLookup = visitor.ip && (
-      visitor.ip !== user.lastIp
+      addressChanged
       || !user.lastCountry
       || !user.lastRegion
       || !user.lastCity
@@ -535,6 +542,12 @@ export class AuthService {
     const metadata = shouldLookup ? { ...visitor, ...(await this.lookupIp(visitor.ip)) } : { ip: visitor.ip };
     const updated = await this.storage.enrichUserIp(user.id, metadata);
     return updated ?? user;
+  }
+
+  private visitedRecently(user: StoredUser) {
+    if (!user.lastSeenAt) return false;
+    const seenAt = Date.parse(user.lastSeenAt);
+    return Number.isFinite(seenAt) && Date.now() - seenAt < visitTouchIntervalMs;
   }
 
   private async lookupIp9(ip?: string): Promise<Omit<VisitorMetadata, 'ip'>> {
@@ -634,7 +647,7 @@ export class AuthService {
   }
 
   private secret() {
-    return process.env.JWT_SECRET || process.env.COOKIE_SECRET || 'picup-dev-secret';
+    return sessionSecret();
   }
 
   private base64url(input: string) {
@@ -897,8 +910,10 @@ export class AuthService {
   }
 
   private assertWechatCallbackSecret(secret?: string) {
-    const expected = process.env.WECHAT_AUTH_CALLBACK_SECRET;
-    if (!expected) return;
+    const expected = process.env.WECHAT_AUTH_CALLBACK_SECRET?.trim();
+    if (!expected) {
+      throw new ServiceUnavailableException('Wechat callback authentication is not configured');
+    }
     if (!secret || !this.safeEqual(secret, expected)) {
       throw new UnauthorizedException('Invalid wechat callback secret');
     }
@@ -914,18 +929,6 @@ export class AuthService {
         ]
       }
     });
-  }
-
-  private roleForEmail(email: string, fallback: UserRole = 'user'): UserRole {
-    return this.superAdminEmails().includes(email) ? 'admin' : fallback === 'admin' ? 'admin' : 'user';
-  }
-
-  private superAdminEmails() {
-    const configured = (process.env.SUPER_ADMIN_EMAIL ?? process.env.SUPER_ADMIN_EMAILS ?? '')
-      .split(',')
-      .map((item) => item.trim().toLowerCase())
-      .filter(Boolean);
-    return [configured[0] || builtInAdminEmails[0]];
   }
 
   private async consumeConfirmedWechatSession(userId: string, state: string, res: Response): Promise<WechatAuthStatusResponse> {

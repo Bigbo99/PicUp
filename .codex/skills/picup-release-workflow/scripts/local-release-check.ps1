@@ -25,12 +25,15 @@ Write-Host "Repo: $repo"
 
 $previousAppImage = $env:APP_IMAGE
 $env:APP_IMAGE = "picup-app:local"
+$env:WEB_PUBLISH_PORT = "127.0.0.1:3000"
+$env:API_PUBLISH_PORT = "127.0.0.1:4400"
+$composeFiles = @("-f", "docker-compose.yml", "-f", "docker-compose.local.yml")
 
 try {
   Invoke-Step "[1/5] git status" { git status --short --branch }
   Invoke-Step "[2/5] pnpm typecheck" { pnpm typecheck }
-  Invoke-Step "[3/5] docker compose build api" { docker compose build api }
-  Invoke-Step "[4/5] docker compose up -d --no-build" { docker compose up -d --no-build }
+  Invoke-Step "[3/5] docker compose build api" { docker compose @composeFiles build api }
+  Invoke-Step "[4/5] docker compose up -d --no-build" { docker compose @composeFiles up -d --no-build }
 
   Write-Host ""
   Write-Host "[5/5] health checks"
@@ -38,7 +41,7 @@ try {
   $apiOk = $false
   for ($i = 0; $i -lt 30; $i++) {
     try {
-      $api = Invoke-RestMethod -Uri "http://localhost:4000/api/health" -Method Get -TimeoutSec 10
+      $api = Invoke-RestMethod -Uri "http://localhost:4400/api/health" -Method Get -TimeoutSec 10
       if ($api.ok -eq $true) {
         $apiOk = $true
         break
@@ -49,14 +52,14 @@ try {
   }
 
   if (-not $apiOk) {
-    throw "API health check failed at http://localhost:4000/api/health"
+    throw "API health check failed at http://localhost:4400/api/health"
   }
 
   Invoke-Step "[5/5] web head check" { curl.exe -fsSI --max-time 15 "http://localhost:3000" }
 
   Write-Host ""
   Write-Host "== docker compose ps =="
-  docker compose ps
+  docker compose @composeFiles ps
 
   Write-Host ""
   Write-Host "Local release check passed."

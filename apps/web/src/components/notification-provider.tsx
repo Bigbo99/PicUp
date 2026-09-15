@@ -1,7 +1,9 @@
 'use client';
 
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useMemo, useRef, useState, type ReactNode } from 'react';
 import { AlertTriangle, CheckCircle2, Info, Loader2, XCircle, X } from 'lucide-react';
+import { Dialog } from './studio/dialog';
+import { userMessage } from '@/lib/user-message';
 
 type NotificationType = 'success' | 'error' | 'warning' | 'info' | 'loading';
 type ConfirmTone = 'default' | 'danger';
@@ -97,7 +99,7 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
       id,
       type: input.type ?? 'info',
       title: input.title,
-      message: input.message,
+      message: input.type === 'error' && input.message ? userMessage(input.message) : input.message,
       duration: input.duration ?? (input.type === 'loading' ? 0 : 4200)
     };
 
@@ -128,23 +130,6 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
-  useEffect(() => {
-    if (!confirmState) return;
-
-    const originalOverflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === 'Escape') settleConfirm(false);
-    }
-
-    window.addEventListener('keydown', handleKeyDown);
-    return () => {
-      document.body.style.overflow = originalOverflow;
-      window.removeEventListener('keydown', handleKeyDown);
-    };
-  }, [confirmState, settleConfirm]);
-
   const value = useMemo<NotificationContextValue>(() => ({
     notify,
     success: (title, message) => notify({ type: 'success', title, message }),
@@ -164,7 +149,7 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
           return (
             <section
               key={toast.id}
-              className={`pointer-events-auto flex gap-3 rounded-lg border ${styles.border} bg-white/95 p-3 shadow-[0_18px_50px_rgba(15,23,42,0.16)] backdrop-blur`}
+              className={`studio-toast pointer-events-auto flex gap-3 rounded-lg border ${styles.border} bg-white/95 p-3 shadow-[0_18px_50px_rgba(15,23,42,0.16)] backdrop-blur`}
               role={toast.type === 'error' ? 'alert' : 'status'}
             >
               <div className={`mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${styles.iconBox}`}>
@@ -189,21 +174,20 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
       </div>
 
       {confirmState && (
-        <div className="fixed inset-0 z-[100] flex items-end justify-center bg-slate-950/45 p-3 sm:items-center sm:p-6" role="dialog" aria-modal="true" aria-labelledby="global-confirm-title">
-          <button className="absolute inset-0 h-full w-full cursor-default" type="button" onClick={() => settleConfirm(false)} aria-label="关闭确认窗口" />
-          <section className="relative w-full max-w-md rounded-lg border border-line bg-white p-5 shadow-[0_24px_70px_rgba(15,23,42,0.24)]">
+        <Dialog title={confirmState.title} onClose={() => settleConfirm(false)}>
+          <section className="p-5">
             <div className="flex gap-3">
               <div className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-lg ${confirmState.tone === 'danger' ? 'bg-red-50 text-red-700' : 'bg-teal-50 text-teal-700'}`}>
                 {confirmState.tone === 'danger' ? <AlertTriangle size={23} aria-hidden /> : <Info size={23} aria-hidden />}
               </div>
               <div className="min-w-0">
-                <h2 id="global-confirm-title" className="text-lg font-bold leading-6 text-ink">{confirmState.title}</h2>
                 {confirmState.message && <p className="mt-2 text-sm leading-6 text-muted">{confirmState.message}</p>}
               </div>
             </div>
             <div className="mt-5 grid grid-cols-2 gap-3">
               <button
                 type="button"
+                autoFocus
                 className="min-h-11 cursor-pointer rounded-lg border border-line bg-white px-4 text-sm font-bold text-ink transition-colors hover:border-teal-600 hover:text-teal-700"
                 onClick={() => settleConfirm(false)}
               >
@@ -220,7 +204,7 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
               </button>
             </div>
           </section>
-        </div>
+        </Dialog>
       )}
     </NotificationContext.Provider>
   );

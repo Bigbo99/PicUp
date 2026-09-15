@@ -13,11 +13,13 @@
     "start": "node dist/main.js",
     "start:worker": "node dist/workers/image-worker.js",
     "smtp:test": "tsx src/tools/test-smtp.ts",
+    "admin:promote": "tsx src/tools/promote-admin.ts",
     "db:generate": "prisma generate --schema prisma/schema.prisma",
     "db:migrate": "prisma migrate dev --schema prisma/schema.prisma",
     "db:deploy": "prisma migrate deploy --schema prisma/schema.prisma",
-    "typecheck": "prisma generate --schema prisma/schema.prisma && tsc -p tsconfig.json --noEmit",
-    "lint": "prisma generate --schema prisma/schema.prisma && tsc -p tsconfig.json --noEmit"
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint src",
+    "test": "node scripts/run-tests.mjs"
   },
   "dependencies": {
     "@nestjs/common": "^10.4.15",

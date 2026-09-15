@@ -29,7 +29,7 @@ export class GeminiProvider implements ImageProvider {
     const body = await this.buildRequest(requestInput);
     const path = (provider.paths.generate || '/v1beta/models/{model}:generateContent')
       .replace('{model}', encodeURIComponent(upstreamModel));
-    const url = /^https?:\/\//i.test(path) ? path : `${provider.baseUrl.replace(/\/+$/, '')}${path}`;
+    const url = `${provider.baseUrl.replace(/\/+$/, '')}${path}`;
     console.log(`[gemini-official] request job=${input.jobId} provider=${provider.id} model=${upstreamModel} ratio=${input.aspectRatio} quality=${input.quality}`);
     const response = await this.fetchGemini(url, apiKey, body, provider);
 
@@ -40,7 +40,7 @@ export class GeminiProvider implements ImageProvider {
 
     const payload = await response.json() as GeminiResponse;
     console.log(`[gemini-official] response job=${input.jobId} status=${response.status}`);
-    return this.parseResponse(input.jobId, payload);
+    return this.parseResponse(input.outputKey ?? input.jobId, payload);
   }
 
   private async fetchGemini(url: string, apiKey: string, body: unknown, provider: AiProviderConfig) {
@@ -84,7 +84,7 @@ export class GeminiProvider implements ImageProvider {
     try {
       return await fetch(url, init);
     } catch (error) {
-      throw new Error(`Gemini 网络请求失败：${this.describeFetchError(error)}`);
+      throw new Error(`Gemini 网络请求失败：${this.describeFetchError(error)}`, { cause: error });
     }
   }
 

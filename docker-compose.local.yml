@@ -1,0 +1,20 @@
+# Local HTTP verification only. Production uses docker-compose.yml without this file.
+services:
+  web:
+    environment:
+      APP_ENV: development
+      API_INTERNAL_URL: http://api:4000
+
+  api:
+    environment:
+      APP_ENV: development
+      WEB_PUBLIC_URL: http://localhost:3000
+      API_PUBLIC_URL: http://localhost:4400
+      MEDIA_PUBLIC_BASE_URL: http://localhost:4400/media
+
+  worker:
+    environment:
+      APP_ENV: development
+      WEB_PUBLIC_URL: http://localhost:3000
+      API_PUBLIC_URL: http://localhost:4400
+      MEDIA_PUBLIC_BASE_URL: http://localhost:4400/media

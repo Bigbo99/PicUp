@@ -84,7 +84,7 @@ export const MODEL_CATALOG: ModelCatalogEntry[] = [
   }
 ];
 
-export const MODEL_CONFIG_DEFAULTS: ModelConfig[] = MODEL_CATALOG.map(({ badgeLabel, badgeTone, aliases, ...model }) => model);
+export const MODEL_CONFIG_DEFAULTS: ModelConfig[] = MODEL_CATALOG.map(({ badgeLabel: _badgeLabel, badgeTone: _badgeTone, aliases: _aliases, ...model }) => model);
 
 export function findModelCatalogEntry(provider: ImageProviderName | string, model: string) {
   const resolvedProvider = provider === 'gemini' ? 'grsai' : provider;

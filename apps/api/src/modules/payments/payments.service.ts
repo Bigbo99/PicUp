@@ -1,5 +1,5 @@
 import { BadRequestException, Inject, Injectable, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
-import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import type { AuthUser, CreditRechargePlan } from '@picup/shared';
 import { StorageService } from '../../common/storage.service';
 import { singleUsePriceCents } from '../auth/auth.service';
@@ -16,6 +16,10 @@ export class PaymentsService {
 
   plans() {
     return { plans: paymentRechargePlans };
+  }
+
+  activity(userId: string) {
+    return this.storage.accountActivity(userId);
   }
 
   async getOrder(id: string, userId: string) {
@@ -184,7 +188,10 @@ export class PaymentsService {
   }
 
   private verifyWechatSign(payload: Record<string, string>) {
-    return Boolean(payload.sign) && this.wechatSign(payload) === payload.sign;
+    if (!payload.sign) return false;
+    const expected = Buffer.from(this.wechatSign(payload), 'utf8');
+    const received = Buffer.from(payload.sign.toUpperCase(), 'utf8');
+    return expected.length === received.length && timingSafeEqual(expected, received);
   }
 
   private wechatSign(params: Record<string, string>) {

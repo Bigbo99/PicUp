@@ -174,20 +174,234 @@ export class StorageService {
     return ids.map((id) => byId.get(id)).filter(Boolean) as UploadedFileRecord[];
   }
 
-  async upsertJob(job: ImageJobRecord) {
-    const data = this.toJobWriteData(job);
-    const saved = await this.prisma.imageJob.upsert({
-      where: { id: job.id },
-      update: data,
-      create: data
+  async getFileByInputFilename(filename: string, userId: string) {
+    const hash = filename.replace(/\.[A-Za-z0-9]+$/, '').toLowerCase();
+    if (!/^[a-f0-9]{64}$/.test(hash)) return null;
+    return this.findFileByHash(hash, userId);
+  }
+
+  async getJobByIdempotency(userId: string, idempotencyKey: string) {
+    const job = await this.prisma.imageJob.findFirst({ where: { userId, idempotencyKey } });
+    return job ? this.toImageJob(job) : null;
+  }
+
+  async claimJob(id: string, leaseOwner: string, leaseMs: number) {
+    const now = new Date();
+    const leaseExpiresAt = new Date(now.getTime() + leaseMs);
+    const result = await this.prisma.imageJob.updateMany({
+      where: {
+        id,
+        attempt: { lt: this.maxJobAttempts() },
+        OR: [
+          { status: { in: ['queued', 'retrying'] } },
+          { status: 'running', OR: [{ leaseExpiresAt: null }, { leaseExpiresAt: { lt: now } }] }
+        ]
+      },
+      data: {
+        status: 'running',
+        attempt: { increment: 1 },
+        leaseOwner,
+        leaseExpiresAt,
+        updatedAt: now
+      }
     });
-    return this.toImageJob(saved);
+    if (result.count !== 1) {
+      const exhausted = await this.serializable(async (tx) => {
+        const current = await tx.imageJob.findUnique({ where: { id } });
+        if (!current || current.attempt < this.maxJobAttempts()) return null;
+        const eligible = current.status === 'queued' || current.status === 'retrying'
+          || (current.status === 'running' && Boolean(current.leaseExpiresAt && current.leaseExpiresAt <= now));
+        return eligible ? this.settleFailedJob(tx, current, '任务重试次数已达上限，已停止继续调用模型') : null;
+      });
+      return exhausted ? this.toImageJob(exhausted) : null;
+    }
+    return this.getJob(id);
+  }
+
+  async requeueJobs(ids: string[], leaseOwner: string) {
+    if (!ids.length) return false;
+    const updated = await this.prisma.imageJob.updateMany({
+      where: { id: { in: ids }, status: 'running', leaseOwner },
+      data: {
+        status: 'retrying',
+        leaseOwner: null,
+        leaseExpiresAt: null,
+        updatedAt: new Date()
+      }
+    });
+    return updated.count > 0;
+  }
+
+  async renewJobLease(id: string, leaseOwner: string, leaseMs: number) {
+    const now = new Date();
+    const updated = await this.prisma.imageJob.updateMany({
+      where: { id, status: 'running', leaseOwner, leaseExpiresAt: { gt: now } },
+      data: { leaseExpiresAt: new Date(now.getTime() + leaseMs) }
+    });
+    return updated.count === 1;
+  }
+
+  async completeJob(job: ImageJobRecord, leaseOwner: string) {
+    const updated = await this.prisma.imageJob.updateMany({
+      where: { id: job.id, status: 'running', leaseOwner, leaseExpiresAt: { gt: new Date() } },
+      data: this.toJobWriteData(job)
+    });
+    if (updated.count !== 1) return null;
+    return this.getJob(job.id);
+  }
+
+  private async serializable<T>(action: (tx: Prisma.TransactionClient) => Promise<T>): Promise<T> {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await this.prisma.$transaction(action, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+      } catch (error) {
+        // P2002 is retried for concurrent idempotency-key winners so the next
+        // transaction can observe and return the job created by the winner.
+        if (!(error instanceof Prisma.PrismaClientKnownRequestError) || !['P2034', 'P2002'].includes(error.code) || attempt >= 3) throw error;
+      }
+    }
+  }
+
+  async hasEnoughCredits(userId: string, credits: number) {
+    const user = await this.prisma.user.findUnique({ where: { id: userId }, select: { creditBalance: true } });
+    return Boolean(user && user.creditBalance >= credits);
+  }
+
+  async createJobWithReservation(job: ImageJobRecord, freeUnlimited = false) {
+    return this.serializable(async (tx) => {
+      if (job.userId && job.idempotencyKey) {
+        const existing = await tx.imageJob.findFirst({ where: { userId: job.userId, idempotencyKey: job.idempotencyKey } });
+        if (existing) return { job: this.toImageJob(existing), created: false };
+      }
+
+      if (job.paymentMode === 'credits' && job.userId && job.creditsReserved > 0) {
+        const debited = await tx.user.updateMany({
+          where: { id: job.userId, creditBalance: { gte: job.creditsReserved } },
+          data: { creditBalance: { decrement: job.creditsReserved } }
+        });
+        if (debited.count !== 1) throw new Error('积分不足，请充值后再生成');
+      }
+
+      if (job.paymentMode === 'free' && job.userId && !freeUnlimited) {
+        const start = new Date(`${job.createdAt.slice(0, 10)}T00:00:00.000Z`);
+        const end = new Date(start);
+        end.setUTCDate(end.getUTCDate() + 1);
+        const used = await tx.imageJob.count({ where: {
+          userId: job.userId,
+          paymentMode: 'free',
+          createdAt: { gte: start, lt: end },
+          status: { notIn: ['failed', 'refunded'] }
+        } });
+        if (used >= 1) throw new Error('今日免费次数已用完，请先充值积分');
+      }
+
+      if (job.paymentMode === 'single' && job.paymentOrderId && job.userId) {
+        const order = await tx.paymentOrder.findFirst({
+          where: { id: job.paymentOrderId, userId: job.userId, orderType: 'single_job', status: 'paid' }
+        });
+        if (!order) throw new Error('Single payment order is invalid or unpaid');
+      }
+
+      const created = await tx.imageJob.create({ data: this.toJobWriteData(job) });
+      if (job.userId) await tx.creditEntry.create({ data: {
+        key: `job:${job.id}:reserve`, userId: job.userId, kind: job.paymentMode ?? 'free',
+        delta: job.paymentMode === 'credits' ? -job.creditsReserved : 0, createdAt: new Date(job.createdAt)
+      } });
+      return { job: this.toImageJob(created), created: true };
+    });
+  }
+
+  async failJob(job: ImageJobRecord, leaseOwner: string) {
+    return this.serializable(async (tx) => {
+      const current = await tx.imageJob.findUnique({ where: { id: job.id } });
+      if (!current || current.status !== 'running' || current.leaseOwner !== leaseOwner
+        || !current.leaseExpiresAt || current.leaseExpiresAt <= new Date()) {
+        return null;
+      }
+
+      const saved = await this.settleFailedJob(tx, current, job.error?.message);
+      return this.toImageJob(saved);
+    });
+  }
+
+  async listRecoverableJobIds(take = 200) {
+    const jobs = await this.prisma.imageJob.findMany({
+      where: { status: { in: ['queued', 'retrying'] } },
+      select: { id: true },
+      orderBy: { createdAt: 'asc' },
+      take: Math.max(1, Math.min(1000, Math.floor(take)))
+    });
+    return jobs.map((job) => job.id);
+  }
+
+  async requeueExpiredJobs() {
+    const now = new Date();
+    await this.serializable(async (tx) => {
+      const expired = await tx.imageJob.findMany({
+        where: {
+          status: 'running',
+          OR: [{ leaseExpiresAt: null }, { leaseExpiresAt: { lt: now } }]
+        },
+        orderBy: { updatedAt: 'asc' },
+        take: 200
+      });
+      for (const job of expired) {
+        if (job.attempt >= this.maxJobAttempts()) {
+          await this.settleFailedJob(tx, job, '任务租约已过期且重试次数已达上限');
+          continue;
+        }
+        await tx.imageJob.updateMany({
+          where: { id: job.id, status: 'running' },
+          data: { status: 'retrying', leaseOwner: null, leaseExpiresAt: null, updatedAt: now }
+        });
+      }
+    });
+  }
+
+  private maxJobAttempts() {
+    const configured = Number(process.env.IMAGE_JOB_MAX_ATTEMPTS);
+    return Number.isInteger(configured) && configured > 0 ? Math.min(configured, 20) : 3;
+  }
+
+  private async settleFailedJob(tx: Prisma.TransactionClient, current: ImageJob, message = '模型服务暂时不可用') {
+    const compensatesBalance = current.paymentMode === 'credits'
+      && Boolean(current.userId)
+      && current.creditsReserved > 0;
+    const saved = await tx.imageJob.update({
+      where: { id: current.id },
+      data: {
+        status: compensatesBalance ? 'refunded' : 'failed',
+        error: {
+          code: current.attempt >= this.maxJobAttempts() ? 'MAX_ATTEMPTS_EXCEEDED' : 'PROVIDER_UNAVAILABLE',
+          message
+        },
+        leaseOwner: null,
+        leaseExpiresAt: null,
+        paymentOrderId: current.paymentMode === 'single' ? null : current.paymentOrderId,
+        completedAt: new Date(),
+        updatedAt: new Date()
+      }
+    });
+    if (current.userId && compensatesBalance) {
+      await tx.user.update({
+        where: { id: current.userId },
+        data: { creditBalance: { increment: current.creditsReserved } }
+      });
+      await tx.creditEntry.create({ data: {
+        key: `job:${current.id}:refund`,
+        userId: current.userId,
+        kind: 'refund',
+        delta: current.creditsReserved
+      } });
+    }
+    return saved;
   }
 
   async getJob(id: string, userId?: string, includeAll = false) {
     const job = await this.prisma.imageJob.findFirst({
       where: {
         id,
+        ...(userId && !includeAll ? { deletedAt: null } : {}),
         ...(includeAll || !userId ? {} : { OR: [{ userId }, { userId: null }] })
       }
     });
@@ -197,15 +411,22 @@ export class StorageService {
   async deleteJob(id: string, userId?: string, includeAll = false) {
     const job = await this.getJob(id, userId, includeAll);
     if (!job) return null;
-    await this.prisma.imageJob.delete({ where: { id } });
+    await this.prisma.imageJob.update({ where: { id }, data: { deletedAt: new Date() } });
     return job;
   }
 
-  async listJobs(limit = 20, userId?: string, includeAll = false) {
+  async listJobs(limit = 20, userId?: string, includeAll = false, cursor?: string, query?: string, status?: string) {
     const jobs = await this.prisma.imageJob.findMany({
-      where: includeAll || !userId ? {} : { OR: [{ userId }, { userId: null }] },
-      orderBy: { createdAt: 'desc' },
-      take: limit
+      where: {
+        ...(includeAll || !userId ? {} : { userId, deletedAt: null }),
+        ...(query ? { prompt: { contains: query, mode: 'insensitive' as const } } : {}),
+        ...(status === 'active' ? { status: { in: ['queued', 'running', 'retrying'] as ImageJobStatus[] } }
+          : status === 'failed' ? { status: { in: ['failed', 'refunded'] as ImageJobStatus[] } }
+          : status === 'succeeded' ? { status: 'succeeded' as const } : {})
+      },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+      take: this.normalizedLimit(limit, 20, 100)
     });
     return jobs.map((job) => this.toImageJob(job));
   }
@@ -402,7 +623,9 @@ export class StorageService {
     return this.prisma.imageJob.count({
       where: {
         userId,
-        createdAt: { gte: start, lt: end }
+        paymentMode: 'free',
+        createdAt: { gte: start, lt: end },
+        status: { notIn: ['failed', 'refunded'] }
       }
     });
   }
@@ -481,18 +704,23 @@ export class StorageService {
   }
 
   async enrichUserIp(id: string, visitor: VisitorMetadata) {
-    await this.prisma.user.updateMany({
-      where: { id },
-      data: {
-        ...(visitor.ip ? { lastIp: visitor.ip } : {}),
-        ...(visitor.country ? { lastCountry: visitor.country } : {}),
-        ...(visitor.region ? { lastRegion: visitor.region } : {}),
-        ...(visitor.city ? { lastCity: visitor.city } : {}),
-        lastSeenAt: new Date()
-      }
-    });
-    const user = await this.prisma.user.findUnique({ where: { id } });
-    return user ? this.toStoredUser(user) : null;
+    try {
+      const user = await this.prisma.user.update({
+        where: { id },
+        data: {
+          ...(visitor.ip ? { lastIp: visitor.ip } : {}),
+          ...(visitor.country ? { lastCountry: visitor.country } : {}),
+          ...(visitor.region ? { lastRegion: visitor.region } : {}),
+          ...(visitor.city ? { lastCity: visitor.city } : {}),
+          lastSeenAt: new Date()
+        }
+      });
+      return this.toStoredUser(user);
+    } catch (error) {
+      // Keep the previous updateMany semantics: a deleted user is not an error.
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025') return null;
+      throw error;
+    }
   }
 
   async getModelConfigs(defaults: ModelConfig[]) {
@@ -570,7 +798,7 @@ export class StorageService {
     }));
   }
 
-  async upsertSetting(key: string, value: Prisma.InputJsonValue, actorId?: string, metadata?: AuditMetadata) {
+  async upsertSetting(key: string, value: Prisma.InputJsonValue, actorId?: string, _metadata?: AuditMetadata) {
     const before = await this.prisma.appSetting.findUnique({ where: { key } });
     const after = await this.prisma.appSetting.upsert({
       where: { key },
@@ -858,25 +1086,40 @@ export class StorageService {
     return count > 0;
   }
 
+  async accountActivity(userId: string) {
+    const [entries, orders] = await Promise.all([
+      this.prisma.creditEntry.findMany({ where: { userId }, orderBy: { createdAt: 'desc' }, take: 50 }),
+      this.prisma.paymentOrder.findMany({ where: { userId }, orderBy: { createdAt: 'desc' }, take: 50 })
+    ]);
+    return { entries: entries.map(entry => ({ ...entry, createdAt: entry.createdAt.toISOString() })),
+      orders: orders.map(order => this.toPaymentOrder(order)) };
+  }
+
   async markPaymentOrderPaid(externalOrderId: string) {
     return this.prisma.$transaction(async (tx) => {
       const order = await tx.paymentOrder.findUnique({ where: { externalOrderId } });
       if (!order) return null;
       if (order.status === 'paid') return this.toPaymentOrder(order);
 
-      const paid = await tx.paymentOrder.update({
-        where: { id: order.id },
+      const claimed = await tx.paymentOrder.updateMany({
+        where: { id: order.id, status: 'pending' },
         data: {
           status: 'paid',
           paidAt: new Date()
         }
       });
 
+      const paid = await tx.paymentOrder.findUniqueOrThrow({ where: { id: order.id } });
+      if (claimed.count !== 1) return this.toPaymentOrder(paid);
+
       if (paid.userId && paid.orderType === 'credit_recharge' && paid.credits > 0) {
         await tx.user.update({
           where: { id: paid.userId },
           data: { creditBalance: { increment: paid.credits } }
         });
+        await tx.creditEntry.create({ data: {
+          key: `order:${paid.id}`, userId: paid.userId, kind: 'recharge', delta: paid.credits
+        } });
       }
 
       return this.toPaymentOrder(paid);
@@ -949,6 +1192,7 @@ export class StorageService {
       model: job.model,
       template: job.template as ImageTemplate,
       prompt: job.prompt,
+      promptParts: job.promptParts ? this.jsonArray<NonNullable<ImageJobRecord['promptParts']>[number]>(job.promptParts) : undefined,
       imageIds: this.jsonArray<string>(job.imageIds),
       aspectRatio: job.aspectRatio,
       quality: job.quality as ImageQuality,
@@ -963,6 +1207,11 @@ export class StorageService {
       creditsReserved: job.creditsReserved,
       paymentMode: job.paymentMode as ImageJobRecord['paymentMode'],
       paymentOrderId: job.paymentOrderId,
+      idempotencyKey: job.idempotencyKey ?? undefined,
+      parentJobId: job.parentJobId ?? undefined,
+      attempt: job.attempt,
+      leaseOwner: job.leaseOwner,
+      leaseExpiresAt: job.leaseExpiresAt?.toISOString() ?? null,
       createdAt: job.createdAt.toISOString(),
       updatedAt: job.updatedAt.toISOString(),
       completedAt: job.completedAt?.toISOString()
@@ -978,6 +1227,7 @@ export class StorageService {
       model: job.model,
       template: job.template,
       prompt: job.prompt,
+      promptParts: job.promptParts as unknown as Prisma.InputJsonValue | undefined,
       imageIds: job.imageIds,
       aspectRatio: job.aspectRatio,
       quality: job.quality,
@@ -992,6 +1242,11 @@ export class StorageService {
       creditsReserved: job.creditsReserved,
       paymentMode: job.paymentMode ?? 'free',
       paymentOrderId: job.paymentOrderId ?? null,
+      idempotencyKey: job.idempotencyKey ?? null,
+      parentJobId: job.parentJobId ?? null,
+      attempt: job.attempt ?? 0,
+      leaseOwner: job.leaseOwner ?? null,
+      leaseExpiresAt: job.leaseExpiresAt ? new Date(job.leaseExpiresAt) : null,
       createdAt: new Date(job.createdAt),
       updatedAt: new Date(job.updatedAt),
       completedAt: job.completedAt ? new Date(job.completedAt) : null

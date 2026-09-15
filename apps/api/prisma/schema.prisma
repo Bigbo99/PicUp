@@ -52,6 +52,10 @@ model User {
   identities    ExternalIdentity[]
   emailChallenges EmailAuthChallenge[]
   wechatSessions WechatLoginSession[]
+  studioPreference StudioPreference?
+  assetMetadata StudioAssetMetadata[]
+  subjects StudioSubject[]
+  conversationMetadata StudioConversationMetadata[]
 
   @@index([role, status])
   @@index([isGuest, lastCountry])
@@ -142,6 +146,7 @@ model FileRecord {
   height    Int?
   createdAt DateTime @default(now()) @map("created_at")
   user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  subjects StudioSubject[]
 
   @@unique([userId, hash])
   @@index([userId, createdAt])
@@ -156,6 +161,7 @@ model ImageJob {
   model            String         @db.VarChar(120)
   template         String         @db.VarChar(80)
   prompt           String
+  promptParts      Json?          @map("prompt_parts")
   imageIds         Json           @map("image_ids")
   aspectRatio      String         @map("aspect_ratio") @db.VarChar(24)
   quality          String         @db.VarChar(24)
@@ -170,14 +176,82 @@ model ImageJob {
   creditsReserved  Int            @default(1) @map("credits_reserved")
   paymentMode      String         @default("free") @map("payment_mode") @db.VarChar(32)
   paymentOrderId   String?        @map("payment_order_id") @db.Uuid
+  idempotencyKey   String?        @map("idempotency_key") @db.VarChar(128)
+  attempt          Int            @default(0)
+  leaseOwner       String?        @map("lease_owner") @db.VarChar(120)
+  leaseExpiresAt   DateTime?      @map("lease_expires_at")
   createdAt        DateTime       @default(now()) @map("created_at")
   updatedAt        DateTime       @updatedAt @map("updated_at")
   completedAt      DateTime?      @map("completed_at")
+  deletedAt        DateTime?      @map("deleted_at")
+  parentJobId      String?        @map("parent_job_id") @db.Uuid
   user             User?          @relation(fields: [userId], references: [id], onDelete: SetNull)
 
+  @@unique([userId, idempotencyKey])
+  @@unique([paymentOrderId])
   @@index([userId, createdAt])
+  @@index([userId, parentJobId, createdAt])
+  @@index([userId, status, createdAt])
+  @@index([userId, paymentMode, createdAt, status])
+  @@index([status, leaseExpiresAt])
   @@index([status, createdAt])
   @@map("image_jobs")
+}
+
+model StudioPreference {
+  userId String @id @map("user_id") @db.Uuid
+  settings Json @default("{}")
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@map("studio_preferences")
+}
+
+model StudioSubject {
+  id String @id @default(uuid()) @db.Uuid
+  userId String @map("user_id") @db.Uuid
+  fileId String @map("file_id") @db.Uuid
+  name String @db.VarChar(120)
+  description String @default("") @db.VarChar(1000)
+  createdAt DateTime @default(now()) @map("created_at")
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  file FileRecord @relation(fields: [fileId], references: [id], onDelete: Restrict)
+
+  @@index([userId, createdAt])
+  @@map("studio_subjects")
+}
+
+model StudioAssetMetadata {
+  userId String @map("user_id") @db.Uuid
+  key String
+  title String? @db.VarChar(120)
+  hidden Boolean @default(false)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@id([userId, key])
+  @@map("studio_asset_metadata")
+}
+
+model StudioConversationMetadata {
+  userId    String    @map("user_id") @db.Uuid
+  rootJobId String    @map("root_job_id") @db.Uuid
+  archived  Boolean   @default(false)
+  deletedAt DateTime? @map("deleted_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([userId, rootJobId])
+  @@index([userId, archived, updatedAt])
+  @@map("studio_conversation_metadata")
+}
+
+model CreditEntry {
+  key       String   @id @db.VarChar(160)
+  userId    String   @map("user_id") @db.Uuid
+  kind      String   @db.VarChar(32)
+  delta     Int
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([userId, kind, createdAt])
+  @@map("credit_entries")
 }
 
 model ModelConfig {

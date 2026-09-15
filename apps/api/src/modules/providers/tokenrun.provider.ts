@@ -3,6 +3,7 @@ import { tokenRunSizeFor } from '@picup/shared';
 import { Agent, FormData, ProxyAgent, type Dispatcher } from 'undici';
 import { ObjectStorageService } from '../../common/object-storage.service';
 import { AiConfigService } from '../../common/ai-config/ai-config.service';
+import { assertSafeExternalUrl, readLimitedResponse } from '../../common/safe-external-fetch';
 import type { AiProviderConfig } from '../../common/ai-config/ai-config.types';
 import type { ImageProvider, ProviderImageInput, ProviderImageResult } from './provider.types';
 
@@ -48,7 +49,7 @@ export class TokenRunProvider implements ImageProvider {
         dispatcher: this.createDispatcher(this.apiProxyUrl(provider), provider)
       } as RequestInit & { dispatcher: Dispatcher });
     } catch (error) {
-      throw new Error(`TokenRun API network failed: ${this.describeError(error)}`);
+      throw new Error(`TokenRun API network failed: ${this.describeError(error)}`, { cause: error });
     }
 
     if (!response.ok) {
@@ -56,7 +57,7 @@ export class TokenRunProvider implements ImageProvider {
       throw new Error(`TokenRun GPT Image request failed: ${response.status} ${message}`);
     }
 
-    return this.parseResponse(input.jobId, await response.json() as TokenRunImageResponse, provider);
+    return this.parseResponse(input.outputKey ?? input.jobId, await response.json() as TokenRunImageResponse, provider);
   }
 
   private buildGenerationRequest(input: ProviderImageInput) {
@@ -80,7 +81,7 @@ export class TokenRunProvider implements ImageProvider {
     for (const image of input.images) {
       const sourceName = this.objectStorage.filenameFromUrl(image.url);
       const buffer = await this.objectStorage.readByUrl(image.url);
-      form.append('image[]', new File([buffer], sourceName, { type: image.mimeType }));
+      form.append('image[]', new File([new Uint8Array(buffer)], sourceName, { type: image.mimeType }));
     }
 
     return form;
@@ -109,6 +110,7 @@ export class TokenRunProvider implements ImageProvider {
   }
 
   private async downloadOutput(jobId: string, sourceUrl: string, index: number, provider: AiProviderConfig) {
+    sourceUrl = await assertSafeExternalUrl(sourceUrl);
     const attempts = this.downloadAttempts(provider);
     const host = this.urlHost(sourceUrl);
     let lastError = 'unknown error';
@@ -117,6 +119,7 @@ export class TokenRunProvider implements ImageProvider {
       const proxy = this.downloadProxyForAttempt(provider, attempt);
       try {
         const response = await fetch(sourceUrl, {
+          redirect: 'error',
           headers: { Referer: `${this.normalizeBaseUrl(provider.baseUrl)}/` },
           dispatcher: this.createDispatcher(proxy, provider)
         } as RequestInit & { dispatcher: Dispatcher });
@@ -129,7 +132,7 @@ export class TokenRunProvider implements ImageProvider {
           if (!mimeType.startsWith('image/')) throw new Error(`unexpected content-type ${mimeType}`);
           const extension = mimeType.includes('jpeg') ? '.jpg' : mimeType.includes('webp') ? '.webp' : '.png';
           const filename = `${jobId}-tokenrun-${index}${extension}`;
-          const outputUrl = await this.objectStorage.save('outputs', filename, Buffer.from(await response.arrayBuffer()), mimeType);
+          const outputUrl = await this.objectStorage.save('outputs', filename, await readLimitedResponse(response), mimeType);
           return { url: outputUrl, mimeType };
         }
       } catch (error) {

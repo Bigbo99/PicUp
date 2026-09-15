@@ -31,6 +31,13 @@ export class PaymentsController {
     return this.payments.getOrder(id, user.id);
   }
 
+  @Get('activity')
+  @UseGuards(AuthGuard)
+  async activity(@Req() req: AuthenticatedRequest) {
+    const user = await this.auth.requireUser(req);
+    return this.payments.activity(user.id);
+  }
+
   @Post('wechat/notify')
   async wechatNotify(@Body() body: string | Record<string, unknown>, @Headers('content-type') contentType?: string) {
     return this.payments.handleWechatNotify(typeof body === 'string' ? body : String(body), contentType);

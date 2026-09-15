@@ -37,17 +37,36 @@ export interface OutputImage {
   height?: number;
 }
 
+export type PromptPart =
+  | { type: 'text'; text: string }
+  | { type: 'image'; fileId: string; label: string; subjectId?: string };
+
+export interface StudioSubject {
+  id: string;
+  name: string;
+  description: string;
+  file: UploadedFileRecord;
+  createdAt: string;
+}
+
+export function promptPartsText(parts: PromptPart[]): string {
+  return parts.map(part => part.type === 'text' ? part.text : `@${part.label}`).join('');
+}
+
 export interface ImageJobCreateRequest {
   mode: ImageJobMode;
   provider: ImageProviderName;
   model: string;
   template: ImageTemplate;
   prompt: string;
+  promptParts?: PromptPart[];
   imageIds: string[];
   aspectRatio: string;
   quality: ImageQuality;
   paymentMode?: 'credits' | 'single' | 'free';
   paymentOrderId?: string | null;
+  idempotencyKey?: string;
+  parentJobId?: string;
 }
 
 export interface ImageJobCreateResponse {
@@ -57,6 +76,13 @@ export interface ImageJobCreateResponse {
   paymentMode?: 'credits' | 'single' | 'free';
   paymentRequired?: boolean;
   paymentOrder?: PaymentOrderResponse;
+}
+
+export interface JobQuote {
+  paymentMode: 'free' | 'credits';
+  credits: number;
+  available: boolean;
+  reason?: string;
 }
 
 export interface ImageJobRecord extends ImageJobCreateRequest {
@@ -76,6 +102,10 @@ export interface ImageJobRecord extends ImageJobCreateRequest {
   creditsReserved: number;
   paymentMode?: 'credits' | 'single' | 'free';
   paymentOrderId?: string | null;
+  idempotencyKey?: string;
+  attempt?: number;
+  leaseOwner?: string | null;
+  leaseExpiresAt?: string | null;
   createdAt: string;
   updatedAt: string;
   completedAt?: string;

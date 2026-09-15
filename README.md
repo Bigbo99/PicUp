@@ -25,8 +25,16 @@ pnpm dev
 
 访问：
 
-- Web: http://localhost:3000
-- API: http://localhost:4000/api/health
+- Web: http://localhost:3001
+- API: http://localhost:4318/api/health
+
+需要临时更换端口时：
+
+```bash
+pnpm dev -- --web-port 3005 --api-port 4320
+```
+
+也可以设置 `LOCAL_WEB_PORT`、`WEB_PORT`、`LOCAL_API_PORT` 或 `API_PORT` 环境变量。命令行参数优先级最高。如果目标端口被占用或被 Windows 系统保留，启动脚本会自动尝试后续端口，并在终端打印最终访问地址。
 
 默认 `config/ai-config.json` 中的 `mockEnabled=true`，不需要 API Key 就可以跑通上传、创建任务、轮询和结果预览。
 
@@ -130,14 +138,15 @@ docker compose build api --build-arg NODE_IMAGE=your-registry.example.com/librar
 
 当前 MVP 已包含轻量鉴权系统：
 
-- 访客首次访问 `/api/auth/me` 时自动创建访客账号，访客每天 3 次免费额度。
-- `/login` 支持邮箱密码注册和登录，登录用户每天 10 次免费额度。
+- 访客首次访问 `/api/auth/me` 时自动创建访客账号，可上传参考图，生成前需要登录。
+- `/login` 支持邮箱密码注册和登录，普通用户每天 1 次免费额度（UTC 日界线）。自动计费保持积分优先，积分不足时使用免费额度。
 - 会话使用 HttpOnly Cookie 保存，前端不会直接接触 token。
 - 上传文件、创建任务、查询历史会按 `userId` 隔离。
-- 管理员邮箱通过 `.env` 的 `ADMIN_EMAILS` 配置，多个邮箱用英文逗号分隔。
-- 管理接口位于 `/api/admin/*`，仅 `admin` 角色可访问。
+- 管理员角色只保存在数据库中，公开注册流程始终创建普通用户。
+- 首个管理员应在目标账号完成邮箱验证后，通过受控运维命令创建：`pnpm --filter @picup/api admin:promote -- user@example.com`。后续角色调整由后台审计接口完成。
+- `ADMIN_EMAILS` 仅标识已有管理员中的超级管理员，不会自动提权。
 
-生产环境请务必替换 `.env` 中的 `JWT_SECRET` 和 `COOKIE_SECRET`。
+生产环境请务必配置至少 32 字符的随机 `JWT_SECRET` 或 `COOKIE_SECRET`；二者配置任意一个即可。
 
 ## Auth Integration
 
@@ -267,7 +276,7 @@ PUT /api/admin/settings/{key}
 GET /api/admin/audit-logs
 ```
 
-这些接口均需要 `admin` 角色，管理员邮箱通过 `ADMIN_EMAILS` 配置。
+这些接口均需要数据库中的 `admin` 角色。`ADMIN_EMAILS` 只标识已有管理员中的超级管理员，不会把新注册账号自动提升为管理员。
 
 ## Redis Queue
 
@@ -299,7 +308,7 @@ REDIS_URL=redis://localhost:6379
 仓库包含 `.github/workflows/deploy.yml`。当代码推送到 `main` 分支时，会自动执行：
 
 1. 安装依赖
-2. 类型检查
+2. 类型检查、自动化测试与生产构建
 3. 在 GitHub Runner 构建一次精简镜像并推送到阿里云 ACR
 4. SSH 到服务器更新代码并调用 `deploy/deploy.sh`
 5. 拉取 SHA 镜像、执行迁移，只更新 `api`、`worker` 和 `web`

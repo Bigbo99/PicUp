@@ -12,7 +12,7 @@ export class MockProvider implements ImageProvider {
       const source = input.images[0];
       const sourceName = this.objectStorage.filenameFromUrl(source.url);
       const extension = extname(sourceName) || '.png';
-      const outputName = `${input.jobId}-mock${extension}`;
+      const outputName = `${input.outputKey ?? input.jobId}-mock${extension}`;
       const buffer = await this.objectStorage.readByUrl(source.url);
       const url = await this.objectStorage.save('outputs', outputName, buffer, source.mimeType);
       return {
@@ -21,7 +21,7 @@ export class MockProvider implements ImageProvider {
       };
     }
 
-    const outputName = `${input.jobId}-mock.svg`;
+    const outputName = `${input.outputKey ?? input.jobId}-mock.svg`;
     const svg = this.createSvg(input);
     const url = await this.objectStorage.save('outputs', outputName, Buffer.from(svg, 'utf8'), 'image/svg+xml');
     return {

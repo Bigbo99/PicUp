@@ -1,0 +1,90 @@
+async (page) => {
+  await page.unrouteAll({ behavior: 'ignoreErrors' });
+  const checks = [];
+  const check = (value, message) => { if (!value) throw new Error(message); checks.push(message); };
+  const userId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+  const now = new Date().toISOString();
+  const files = ['bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', 'cccccccc-cccc-4ccc-8ccc-cccccccccccc'].map(id => ({ id, userId, url: `/api/files/${id}/content`, mimeType: 'image/png', size: 128, createdAt: now }));
+  const subjects = [{ id: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd', name: '品牌人物', description: '白色上衣', file: files[1], createdAt: now }];
+  const errors = [];
+  page.on('pageerror', error => errors.push(error.message));
+  let submitted;
+  let job;
+  await page.route('**/api/**', async route => {
+    const rawUrl = route.request().url(), path = '/api/' + rawUrl.split('/api/')[1].split('?')[0];
+    const json = value => route.fulfill({ json: value });
+    if (path.endsWith('/content')) return route.fulfill({ path: 'apps/web/public/brand/picup-icon.png', contentType: 'image/png' });
+    if (path === '/api/auth/me') return json({ user: { id: userId, email: 'mentions@example.test', role: 'user', displayName: '引用测试', isGuest: false, status: 'active', creditBalance: 100 }, quota: { remaining: 1 }, credits: { balance: 100, rechargePlans: [] } });
+    if (path === '/api/studio/preferences') return json({});
+    if (path === '/api/models') return json({ source: 'runtime', models: [{ provider: 'test', model: 'test', displayName: '测试模型', enabled: true, maxInputImages: 6, supportedRatios: ['auto'], supportedQualities: ['1K'], costCredits: 1 }], routing: { default: { provider: 'test', model: 'test' }, professional: { provider: 'test', model: 'test' } } });
+    if (path === '/api/image/jobs/quote') return json({ available: true, credits: 1, paymentMode: 'credits' });
+    if (path === '/api/studio/subjects') {
+      if (route.request().method() === 'POST') { const body = route.request().postDataJSON(); const subject = { ...body, id: `eeeeeeee-eeee-4eee-8eee-${String(subjects.length).padStart(12, '0')}`, file: files.find(file => file.id === body.fileId), createdAt: now }; subjects.push(subject); return json(subject); }
+      const q = decodeURIComponent((rawUrl.match(/[?&]q=([^&]*)/)?.[1] || '').replace(/\+/g, ' '));
+      return json({ items: subjects.filter(subject => subject.name.includes(q)), next: null });
+    }
+    if (path === '/api/studio/assets') return json({ items: subjects.map(subject => ({ key: `subject:${subject.id}`, subjectId: subject.id, fileId: subject.file.id, jobId: null, index: 0, url: subject.file.url, title: subject.name, kind: 'subject', createdAt: now })), next: null });
+    if (path === '/api/image/jobs' && route.request().method() === 'POST') {
+      submitted = route.request().postDataJSON(); job = { ...submitted, id: 'ffffffff-ffff-4fff-8fff-ffffffffffff', userId, status: 'succeeded', inputFiles: files, outputImages: [], textOutputs: [], selectedProvider: 'test', selectedModel: 'test', finalPrompt: '', creditsReserved: 1, error: null, createdAt: now, updatedAt: now };
+      return json({ jobId: job.id, status: 'queued' });
+    }
+    if (job && path === `/api/image/jobs/${job.id}`) return json(job);
+    return json({ items: [], next: null });
+  });
+  await page.goto('http://127.0.0.1:3210');
+  await page.evaluate(({ userId, files }) => sessionStorage.setItem(`picup:studio:${userId}`, JSON.stringify({ prompt: '保留背景，', files, provider: 'auto', model: 'auto', aspectRatio: 'auto', quality: '1K' })), { userId, files });
+  await page.reload();
+  await page.setViewportSize({ width: 1360, height: 900 });
+  const editor = page.getByRole('textbox', { name: '创作描述' });
+  await editor.waitFor();
+  const at = page.getByRole('button', { name: '引用图片或主体', exact: true });
+  await at.click();
+  const menu = page.locator('.studio-mention-menu');
+  await page.getByRole('option', { name: '品牌人物 主体' }).waitFor();
+  let mb = await menu.boundingBox(), ab = await at.boundingBox();
+  check(mb.y + mb.height <= ab.y, 'button @ opens upward');
+  await page.screenshot({ path: 'output/playwright/mentions-button-desktop.png' });
+  await page.getByRole('option', { name: '参考图 1', exact: true }).click();
+  check(await editor.locator('[data-image-mention]').count() === 1, 'button inserts image at selection');
+  await editor.click(); await page.keyboard.press('Control+End'); await page.keyboard.insertText('加入 '); await page.keyboard.type('@');
+  await menu.waitFor();
+  mb = await menu.boundingBox();
+  const caret = await editor.evaluate(el => { const selection = window.getSelection(); const range = selection.getRangeAt(0); const rect = range.getBoundingClientRect(); return { top: rect.top, text: el.textContent }; });
+  check(mb.y + mb.height <= caret.top, 'inline @ opens above the caret');
+  await page.screenshot({ path: 'output/playwright/mentions-inline-desktop.png' });
+  await page.getByRole('option', { name: '品牌人物 主体' }).click();
+  await page.keyboard.insertText(' 放在画面右侧。');
+  check((await editor.textContent()).includes('加入 品牌人物主体  放在画面右侧。'), 'text can surround subject chip');
+  await page.keyboard.press('Control+z');
+  check(!(await editor.textContent()).includes('放在画面右侧'), 'undo works');
+  await page.keyboard.press('Control+Shift+z');
+  check((await editor.textContent()).includes('放在画面右侧'), 'redo works');
+  await at.click(); await page.getByRole('option', { name: '创建主体', exact: true }).click();
+  await page.getByRole('textbox', { name: '主体名称', exact: true }).fill('新建人物');
+  await page.getByRole('button', { name: '保存主体', exact: true }).click();
+  await page.getByRole('dialog', { name: '创建主体' }).waitFor({ state: 'hidden' });
+  check(await editor.locator('[data-subject-id]').count() === 2, 'created subject inserted at saved selection');
+  await page.getByRole('button', { name: '图库', exact: true }).click();
+  await page.getByLabel('图片来源').selectOption('subject');
+  await page.getByRole('button', { name: '引用主体：新建人物', exact: true }).click();
+  check(await editor.locator('[data-subject-id]').count() === 3, 'gallery subject filter supports reuse');
+  await page.reload(); await editor.locator('[data-subject-id]').nth(2).waitFor();
+  check(await editor.locator('[data-subject-id]').count() === 3, 'draft retains inline subjects across reload');
+  await page.setViewportSize({ width: 390, height: 844 });
+  check(await at.locator('svg').isVisible(), 'mobile @ icon remains visible');
+  await at.click(); await menu.waitFor();
+  mb = await menu.boundingBox(); ab = await at.boundingBox();
+  check(mb.x >= 0 && mb.x + mb.width <= 390 && mb.y >= 0 && mb.y + mb.height <= ab.y, 'mobile menu fits viewport and opens upward');
+  check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'mobile has no horizontal overflow');
+  await page.screenshot({ path: 'output/playwright/mentions-mobile.png' });
+  await page.keyboard.press('Escape');
+  await page.setViewportSize({ width: 1360, height: 900 });
+  await page.getByRole('button', { name: '生成', exact: true }).click();
+  await page.waitForURL('**/?job=*');
+  check(submitted?.promptParts?.filter(part => part.type === 'image').length === 4, 'request contains all image and subject positions');
+  check(new Set(submitted.imageIds).size === 2, 'repeated references do not duplicate attached files');
+  await page.locator('.chat-user-message .prompt-image-mention').first().waitFor();
+  check(await page.locator('.chat-user-message .prompt-image-mention').count() === 4, 'history restores inline image references');
+  check(errors.length === 0, `no browser runtime errors: ${errors.join('; ')}`);
+  return { checks };
+}
