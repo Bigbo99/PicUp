@@ -105,6 +105,7 @@ export class AuthService {
     });
     await this.storage.addUser(user);
     const nextUser = req ? await this.touchUserVisit(user, req, true) : user;
+    await this.transferGuestFiles(req, nextUser.id);
     this.setSessionCookie(res, nextUser);
     return this.withQuota(this.toPublicUser(nextUser));
   }
@@ -122,6 +123,7 @@ export class AuthService {
     const nextUser = { ...user, updatedAt: new Date().toISOString() };
     const updatedUser = await this.storage.updateUser(nextUser);
     const visitedUser = req ? await this.touchUserVisit(updatedUser, req, true) : updatedUser;
+    await this.transferGuestFiles(req, visitedUser.id);
     this.setSessionCookie(res, visitedUser);
     return this.withQuota(this.toPublicUser(visitedUser));
   }
@@ -227,6 +229,7 @@ export class AuthService {
       user = existing;
     }
 
+    await this.transferGuestFiles(req, user.id);
     await this.prisma.emailAuthChallenge.update({
       where: { id: challenge.id },
       data: { consumedAt: new Date(), userId: user.id }
@@ -267,7 +270,7 @@ export class AuthService {
     };
   }
 
-  async getWechatStatus(state: string, res: Response): Promise<WechatAuthStatusResponse> {
+  async getWechatStatus(state: string, res: Response, req?: AuthenticatedRequest): Promise<WechatAuthStatusResponse> {
     const session = await this.prisma.wechatLoginSession.findUnique({ where: { state } });
     if (!session) {
       return {
@@ -284,7 +287,7 @@ export class AuthService {
       return { status: 'expired' };
     }
     if (session.status === 'confirmed' && session.userId) {
-      return this.consumeConfirmedWechatSession(session.userId, state, res);
+      return this.consumeConfirmedWechatSession(session.userId, state, res, req);
     }
     if (session.status === 'expired') return { status: 'expired' };
 
@@ -320,7 +323,7 @@ export class AuthService {
           confirmedAt: new Date()
         }
       });
-      return this.consumeConfirmedWechatSession(userId, state, res);
+      return this.consumeConfirmedWechatSession(userId, state, res, req);
     }
 
     if (statusPayload.status === 'login_not_bound') {
@@ -333,7 +336,7 @@ export class AuthService {
           confirmedAt: new Date()
         }
       });
-      return this.consumeConfirmedWechatSession(userId, state, res);
+      return this.consumeConfirmedWechatSession(userId, state, res, req);
     }
 
     await this.prisma.wechatLoginSession.update({ where: { state }, data: { status: 'failed' } });
@@ -931,9 +934,17 @@ export class AuthService {
     });
   }
 
-  private async consumeConfirmedWechatSession(userId: string, state: string, res: Response): Promise<WechatAuthStatusResponse> {
+  private async transferGuestFiles(req: AuthenticatedRequest | undefined, userId: string) {
+    if (!req) return;
+    const token = this.readToken(req);
+    const payload = token ? this.verifySession(token) : null;
+    if (payload) await this.storage.transferGuestFiles(payload.sub, userId);
+  }
+
+  private async consumeConfirmedWechatSession(userId: string, state: string, res: Response, req?: AuthenticatedRequest): Promise<WechatAuthStatusResponse> {
     const stored = await this.storage.getUserById(userId);
     if (!stored || stored.status !== 'active') throw new UnauthorizedException('User is not active');
+    await this.transferGuestFiles(req, stored.id);
     await this.prisma.wechatLoginSession.update({
       where: { state },
       data: { status: 'consumed', consumedAt: new Date() }

@@ -162,6 +162,24 @@ export class StorageService {
     return file ? this.toUploadedFile(file) : null;
   }
 
+  async transferGuestFiles(guestId: string, userId: string) {
+    if (guestId === userId) return;
+    await this.serializable(async (tx) => {
+      const guest = await tx.user.findUnique({ where: { id: guestId } });
+      const owner = await tx.user.findUnique({ where: { id: userId } });
+      if (!guest?.isGuest || guest.status !== 'active' || !owner || owner.isGuest || owner.status !== 'active') return;
+      const files = await tx.fileRecord.findMany({ where: { userId: guestId }, select: { id: true, hash: true } });
+      const hashes = files.flatMap(file => file.hash ? [file.hash] : []);
+      const duplicates = await tx.fileRecord.findMany({ where: { userId, hash: { in: hashes } }, select: { hash: true } });
+      const duplicateHashes = new Set(duplicates.map(file => file.hash));
+      // Keep draft and subject file IDs valid when the account already owns the same bytes.
+      const duplicateIds = files.filter(file => file.hash && duplicateHashes.has(file.hash)).map(file => file.id);
+      if (duplicateIds.length) await tx.fileRecord.updateMany({ where: { id: { in: duplicateIds }, userId: guestId }, data: { hash: null } });
+      await tx.fileRecord.updateMany({ where: { userId: guestId }, data: { userId } });
+      await tx.studioSubject.updateMany({ where: { userId: guestId }, data: { userId } });
+    });
+  }
+
   async getFiles(ids: string[], userId?: string) {
     if (ids.length === 0) return [];
     const files = await this.prisma.fileRecord.findMany({

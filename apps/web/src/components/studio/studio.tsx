@@ -150,7 +150,9 @@ export function Studio() {
   const conversationParentJobId = selected.data
     ? selected.data.status === 'succeeded' ? selected.data.id : selected.data.parentJobId
     : location.job ?? undefined;
-  const activeParentJobId = draft.parentJobId ?? conversationParentJobId;
+  const activeParentJobId = draft.parentJobId === selected.data?.id && selected.data?.status !== 'succeeded'
+    ? conversationParentJobId
+    : draft.parentJobId ?? conversationParentJobId;
   const request = useMemo<ImageJobCreateRequest>(() => ({
     mode: draft.files.length ? 'edit' : 'generate', provider: selectedModel?.provider ?? draft.provider, model: selectedModel?.model ?? draft.model, template: 'auto', prompt: draft.prompt,
     promptParts: draft.promptParts, imageIds: draft.files.map(file => file.id), aspectRatio: draft.aspectRatio, quality: draft.quality, parentJobId: activeParentJobId, paymentMode: 'credits'
@@ -195,8 +197,9 @@ export function Studio() {
     }, onError: error => setError(error.message) });
   useEffect(() => {
     if (!preferencesLoaded || !ready || !selected.data || draft.awaitingJobId !== selected.data.id || isWorking(selected.data.status)) return;
-    update({ awaitingJobId: undefined });
-  }, [selected.data, draft.awaitingJobId, update, preferencesLoaded, ready]);
+    update({ awaitingJobId: undefined, ...(draft.parentJobId === selected.data.id && selected.data.status !== 'succeeded'
+      ? { parentJobId: selected.data.parentJobId } : {}) });
+  }, [selected.data, draft.awaitingJobId, draft.parentJobId, update, preferencesLoaded, ready]);
   const currentWorking = isWorking((latestId === location.job ? selected.data : latest.data)?.status);
   useEffect(() => { if (selected.data?.id === freshJobId) setFreshJobId(null); }, [selected.data?.id, freshJobId]);
   const quoteCurrent = !quote.isPending && !quote.isError;

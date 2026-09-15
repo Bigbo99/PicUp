@@ -11,6 +11,7 @@ import { JobsService } from '../modules/jobs/jobs.service';
 import { RedisQueueService } from './queue/redis-queue.service';
 import { FilesService } from '../modules/files/files.service';
 import { StudioController } from '../modules/jobs/studio.controller';
+import { AuthService } from '../modules/auth/auth.service';
 
 it('preserves theme when a partial preference DTO contains undefined fields', async () => {
   const tx = { $queryRaw: async () => [], studioPreference: {
@@ -77,6 +78,8 @@ describe('studio database consistency', { skip: !process.env.TEST_DATABASE_URL }
     await prisma.creditEntry.deleteMany({ where: { userId: { in: userIds } } });
     await prisma.paymentOrder.deleteMany({ where: { userId: { in: userIds } } });
     await prisma.imageJob.deleteMany({ where: { userId: { in: userIds } } });
+    await prisma.studioSubject.deleteMany({ where: { userId: { in: userIds } } });
+    await prisma.fileRecord.deleteMany({ where: { userId: { in: userIds } } });
     await prisma.user.deleteMany({ where: { id: { in: userIds } } });
     await prisma.$disconnect();
   });
@@ -85,6 +88,47 @@ describe('studio database consistency', { skip: !process.env.TEST_DATABASE_URL }
     userIds.push(record.id);
     return record;
   }
+  it('login transfers guest references without changing IDs, including duplicate images and subjects', async () => {
+    const auth = new AuthService(storage, prisma);
+    let token = '';
+    const response = { cookie: (_name: string, value: string) => { token = value; } } as never;
+    const account = await auth.register({ email: `${randomUUID()}@example.test`, password: 'test-password-123', termsAccepted: true }, response);
+    userIds.push(account.user.id);
+    const guest = await auth.ensureRequestUser({ headers: {}, socket: {} } as never, response);
+    userIds.push(guest.id);
+    const guestToken = token;
+    const hash = 'a'.repeat(64);
+    const fileData = { hash, url: '/media/inputs/test.png', mimeType: 'image/png', size: 8 };
+    await prisma.fileRecord.create({ data: { ...fileData, userId: account.user.id } });
+    const file = await prisma.fileRecord.create({ data: { ...fileData, userId: guest.id } });
+    const subject = await prisma.studioSubject.create({ data: { userId: guest.id, fileId: file.id, name: 'test subject' } });
+    const req = { headers: { cookie: `picup_session=${guestToken}` }, socket: {} } as never;
+    await assert.rejects(() => auth.login({ email: account.user.email!, password: 'wrong-password' }, response, req));
+    assert.equal((await prisma.fileRecord.findUniqueOrThrow({ where: { id: file.id } })).userId, guest.id);
+    await auth.login({ email: account.user.email!, password: 'test-password-123' }, response, req);
+    assert.equal((await storage.getFiles([file.id], account.user.id))[0]?.id, file.id);
+    assert.equal((await storage.getFiles([file.id], guest.id)).length, 0);
+    assert.equal((await prisma.studioSubject.findUniqueOrThrow({ where: { id: subject.id } })).userId, account.user.id);
+    assert.equal(await prisma.fileRecord.count({ where: { userId: account.user.id } }), 2);
+    await storage.transferGuestFiles(guest.id, account.user.id);
+    assert.equal(await prisma.fileRecord.count({ where: { userId: account.user.id } }), 2);
+    const other = await user();
+    await storage.transferGuestFiles(account.user.id, other.id);
+    assert.equal((await storage.getFiles([file.id], other.id)).length, 0);
+  });
+  it('a forged guest cookie cannot transfer another guest uploads', async () => {
+    const auth = new AuthService(storage, prisma);
+    const response = { cookie: () => {} } as never;
+    const account = await auth.register({ email: `${randomUUID()}@example.test`, password: 'test-password-123', termsAccepted: true }, response);
+    userIds.push(account.user.id);
+    const guest = await auth.ensureRequestUser({ headers: {}, socket: {} } as never, response);
+    userIds.push(guest.id);
+    const file = await prisma.fileRecord.create({ data: { userId: guest.id, url: '/test.png', mimeType: 'image/png', size: 8 } });
+    const payload = Buffer.from(JSON.stringify({ sub: guest.id, role: 'guest', exp: 9999999999 })).toString('base64url');
+    await auth.login({ email: account.user.email!, password: 'test-password-123' }, response,
+      { headers: { cookie: `picup_session=${payload}.invalid` }, socket: {} } as never);
+    assert.equal((await prisma.fileRecord.findUniqueOrThrow({ where: { id: file.id } })).userId, guest.id);
+  });
   function job(userId: string, paymentMode: 'free' | 'credits' | 'single' = 'credits'): ImageJobRecord {
     return {
       id: randomUUID(), userId, mode: 'generate', provider: 'auto', model: 'auto', template: 'auto',

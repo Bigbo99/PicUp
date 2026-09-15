@@ -178,7 +178,7 @@ export class GrsaiProvider implements ImageProvider {
         const response = await fetch(sourceUrl, {
           redirect: 'error',
           headers: { Referer: `${this.normalizeBaseUrl(provider.baseUrl)}/` },
-          dispatcher: this.createDispatcher(proxy, this.timeoutMs(provider), attempt >= 2 && this.isCertificateNameError(lastError))
+          dispatcher: this.createDispatcher(proxy, this.timeoutMs(provider))
         } as RequestInit & { dispatcher: Dispatcher });
         if (!response.ok) {
           lastError = `HTTP ${response.status}`;
@@ -258,24 +258,19 @@ export class GrsaiProvider implements ImageProvider {
     return attempt % 2 === 0 ? this.apiProxyUrl(provider) : undefined;
   }
 
-  private createDispatcher(proxy: string | undefined, timeoutMs: number, allowInvalidCertificate = false): Dispatcher {
-    const key = `${proxy ?? 'direct'}:${timeoutMs}:${allowInvalidCertificate ? 'insecure' : 'secure'}`;
+  private createDispatcher(proxy: string | undefined, timeoutMs: number): Dispatcher {
+    const key = `${proxy ?? 'direct'}:${timeoutMs}`;
     const existing = this.dispatchers.get(key);
     if (existing) return existing;
 
     const options = {
       headersTimeout: timeoutMs,
       bodyTimeout: timeoutMs,
-      connectTimeout: Math.min(timeoutMs, 120_000),
-      ...(allowInvalidCertificate ? { connect: { rejectUnauthorized: false } } : {})
+      connectTimeout: Math.min(timeoutMs, 120_000)
     };
     const dispatcher = proxy ? new ProxyAgent({ uri: proxy, ...options }) : new Agent(options);
     this.dispatchers.set(key, dispatcher);
     return dispatcher;
-  }
-
-  private isCertificateNameError(error: string) {
-    return /CERT_ALTNAME_INVALID|Hostname\/IP does not match certificate/i.test(error);
   }
 
   private timeoutMs(provider: AiProviderConfig) {

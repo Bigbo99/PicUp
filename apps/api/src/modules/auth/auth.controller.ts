@@ -52,8 +52,8 @@ export class AuthController {
   }
 
   @Get('wechat/status')
-  wechatStatus(@Query('state') state: string, @Res({ passthrough: true }) res: Response) {
-    return this.auth.getWechatStatus(state, res);
+  wechatStatus(@Query('state') state: string, @Res({ passthrough: true }) res: Response, @Req() req: AuthenticatedRequest) {
+    return this.auth.getWechatStatus(state, res, req);
   }
 
   @Post('wechat/callback')
