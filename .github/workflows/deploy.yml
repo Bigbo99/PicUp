@@ -35,6 +35,9 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Generate database client
+        run: pnpm --filter @picup/api db:generate
+
       - name: Typecheck
         run: pnpm typecheck
 
