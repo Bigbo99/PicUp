@@ -3,8 +3,8 @@
 import { useEffect, useRef, type ReactNode } from 'react';
 import { X } from 'lucide-react';
 
-export function Dialog({ title, children, onClose, drawer = false, fullscreen = false, anchor, hideHeading = false }: {
-  title: string; children: ReactNode; onClose: () => void; drawer?: boolean; fullscreen?: boolean; anchor?: HTMLElement | null; hideHeading?: boolean;
+export function Dialog({ title, children, onClose, drawer = false, fullscreen = false, anchor, hideHeading = false, inline = false }: {
+  title: string; children: ReactNode; onClose: () => void; drawer?: boolean; fullscreen?: boolean; anchor?: HTMLElement | null; hideHeading?: boolean; inline?: boolean;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
   const startedOutside = useRef(false);
@@ -17,6 +17,13 @@ export function Dialog({ title, children, onClose, drawer = false, fullscreen = 
     const previous = document.activeElement as HTMLElement | null;
     const overflow = document.body.style.overflow;
     const position = () => {
+      if (fullscreen) {
+        const viewport = window.visualViewport;
+        const height = viewport?.height ?? window.innerHeight;
+        dialog.style.setProperty('--preview-height', `${height}px`);
+        dialog.style.setProperty('--preview-top', `${viewport?.offsetTop ?? 0}px`);
+        dialog.dataset.compact = String(height < 500);
+      }
       if (!anchor) return;
       const bounds = anchor.getBoundingClientRect();
       const width = Math.min(440, window.innerWidth - 32);
@@ -27,27 +34,32 @@ export function Dialog({ title, children, onClose, drawer = false, fullscreen = 
     };
     position(); window.addEventListener('resize', position);
     window.visualViewport?.addEventListener('resize', position);
+    window.visualViewport?.addEventListener('scroll', position);
     const observer = new ResizeObserver(position);
     if (anchor) observer.observe(anchor);
-    dialog.showModal();
-    document.body.style.overflow = 'hidden';
+    // Keep children mounted when a navigation page becomes a desktop modal.
+    if (inline) dialog.show();
+    else { dialog.showModal(); document.body.style.overflow = 'hidden'; }
     return () => {
       dialog.close();
       window.removeEventListener('resize', position);
       window.visualViewport?.removeEventListener('resize', position);
+      window.visualViewport?.removeEventListener('scroll', position);
       observer.disconnect();
-      document.body.style.overflow = overflow;
-      if (previous?.isConnected) previous.focus({ preventScroll: true });
+      if (!inline) {
+        document.body.style.overflow = overflow;
+        if (previous?.isConnected) previous.focus({ preventScroll: true });
+      }
     };
-  }, [anchor]);
-  return <dialog ref={ref} aria-label={title}
-    className={`studio-dialog ${drawer ? 'studio-drawer' : ''} ${fullscreen ? 'studio-lightbox' : ''} ${anchor ? 'composer-popover' : ''}`}
+  }, [anchor, fullscreen, inline]);
+  return <dialog ref={ref} aria-label={title} role={inline ? 'region' : undefined}
+    className={`studio-dialog ${inline ? 'studio-inline-page studio-navigation-page' : ''} ${!fullscreen && !hideHeading ? 'has-heading' : ''} ${drawer ? 'studio-drawer' : ''} ${fullscreen ? 'studio-lightbox' : ''} ${anchor ? 'composer-popover' : ''}`}
     onPointerDown={event => { startedOutside.current = outside(event); }}
     onClick={event => { if (startedOutside.current && outside(event)) onClose(); startedOutside.current = false; }}
     onCancel={event => { event.preventDefault(); onClose(); }}>
     {!fullscreen && !hideHeading && <header className="dialog-heading"><h2>{title}</h2>
-      <button type="button" className="studio-icon" aria-label={`关闭${title}`} title="关闭" onClick={onClose}><X size={20} /></button>
+      {!inline && <button type="button" className="studio-icon" aria-label={`关闭${title}`} title="关闭" onClick={onClose}><X size={20} /></button>}
     </header>}
-    {children}
+    {!fullscreen && !hideHeading ? <div className="dialog-body">{children}</div> : children}
   </dialog>;
 }

@@ -74,6 +74,8 @@ export class AiConfigService {
       provider: provider.id,
       providerDisplayName: provider.displayName,
       providerType: provider.type,
+      supportsMask: provider.type === 'openai-images' && /^gpt-image-/i.test(model.upstreamModel ?? model.model),
+      supportsTransparentBackground: provider.type === 'openai-images' && /^gpt-image-/i.test(model.upstreamModel ?? model.model),
       model: model.model,
       displayName: model.displayName,
       description: model.description,
@@ -96,6 +98,19 @@ export class AiConfigService {
 
   resolveSelection(input: ImageJobCreateRequest) {
     const config = this.getConfig();
+    if (input.previewOperation) {
+      const needsMask = Boolean(input.maskFileId);
+      const needsTransparency = input.previewOperation === 'background';
+      const count = input.imageIds.length + (input.guideFileId ? 1 : 0);
+      const candidates = config.providers.filter(provider => provider.enabled && (config.mockEnabled || provider.apiKey.trim())).flatMap(provider => provider.models
+        .filter(model => model.enabled && model.maxInputImages >= count && model.supportedRatios.includes(input.aspectRatio)
+          && model.supportedQualities.includes(input.quality)
+          && (!(needsMask || needsTransparency) || (provider.type === 'openai-images' && /^gpt-image-/i.test(model.upstreamModel ?? model.model))))
+        .map(model => ({ provider, model })));
+      candidates.sort((a, b) => (a.model.priority ?? 100) - (b.model.priority ?? 100) || a.model.costCredits - b.model.costCredits || `${a.provider.id}:${a.model.model}`.localeCompare(`${b.provider.id}:${b.model.model}`));
+      if (!candidates.length) throw new BadRequestException('当前没有可执行此操作的模型，请稍后重试');
+      return candidates[0];
+    }
     const usesProfessionalRoute = input.quality === '4K'
       || professionalTemplates.has(input.template)
       || input.imageIds.length >= 4;

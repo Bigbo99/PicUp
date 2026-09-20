@@ -15,6 +15,8 @@ import { ModelsService } from '../models/models.service';
 import { ProviderRegistry } from '../providers/provider.registry';
 import { buildFinalPrompt } from './prompt-builder';
 import { compilePromptParts, subjectReferences } from './prompt-parts';
+import { compositeRemoval, hasTransparency, validateEditMask } from './edit-mask';
+import { preparePreview, previewInstructions } from './preview-edit';
 import { PrismaService } from '../../common/database/prisma.service';
 import { ObjectStorageService } from '../../common/object-storage.service';
 import { PaymentsService } from '../payments/payments.service';
@@ -46,6 +48,7 @@ export class JobsService {
   ) {}
 
   async create(input: ImageJobCreateRequest, user: AuthUser): Promise<ImageJobCreateResponse> {
+    input = preparePreview(input);
     if (!input.prompt?.trim()) throw new BadRequestException('请输入 P 图需求');
     if (input.mode === 'edit' && input.imageIds.length === 0) {
       throw new BadRequestException('图片编辑需要先上传图片');
@@ -78,6 +81,16 @@ export class JobsService {
     if (inputFiles.length !== input.imageIds.length) {
       throw new BadRequestException('上传图片不存在或已过期');
     }
+    if (!input.previewOperation && inputFiles.some(file => file.purpose === 'system')) throw new BadRequestException('参考图片不可用');
+    if (input.guideFileId) {
+      const guide = (await this.storage.getFiles([input.guideFileId], user.id))[0];
+      if (!guide || guide.userId !== user.id || guide.purpose !== 'system' || !guide.mimeType.startsWith('image/')) throw new BadRequestException('标记指引不可用');
+      inputFiles.push(guide);
+    }
+    const maskFile = input.maskFileId ? (await this.storage.getFiles([input.maskFileId], user.id))[0] : undefined;
+    if (input.maskFileId && (!maskFile || maskFile.userId !== user.id || maskFile.mimeType !== 'image/png')) {
+      throw new BadRequestException('蒙版不存在或格式不正确');
+    }
     if (input.promptParts && inputFiles.some(file => file.userId !== user.id || !file.mimeType.startsWith('image/'))) throw new BadRequestException('引用图片不可用');
     if (input.parentJobId) {
       const parent = await this.storage.getJob(input.parentJobId, user.id);
@@ -93,14 +106,23 @@ export class JobsService {
         : input.template
     };
     const selection = await this.selectProvider(resolvedInput);
+    if (maskFile) {
+      const [source, mask] = await Promise.all([this.objectStorage.readByUrl(inputFiles[0].url), this.objectStorage.readByUrl(maskFile.url)]);
+      await validateEditMask(source, mask);
+      if (resolvedInput.previewOperation === 'remove' && await hasTransparency(source)) resolvedInput.background = 'transparent';
+    }
     const payment = await this.reservePayment(user, resolvedInput, selection.costCredits);
+    if (input.previewOperation) {
+      const credits = payment.mode === 'credits' ? selection.costCredits : 0;
+      if (input.confirmedCredits !== credits || input.quotedSelection !== `${selection.provider}:${selection.model}`) throw new BadRequestException('本次编辑的模型或积分费用已变化，请重新确认后生成');
+    }
     if (payment.mode === 'single_pending') {
       return {
         paymentRequired: true,
         paymentOrder: payment.order
       };
     }
-    const finalPrompt = buildFinalPrompt(resolvedInput.template, [compiled.prompt, ...new Set(subjectNotes)].join('\n'));
+    const finalPrompt = buildFinalPrompt(resolvedInput.template, [input.previewOperation ? previewInstructions(resolvedInput) : compiled.prompt, ...new Set(subjectNotes)].join('\n'));
     const now = new Date().toISOString();
     const job: ImageJobRecord = {
       ...resolvedInput,
@@ -111,6 +133,8 @@ export class JobsService {
       selectedModel: selection.model,
       finalPrompt,
       inputFiles,
+      maskFile,
+      systemFileIds: input.previewOperation ? [...inputFiles.map(file => file.id), ...(maskFile ? [maskFile.id] : [])] : undefined,
       outputImages: [],
       textOutputs: [],
       error: null,
@@ -170,13 +194,14 @@ export class JobsService {
   }
 
   async quote(input: ImageJobCreateRequest, user: AuthUser): Promise<JobQuote> {
+    input = preparePreview(input);
     const resolved = { ...input, template: input.template === 'auto'
       ? detectImageIntent(input.prompt, input.imageIds.length > 0).template : input.template };
     const selection = await this.selectProvider(resolved);
     try {
       const payment = await this.reservePayment(user, { ...resolved, paymentMode: input.paymentMode === 'credits' ? 'credits' : undefined }, selection.costCredits);
       return { paymentMode: payment.mode === 'credits' ? 'credits' : 'free',
-        credits: payment.mode === 'credits' ? selection.costCredits : 0, available: true };
+        credits: payment.mode === 'credits' ? selection.costCredits : 0, available: true, selection: `${selection.provider}:${selection.model}` };
     } catch (error) {
       return { paymentMode: 'credits', credits: selection.costCredits, available: false,
         reason: error instanceof Error ? error.message : '暂时无法生成' };
@@ -293,8 +318,31 @@ export class JobsService {
         model: running.selectedModel,
         aspectRatio: running.aspectRatio,
         quality: running.quality,
-        images: running.inputFiles
+        images: running.inputFiles,
+        mask: running.maskFile,
+        background: running.background
       });
+      if (running.previewOperation === 'remove' && running.maskFile) {
+        const rawOutputs = [...result.images];
+        const protectedOutputs: typeof result.images = [];
+        try {
+          const [source, mask] = await Promise.all([
+            this.objectStorage.readByUrl(running.inputFiles[0].url),
+            this.objectStorage.readByUrl(running.maskFile.url)
+          ]);
+          for (const [index, output] of rawOutputs.entries()) {
+            const image = await compositeRemoval(source, mask, await this.objectStorage.readByUrl(output.url));
+            const url = await this.objectStorage.save('outputs', `${running.id}-${running.attempt ?? 0}-protected-${index}.png`, image.body, 'image/png');
+            protectedOutputs.push({ url, mimeType: 'image/png', width: image.width, height: image.height });
+          }
+          result.images = protectedOutputs;
+        } catch (error) {
+          await Promise.allSettled(protectedOutputs.map(image => this.objectStorage.deleteByUrl(image.url)));
+          throw error;
+        } finally {
+          await Promise.allSettled(rawOutputs.map(image => this.objectStorage.deleteByUrl(image.url)));
+        }
+      }
       if (renewalPromise) await renewalPromise;
       const leaseStillOwned = !leaseLost && await this.storage.renewJobLease(id, owner, this.jobLeaseMs());
       if (!leaseStillOwned) {
@@ -386,7 +434,13 @@ export class JobsService {
 
   private async selectProvider(input: ImageJobCreateRequest) {
     const selection = this.models.resolveSelection(input);
-    if (input.imageIds.length > selection.model.maxInputImages) {
+    if (input.maskFileId || input.background) {
+      const upstream = selection.model.upstreamModel ?? selection.model.model;
+      if (input.mode !== 'edit' || !input.imageIds.length || selection.provider.type !== 'openai-images' || !/^gpt-image-/i.test(upstream)) {
+        throw new BadRequestException('局部蒙版和透明背景需要选择支持 GPT Image 的图片编辑模型');
+      }
+    }
+    if (input.imageIds.length + (input.guideFileId ? 1 : 0) > selection.model.maxInputImages) {
       throw new BadRequestException(`当前模型最多支持 ${selection.model.maxInputImages} 张参考图`);
     }
     if (!selection.model.supportedRatios.includes(input.aspectRatio)) {
@@ -398,7 +452,7 @@ export class JobsService {
     return {
       provider: selection.provider.id,
       model: selection.model.model,
-      costCredits: selection.model.costCredits
+      costCredits: input.previewOperation === 'background' ? 1 : selection.model.costCredits
     };
   }
 

@@ -129,6 +129,7 @@ export class StorageService {
             height: file.height
           },
           create: {
+            purpose: file.purpose ?? 'user',
             id: file.id,
             userId: file.userId,
             hash: file.hash,
@@ -142,6 +143,7 @@ export class StorageService {
         })
       : await this.prisma.fileRecord.create({
           data: {
+            purpose: file.purpose ?? 'user',
             id: file.id,
             userId: file.userId,
             url: file.url,
@@ -271,11 +273,18 @@ export class StorageService {
   private async serializable<T>(action: (tx: Prisma.TransactionClient) => Promise<T>): Promise<T> {
     for (let attempt = 0; ; attempt++) {
       try {
-        return await this.prisma.$transaction(action, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+        return await this.prisma.$transaction(action, {
+          isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+          // Recovery runs alongside job consumers. Give a contended transaction
+          // time to acquire a connection/lock before treating it as a failure.
+          maxWait: 10_000,
+          timeout: 30_000
+        });
       } catch (error) {
         // P2002 is retried for concurrent idempotency-key winners so the next
         // transaction can observe and return the job created by the winner.
-        if (!(error instanceof Prisma.PrismaClientKnownRequestError) || !['P2034', 'P2002'].includes(error.code) || attempt >= 3) throw error;
+        if (!(error instanceof Prisma.PrismaClientKnownRequestError) || !['P2028', 'P2034', 'P2002'].includes(error.code) || attempt >= 5) throw error;
+        await new Promise((resolve) => setTimeout(resolve, 100 * 2 ** attempt + Math.random() * 100));
       }
     }
   }
@@ -1033,7 +1042,7 @@ export class StorageService {
     });
     return {
       jobs: jobs.slice(0, limit).map((job) => this.toImageJob(job)),
-      nextCursor: jobs.length > limit ? jobs[limit].id : undefined
+      nextCursor: jobs.length > limit ? jobs[limit - 1].id : undefined
     };
   }
 
@@ -1167,6 +1176,7 @@ export class StorageService {
 
   private toUploadedFile(file: FileRecord): UploadedFileRecord {
     return {
+      purpose: file.purpose as UploadedFileRecord['purpose'],
       id: file.id,
       userId: file.userId ?? undefined,
       hash: file.hash ?? undefined,
@@ -1202,7 +1212,17 @@ export class StorageService {
   }
 
   private toImageJob(job: ImageJob): ImageJobRecord {
+    const edit = job.editOptions as Partial<ImageJobRecord> | null;
     return {
+      previewOperation: edit?.previewOperation,
+      guideFileId: edit?.guideFileId,
+      editComments: edit?.editComments,
+      systemFileIds: edit?.systemFileIds,
+      confirmedCredits: edit?.confirmedCredits,
+      quotedSelection: edit?.quotedSelection,
+      maskFileId: edit?.maskFileId,
+      background: edit?.background,
+      maskFile: edit?.maskFile,
       id: job.id,
       userId: job.userId ?? undefined,
       mode: job.mode as ImageJobRecord['mode'],
@@ -1238,6 +1258,7 @@ export class StorageService {
 
   private toJobWriteData(job: ImageJobRecord): Prisma.ImageJobUncheckedCreateInput {
     return {
+      editOptions: { maskFileId: job.maskFileId, background: job.background, maskFile: job.maskFile, previewOperation: job.previewOperation, guideFileId: job.guideFileId, editComments: job.editComments, systemFileIds: job.systemFileIds, confirmedCredits: job.confirmedCredits, quotedSelection: job.quotedSelection } as unknown as Prisma.InputJsonValue,
       id: job.id,
       userId: job.userId,
       mode: job.mode,

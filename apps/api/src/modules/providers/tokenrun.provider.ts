@@ -77,6 +77,11 @@ export class TokenRunProvider implements ImageProvider {
     form.set('size', tokenRunSizeFor(input.aspectRatio, input.quality));
     form.set('quality', this.qualityFor(input));
     form.set('output_format', 'png');
+    if (input.background) form.set('background', input.background);
+    if (input.mask) {
+      const buffer = await this.objectStorage.readByUrl(input.mask.url);
+      form.set('mask', new File([new Uint8Array(buffer)], 'mask.png', { type: 'image/png' }));
+    }
 
     for (const image of input.images) {
       const sourceName = this.objectStorage.filenameFromUrl(image.url);

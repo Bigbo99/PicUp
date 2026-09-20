@@ -24,7 +24,6 @@ import 'tldraw/tldraw.css';
 type BoardProps = {
   onClose: () => void;
   onSave?: (file: File) => void | Promise<void>;
-  initialImageUrl?: string;
 };
 
 const COLORS: Array<{ value: TLDefaultColorStyle; swatch: string; label: string }> = [
@@ -112,11 +111,45 @@ function distanceToPolyline(point: Point, path: Point[]) {
   return distance;
 }
 
+function segmentsIntersect(a: Point, b: Point, c: Point, d: Point) {
+  const cross = (p: Point, q: Point, r: Point) => (q.x - p.x) * (r.y - p.y) - (q.y - p.y) * (r.x - p.x);
+  const onSegment = (start: Point, point: Point, end: Point) =>
+    point.x >= Math.min(start.x, end.x) && point.x <= Math.max(start.x, end.x)
+    && point.y >= Math.min(start.y, end.y) && point.y <= Math.max(start.y, end.y);
+  const abC = cross(a, b, c); const abD = cross(a, b, d);
+  const cdA = cross(c, d, a); const cdB = cross(c, d, b);
+  if (abC * abD < 0 && cdA * cdB < 0) return true;
+  return (abC === 0 && onSegment(a, c, b))
+    || (abD === 0 && onSegment(a, d, b))
+    || (cdA === 0 && onSegment(c, a, d))
+    || (cdB === 0 && onSegment(c, b, d));
+}
+
+function distanceBetweenSegments(a: Point, b: Point, c: Point, d: Point) {
+  if (segmentsIntersect(a, b, c, d)) return 0;
+  return Math.min(
+    distanceToSegment(a, c, d),
+    distanceToSegment(b, c, d),
+    distanceToSegment(c, a, b),
+    distanceToSegment(d, a, b),
+  );
+}
+
+function segmentTouchesPolyline(start: Point, end: Point, path: Point[], radius: number) {
+  if (path.length < 2) return Boolean(path[0]) && distanceToSegment(path[0], start, end) <= radius;
+  return path.slice(0, -1).some((point, index) => distanceBetweenSegments(start, end, point, path[index + 1]) <= radius);
+}
+
 function splitDrawPointsForErase(shape: TLDrawShape, eraserPath: Point[], radius: number) {
   const points = shape.props.segments.flatMap(segment => segment.points);
   if (!points.length) return { touched: false, runs: [] as TLDrawShapeSegment['points'][] };
 
   const erased = points.map(point => distanceToPolyline(point, eraserPath) <= radius);
+  for (let index = 0; index < points.length - 1; index += 1) {
+    if (!segmentTouchesPolyline(points[index], points[index + 1], eraserPath, radius)) continue;
+    erased[index] = true;
+    erased[index + 1] = true;
+  }
   const runs: TLDrawShapeSegment['points'][] = [];
   let currentRun: TLDrawShapeSegment['points'] = [];
   points.forEach((point, index) => {
@@ -152,7 +185,7 @@ function paletteColorForCustomColor(hex: string): TLDefaultColorStyle {
   return l > 76 ? 'light-violet' : 'violet';
 }
 
-export function Board({ onClose, onSave, initialImageUrl }: BoardProps) {
+export function Board({ onClose, onSave }: BoardProps) {
   const editorRef = useRef<Editor | null>(null);
   const initializedEditors = useRef(new WeakSet<Editor>());
   const brushCursorRef = useRef<HTMLSpanElement | null>(null);
@@ -199,7 +232,9 @@ export function Board({ onClose, onSave, initialImageUrl }: BoardProps) {
 
   const eraseAlongPath = useCallback((editor: Editor, path: Point[]) => {
     const zoomLevel = editor.getZoomLevel();
-    const pageRadius = eraserSize / 2 / zoomLevel;
+    // Slightly expand the hit radius so the final sampled point of a stroke
+    // is removed even when pointer-up lands between sparse tldraw samples.
+    const pageRadius = (eraserSize / 2 + 1.5) / zoomLevel;
     let changed = false;
     if (!path.length) return false;
     const left = Math.min(...path.map(point => point.x)) - pageRadius;
@@ -324,7 +359,7 @@ export function Board({ onClose, onSave, initialImageUrl }: BoardProps) {
       if (!previousPoint || previousPoint.x !== pagePoint.x || previousPoint.y !== pagePoint.y) gesture.path.push(pagePoint);
       if (eraserFrameRef.current !== null) { cancelAnimationFrame(eraserFrameRef.current); eraserFrameRef.current = null; }
       const pending = gesture.path.filter(point => point.x !== gesture.processed.x || point.y !== gesture.processed.y);
-      if (pending.length) eraseAlongPath(editor, [gesture.processed, ...pending]);
+      eraseAlongPath(editor, pending.length ? [gesture.processed, ...pending] : [pagePoint]);
       editor.markHistoryStoppingPoint('erase end');
     }
     try {
@@ -431,27 +466,14 @@ export function Board({ onClose, onSave, initialImageUrl }: BoardProps) {
 
   const mountEditor = useCallback((editor: Editor) => {
     editorRef.current = editor;
-    // Mount effects can replay before asynchronous image insertion finishes.
+    // Mount effects can replay for the same editor instance.
     if (initializedEditors.current.has(editor)) return;
     initializedEditors.current.add(editor);
     editor.user.updateUserPreferences({ colorScheme: window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light' });
     editor.setStyleForNextShapes(DefaultColorStyle, 'black');
     editor.setStyleForNextShapes(DefaultSizeStyle, toTldrawSize(DEFAULT_BRUSH_SIZE));
     editor.setCurrentTool('draw');
-    if (!initialImageUrl || editor.getCurrentPageShapes().some(shape => shape.type === 'image')) return;
-    void (async () => {
-      try {
-        const response = await fetch(initialImageUrl);
-        if (!response.ok) throw new Error('Image load failed');
-        const blob = await response.blob();
-        if (editor.isDisposed || editorRef.current !== editor) return;
-        const file = new File([blob], 'reference-image.png', { type: blob.type || 'image/png' });
-        await editor.putExternalContent({ type: 'files', files: [file], point: editor.getViewportPageBounds().center });
-      } catch {
-        if (!editor.isDisposed && editorRef.current === editor) setError('原图载入失败，可以继续使用空白画布。');
-      }
-    })();
-  }, [initialImageUrl]);
+  }, []);
 
   return <div className={`board-shell ${tool === 'draw' ? 'is-draw-mode' : ''} ${isEraserMode ? 'is-eraser-mode' : ''}`}>
     <div className="board-engine" onPointerDownCapture={handleEraserPointerDownCapture} onPointerMoveCapture={handleEraserPointerMoveCapture} onPointerUpCapture={finishEraserGesture} onPointerCancelCapture={finishEraserGesture} onPointerEnter={updateBrushCursor} onPointerMove={updateBrushCursor} onPointerLeave={hideBrushCursor}>

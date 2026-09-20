@@ -5,6 +5,7 @@ import { CreateImageJobDto } from './dto';
 import { AuthGuard } from '../auth/auth.guard';
 import { AuthService } from '../auth/auth.service';
 import type { AuthenticatedRequest } from '../auth/auth.types';
+import { publicJob } from './preview-edit';
 
 @Controller('api/image/jobs')
 @UseGuards(AuthGuard)
@@ -21,9 +22,9 @@ export class JobsController {
   }
 
   @Get()
-  list(@Query('limit') limit: string | undefined, @Req() req: AuthenticatedRequest,
+  async list(@Query('limit') limit: string | undefined, @Req() req: AuthenticatedRequest,
     @Query('cursor') cursor?: string, @Query('q') query?: string, @Query('status') status?: string) {
-    return this.jobs.list(Number(limit ?? 20), req.authUser, cursor, query, status);
+    return (await this.jobs.list(Number(limit ?? 20), req.authUser, cursor, query, status)).map(publicJob);
   }
 
   @Post('quote')
@@ -37,8 +38,8 @@ export class JobsController {
   }
 
   @Get(':id')
-  get(@Param('id') id: string, @Req() req: AuthenticatedRequest) {
-    return this.jobs.get(id, req.authUser);
+  async get(@Param('id') id: string, @Req() req: AuthenticatedRequest) {
+    return publicJob(await this.jobs.get(id, req.authUser));
   }
 
   @Get(':id/download/:index')

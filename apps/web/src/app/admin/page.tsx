@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   ArrowLeft,
@@ -678,47 +678,44 @@ function UserDetailLine({ label, value, mono = false }: { label: string; value: 
 function JobsTab() {
   const [status, setStatus] = useState('');
   const [userId, setUserId] = useState('');
+  const [cursors, setCursors] = useState<string[]>([]);
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
   const params = useMemo(() => {
     const value = new URLSearchParams({ limit: '50' });
     if (status) value.set('status', status);
     if (userId.trim()) value.set('userId', userId.trim());
+    if (cursors.length) value.set('cursor', cursors[cursors.length - 1]);
     return value;
-  }, [status, userId]);
+  }, [status, userId, cursors]);
   const jobsQuery = useQuery({
     queryKey: ['admin', 'jobs', params.toString()],
     queryFn: () => listAdminJobs(params),
     refetchInterval: 10000
   });
   const jobs = jobsFromResponse(jobsQuery.data);
-  const statusSummary = useMemo(() => {
-    return jobs.reduce<Record<string, number>>((summary, job) => {
-      summary[job.status] = (summary[job.status] ?? 0) + 1;
-      return summary;
-    }, {});
-  }, [jobs]);
+  const nextCursor = jobsQuery.data && !Array.isArray(jobsQuery.data) ? jobsQuery.data.nextCursor : undefined;
   const activeIndex = jobs.findIndex((job) => job.id === activeJobId);
   const activeJob = activeIndex >= 0 ? jobs[activeIndex] : null;
 
   return (
-    <Panel title="任务可视化管理" action={<SearchBox value={userId} onChange={setUserId} placeholder="按用户 ID 筛选" />}>
+    <Panel title="任务监控" action={<SearchBox value={userId} onChange={value => { setUserId(value); setCursors([]); }} placeholder="按用户 ID 筛选" />}>
       <Toolbar>
-        <Segmented value={status} onChange={setStatus} options={[['', '全部'], ['queued', '排队'], ['running', '运行'], ['succeeded', '成功'], ['failed', '失败']]} />
+        <Segmented value={status} onChange={value => { setStatus(value); setCursors([]); }} options={[['', '全部'], ['queued', '排队'], ['running', '运行'], ['succeeded', '成功'], ['failed', '失败']]} />
+        <button className="admin-icon-button" aria-label="刷新任务" title="刷新任务" disabled={jobsQuery.isFetching} onClick={() => void jobsQuery.refetch()}><RefreshCw size={17} /></button>
       </Toolbar>
-      <div className="mb-4 grid gap-2 sm:grid-cols-3 xl:grid-cols-6">
-        {(['queued', 'running', 'retrying', 'succeeded', 'failed', 'refunded'] as ImageJobStatus[]).map((item) => (
-          <div key={item} className="rounded-lg border border-slate-200 bg-white p-3">
-            <p className="text-xs font-black text-slate-500">{labelFor(item)}</p>
-            <p className="mt-1 text-2xl font-black">{statusSummary[item] ?? 0}</p>
-          </div>
-        ))}
-      </div>
-      <div className="grid gap-3 xl:grid-cols-2">
+      {jobsQuery.isError && <p role="alert">任务加载失败，请刷新重试。</p>}
+      <div className="admin-table-wrap"><table className="admin-table admin-job-table"><thead><tr><th>任务 / 用户需求</th><th>状态</th><th>执行模型</th><th>积分</th><th>创建时间</th><th>详情</th></tr></thead><tbody>
         {jobs.map((job) => <JobRow key={job.id} job={job} onOpen={() => setActiveJobId(job.id)} />)}
-        {jobs.length === 0 && <EmptyLine text="暂无任务" />}
-      </div>
+      </tbody></table></div>
+      {jobsQuery.isPending ? <EmptyLine text="正在加载任务…" /> : jobs.length === 0 && <EmptyLine text="暂无任务" />}
+      <nav className="mt-3 flex items-center justify-end gap-3" aria-label="任务分页">
+        <span className="text-xs text-slate-500">第 {cursors.length + 1} 页</span>
+        <button className="admin-icon-button" title="上一页" aria-label="上一页" disabled={!cursors.length || jobsQuery.isPending} onClick={() => setCursors(value => value.slice(0, -1))}><ChevronLeft size={17} /></button>
+        <button className="admin-icon-button" title="下一页" aria-label="下一页" disabled={!nextCursor || jobsQuery.isPending} onClick={() => { if (nextCursor) setCursors(value => [...value, nextCursor]); }}><ChevronRight size={17} /></button>
+      </nav>
       {activeJob && (
         <JobDetailDialog
+          key={activeJob.id}
           job={activeJob}
           index={activeIndex}
           total={jobs.length}
@@ -733,34 +730,7 @@ function JobsTab() {
 
 function JobRow({ job, onOpen }: { job: ImageJobRecord; onOpen: () => void }) {
   const thumbnail = job.outputImages[0]?.url ?? job.inputFiles[0]?.url;
-  return (
-    <article className="rounded-lg border border-slate-200 bg-white p-3 shadow-sm">
-      <button className="block w-full cursor-pointer text-left" onClick={onOpen}>
-        <div className="grid gap-3 md:grid-cols-[96px_minmax(0,1fr)_120px] md:items-center">
-          <div className="flex aspect-square items-center justify-center overflow-hidden rounded-lg border border-slate-200 bg-slate-50">
-            {thumbnail ? (
-              <img src={thumbnail} alt="任务图片缩略图" className="h-full w-full object-cover" />
-            ) : (
-              <FileImage className="text-slate-300" size={26} aria-hidden />
-            )}
-          </div>
-          <div className="min-w-0">
-            <div className="mb-2 flex flex-wrap items-center gap-2">
-              <Badge value={job.status} />
-              <span className="text-xs font-bold text-slate-500">{labelFor(job.selectedProvider)} / {job.selectedModel}</span>
-            </div>
-            <p className="line-clamp-2 text-sm font-black">{job.prompt}</p>
-            <p className="mt-1 break-all text-xs text-slate-500">任务 {job.id}</p>
-            <p className="mt-1 break-all text-xs text-slate-500">用户 {job.userId ?? '匿名用户'}</p>
-          </div>
-          <div className="text-left md:text-right">
-            <p className="text-sm font-black">{job.outputImages.length} 张结果</p>
-            <p className="mt-1 text-xs text-slate-500">{formatDate(job.createdAt)}</p>
-          </div>
-        </div>
-      </button>
-    </article>
-  );
+  return <tr><td><button className="admin-job-summary" onClick={onOpen}>{thumbnail ? <img src={thumbnail} alt="任务缩略图" /> : <FileImage size={24} />}<span><strong>{job.prompt || '图片编辑'}</strong><small>{job.id}</small></span></button></td><td><Badge value={job.status} /></td><td>{job.selectedModel}<small className="block text-slate-500">{job.previewOperation ? '系统自动匹配' : labelFor(job.selectedProvider)}</small></td><td>{job.paymentMode === 'credits' ? job.creditsReserved : 0}</td><td>{formatDate(job.createdAt)}</td><td><button className="admin-icon-button" aria-label={`查看任务 ${job.id}`} title="查看任务" onClick={onOpen}><ArrowRight size={18} /></button></td></tr>;
 }
 
 function JobDetailDialog({
@@ -778,24 +748,32 @@ function JobDetailDialog({
   onPrev?: () => void;
   onNext?: () => void;
 }) {
+  const dialog = useRef<HTMLDialogElement>(null);
+  const [detailTab, setDetailTab] = useState<'result' | 'system'>('result');
+  useEffect(() => {
+    const element = dialog.current!;
+    element.showModal();
+    return () => element.close();
+  }, []);
   const galleryImages = [
-    ...job.inputFiles.map((file, fileIndex) => ({ url: file.url, label: `参考图 ${fileIndex + 1}`, meta: file.mimeType })),
+    ...job.inputFiles.map((file, fileIndex) => ({ url: file.url, label: file.id === job.guideFileId ? '系统标记指引' : job.previewOperation ? '编辑原图' : `用户参考图 ${fileIndex + 1}`, meta: file.mimeType })),
+    ...(job.maskFile ? [{ url: job.maskFile.url, label: '系统蒙版', meta: job.maskFile.mimeType }] : []),
     ...job.outputImages.map((image, imageIndex) => ({ url: image.url, label: `结果图 ${imageIndex + 1}`, meta: `结果 ${imageIndex + 1}` }))
   ];
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
   const lightboxImage = lightboxIndex !== null ? galleryImages[lightboxIndex] : null;
+  const inputCount = job.inputFiles.length + (job.maskFile ? 1 : 0);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-3" role="dialog" aria-modal="true" aria-labelledby="job-detail-title">
-      <button className="absolute inset-0 cursor-default" type="button" onClick={onClose} aria-label="关闭任务详情" />
-      <section className="relative flex max-h-[92dvh] w-full max-w-6xl flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-2xl">
+    <dialog ref={dialog} className="admin-job-inspector" aria-labelledby="job-detail-title" onCancel={event => { event.preventDefault(); if (lightboxIndex !== null) setLightboxIndex(null); else onClose(); }}>
+      <section className="flex min-h-0 flex-1 flex-col overflow-hidden">
         <header className="flex flex-col gap-3 border-b border-slate-200 p-4 md:flex-row md:items-center md:justify-between">
           <div className="min-w-0">
             <div className="mb-2 flex flex-wrap items-center gap-2">
               <Badge value={job.status} />
               <span className="text-xs font-bold text-slate-500">第 {index + 1} / {total} 项</span>
             </div>
-            <h3 id="job-detail-title" className="line-clamp-1 text-xl font-black text-slate-950">{job.prompt}</h3>
+            <h3 id="job-detail-title" className="line-clamp-1 text-base font-semibold text-slate-950">任务详情</h3>
             <p className="mt-1 break-all text-xs text-slate-500">{job.id}</p>
           </div>
           <div className="flex gap-2">
@@ -810,37 +788,35 @@ function JobDetailDialog({
             </button>
           </div>
         </header>
-        <div className="grid min-h-0 flex-1 gap-0 overflow-y-auto lg:grid-cols-[0.9fr_1.1fr]">
+        <div className="admin-job-tabs" role="tablist" aria-label="任务详情视图">
+          <button id="job-result-tab" role="tab" aria-selected={detailTab === 'result'} aria-controls="job-detail-content" onClick={() => setDetailTab('result')}>用户需求与结果</button>
+          <button id="job-system-tab" role="tab" aria-selected={detailTab === 'system'} aria-controls="job-detail-content" onClick={() => setDetailTab('system')}>系统处理记录</button>
+        </div>
+        <div id="job-detail-content" role="tabpanel" aria-labelledby={detailTab === 'result' ? 'job-result-tab' : 'job-system-tab'} className="grid min-h-0 flex-1 gap-0 overflow-y-auto lg:grid-cols-[0.9fr_1.1fr]">
           <aside className="border-b border-slate-200 bg-slate-50 p-4 lg:border-b-0 lg:border-r">
-            <div className="grid gap-2">
+            <div className="admin-job-metadata">
               <UserDetailLine label="用户 ID" value={job.userId ?? '匿名用户'} mono />
               <UserDetailLine label="模型" value={`${labelFor(job.selectedProvider)} / ${job.selectedModel}`} />
               <UserDetailLine label="模式" value={job.mode === 'edit' ? '编辑图片' : '生成图片'} />
               <UserDetailLine label="识别意图" value={job.template} />
               <UserDetailLine label="比例 / 清晰度" value={`${job.aspectRatio} / ${job.quality}`} />
-              <UserDetailLine label="消耗额度" value={job.creditsReserved} />
+              <UserDetailLine label="扣除积分" value={job.paymentMode === 'credits' ? job.creditsReserved : 0} />
+              <UserDetailLine label="确认积分" value={job.confirmedCredits ?? '-'} />
+              <UserDetailLine label="执行次数" value={job.attempt ?? 0} />
               <UserDetailLine label="支付方式" value={job.paymentMode ?? '免费'} />
               <UserDetailLine label="创建 / 完成" value={`${formatDate(job.createdAt)} / ${formatDate(job.completedAt)}`} />
             </div>
             <div className="mt-3 grid gap-3">
-              <JsonBlock title="原始需求" value={job.prompt} />
-              <JsonBlock title="最终提示词" value={job.finalPrompt} />
-              <JsonBlock title="错误信息" value={job.error ?? '无'} />
+              <JsonBlock title={detailTab === 'result' ? '用户需求' : '最终发送给模型的提示词'} value={detailTab === 'result' ? job.prompt : job.finalPrompt} />
+              {detailTab === 'system' && <JsonBlock title="操作与位置评论" value={{ operation: job.previewOperation, comments: job.editComments, selection: job.quotedSelection }} />}
+              {job.error && <JsonBlock title="错误信息" value={job.error} />}
             </div>
           </aside>
           <section className="grid gap-4 p-4">
-            <ImageGallery
-              title="参考图"
-              empty="暂无参考图"
-              images={galleryImages.slice(0, job.inputFiles.length)}
-              onOpen={(imageIndex) => setLightboxIndex(imageIndex)}
-            />
-            <ImageGallery
-              title="结果图"
-              empty="暂无结果图"
-              images={galleryImages.slice(job.inputFiles.length)}
-              onOpen={(imageIndex) => setLightboxIndex(job.inputFiles.length + imageIndex)}
-            />
+            {detailTab === 'system' ? <ImageGallery title="模型输入材料" empty="暂无输入材料" images={galleryImages.slice(0, inputCount)} onOpen={setLightboxIndex} /> : <>
+              <ImageGallery title="生成结果" empty="暂无结果图" images={galleryImages.slice(inputCount)} onOpen={imageIndex => setLightboxIndex(inputCount + imageIndex)} />
+              {!job.previewOperation && <ImageGallery title="用户参考图" empty="暂无参考图" images={galleryImages.slice(0, job.inputFiles.length)} onOpen={setLightboxIndex} />}
+            </>}
           </section>
         </div>
       </section>
@@ -854,7 +830,7 @@ function JobDetailDialog({
           onNext={lightboxIndex < galleryImages.length - 1 ? () => setLightboxIndex(lightboxIndex + 1) : undefined}
         />
       )}
-    </div>
+    </dialog>
   );
 }
 

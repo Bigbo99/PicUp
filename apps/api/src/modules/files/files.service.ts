@@ -16,7 +16,7 @@ export class FilesService {
     @Inject(ObjectStorageService) private readonly objectStorage: ObjectStorageService
   ) {}
 
-  async saveUploadedFile(file: Express.Multer.File, user: AuthUser): Promise<UploadedFileRecord> {
+  async saveUploadedFile(file: Express.Multer.File, user: AuthUser, purpose: 'user' | 'system' = 'user'): Promise<UploadedFileRecord> {
     if (!file) throw new BadRequestException('Please choose an image to upload');
     if (!allowedMimeTypes.has(file.mimetype)) {
       throw new BadRequestException('Only JPG, PNG, and WEBP images are supported');
@@ -33,12 +33,13 @@ export class FilesService {
       throw new BadRequestException('无法识别图片内容，请将原图导出为 JPG、PNG 或 WebP 后重试');
     }
     const extension = detected.extension;
-    const hash = this.hashBuffer(buffer);
+    const hash = purpose === 'system' ? createHash('sha256').update('system:').update(buffer).digest('hex') : this.hashBuffer(buffer);
     const existing = await this.storage.findFileByHash(hash, user.id);
     if (existing) return existing;
     const url = await this.objectStorage.save('inputs', `${hash}${extension}`, buffer, detected.mimeType);
 
     return this.storage.addFile({
+      purpose,
       id,
       userId: user.id,
       hash,
@@ -54,7 +55,7 @@ export class FilesService {
       throw new NotFoundException('Image not found');
     }
     const file = await this.storage.getFileByInputFilename(filename, user.id);
-    if (!file) throw new NotFoundException('Image not found');
+    if (!file || file.purpose === 'system') throw new NotFoundException('Image not found');
     return {
       body: await this.objectStorage.readByUrl(file.url),
       mimeType: file.mimeType
@@ -64,7 +65,7 @@ export class FilesService {
   async readForUser(id: string, user: AuthUser) {
     if (!/^[a-f0-9-]{36}$/i.test(id)) throw new NotFoundException('Image not found');
     const [file] = await this.storage.getFiles([id], user.id);
-    if (!file) throw new NotFoundException('Image not found');
+    if (!file || file.purpose === 'system') throw new NotFoundException('Image not found');
     return { body: await this.objectStorage.readByUrl(file.url), mimeType: file.mimeType };
   }
 

@@ -12,6 +12,8 @@ export interface ProviderImageInput {
   aspectRatio: string;
   quality: ImageQuality;
   images: UploadedFileRecord[];
+  mask?: UploadedFileRecord;
+  background?: 'transparent';
 }
 
 export interface ProviderImageResult {

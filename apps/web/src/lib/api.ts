@@ -70,9 +70,13 @@ export const updateStudioConversation = (rootJobId: string, action: 'archive' | 
 export const deleteStudioConversation = (rootJobId: string) => request<{ ok: boolean; rootJobId: string }>(`/api/studio/conversations/${encodeURIComponent(rootJobId)}`, { method: 'DELETE' });
 export const updateStudioAsset = (key: string, data: { title?: string; hidden?: boolean }) => request(`/api/studio/assets/${encodeURIComponent(key)}`, { method: 'PATCH', body: JSON.stringify(data) });
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+async function request<T>(path: string, init?: RequestInit, timeoutMs?: number): Promise<T> {
+  const controller = timeoutMs ? new AbortController() : undefined;
+  const timer = controller ? setTimeout(() => controller.abort(), timeoutMs) : undefined;
+  try {
   const response = await fetch(`${API_BASE_URL}${path}`, {
     ...init,
+    signal: controller?.signal ?? init?.signal,
     credentials: 'include',
     headers: init?.body instanceof FormData
       ? init.headers
@@ -82,7 +86,11 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   if (!response.ok) {
     throw new Error(await readErrorMessage(response));
   }
-  return response.json().catch(() => { throw new Error('服务返回异常，请稍后重试。'); }) as Promise<T>;
+  return await response.json().catch(error => { throw new Error('服务返回异常，请稍后重试。', { cause: error }); }) as T;
+  } catch (error) {
+    if (controller?.signal.aborted) throw new Error('请求超时，请检查网络后重试；已提交的任务可在历史记录查看。', { cause: error });
+    throw error;
+  } finally { if (timer) clearTimeout(timer); }
 }
 
 async function readErrorMessage(response: Response) {
@@ -99,24 +107,27 @@ async function readErrorMessage(response: Response) {
   }
 }
 
-export async function uploadImage(file: File) {
+export const uploadImage = (file: File) => uploadFile(file, 'user');
+export const uploadSystemImage = (file: File) => uploadFile(file, 'system');
+
+async function uploadFile(file: File, purpose: 'user' | 'system') {
   const form = new FormData();
   form.append('file', file);
-  return request<UploadedFileRecord>('/api/files', {
+  return request<UploadedFileRecord>(`/api/files?purpose=${purpose}`, {
     method: 'POST',
     body: form
-  }).then(displayFile);
+  }, 60_000).then(displayFile);
 }
 
 export async function createImageJob(input: ImageJobCreateRequest) {
   return request<ImageJobCreateResponse>('/api/image/jobs', {
     method: 'POST',
     body: JSON.stringify(input)
-  });
+  }, 60_000);
 }
 
 export async function getImageJob(id: string) {
-  return request<ImageJobRecord>(`/api/image/jobs/${id}`).then(displayJob);
+  return request<ImageJobRecord>(`/api/image/jobs/${id}`, undefined, 30_000).then(displayJob);
 }
 
 export async function listImageJobs(options: { cursor?: string; q?: string; status?: string } = {}) {
@@ -126,11 +137,11 @@ export async function listImageJobs(options: { cursor?: string; q?: string; stat
 }
 
 export function quoteImageJob(input: ImageJobCreateRequest) {
-  return request<JobQuote>('/api/image/jobs/quote', { method: 'POST', body: JSON.stringify(input) });
+  return request<JobQuote>('/api/image/jobs/quote', { method: 'POST', body: JSON.stringify(input) }, 30_000);
 }
 
 export function referenceJobOutput(id: string, index: number) {
-  return request<UploadedFileRecord>(`/api/image/jobs/${id}/reference/${index}`, { method: 'POST' }).then(displayFile);
+  return request<UploadedFileRecord>(`/api/image/jobs/${id}/reference/${index}`, { method: 'POST' }, 60_000).then(displayFile);
 }
 
 export function getAccountActivity() {

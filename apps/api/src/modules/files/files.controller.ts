@@ -1,4 +1,4 @@
-import { Controller, Get, Inject, Param, Post, Req, Res, UploadedFile, UseGuards, UseInterceptors } from '@nestjs/common';
+import { BadRequestException, Controller, Get, Inject, Param, Post, Query, Req, Res, UploadedFile, UseGuards, UseInterceptors } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { memoryStorage } from 'multer';
 import type { Response } from 'express';
@@ -19,8 +19,9 @@ export class FilesController {
       callback(null, allowedUploadMimeTypes.has(file.mimetype));
     }
   }))
-  upload(@UploadedFile() file: Express.Multer.File, @Req() req: AuthenticatedRequest) {
-    return this.files.saveUploadedFile(file, req.authUser);
+  upload(@UploadedFile() file: Express.Multer.File, @Req() req: AuthenticatedRequest, @Query('purpose') purpose = 'user') {
+    if (purpose !== 'user' && purpose !== 'system') throw new BadRequestException('文件用途不正确');
+    return this.files.saveUploadedFile(file, req.authUser, purpose);
   }
 
   @Get(':id/content')

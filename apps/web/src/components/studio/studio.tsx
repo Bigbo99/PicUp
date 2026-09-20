@@ -1,27 +1,43 @@
 'use client';
 
 import Link from 'next/link';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import dynamic from 'next/dynamic';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { AtSign, ArrowLeft, ArrowUp, Box, Check, ChevronDown, History as HistoryIcon, Images, Loader2, Paintbrush, Pencil, Plus, Scan, RectangleVertical, Trash2, UserRound, Wand2 } from 'lucide-react';
+import { AtSign, ArrowUp, Box, ChevronDown, History as HistoryIcon, Images, Loader2, Paintbrush, Pencil, Plus, Scan, RectangleVertical, Trash2, UserRound, Wand2 } from 'lucide-react';
 import { aspectRatioOptions, resolutionOptions, promptPartsText, type ImageJobCreateRequest, type ImageJobRecord, type PaymentOrderResponse } from '@picup/shared';
-import { createImageJob, getImageJob, getMe, getModels, getPaymentOrder, quoteImageJob, referenceJobOutput, updateStudioAsset, uploadImage } from '@/lib/api';
+import { createImageJob, getImageJob, getMe, getModels, getPaymentOrder, quoteImageJob, referenceJobOutput, updateStudioAsset, uploadImage, uploadSystemImage } from '@/lib/api';
 import { useNotifications } from '@/components/notification-provider';
 import { Canvas, isWorking } from './canvas';
 import { Dialog } from './dialog';
 import { Account, CreditActivity, Payment, Recharge } from './account';
-import { ImageLightbox, type ImagePreviewMode, type PreviewImage } from './image-lightbox';
+import { ImageLightbox, type ImagePreviewMode, type PreviewImage, type PreviewEdit } from './image-lightbox';
 import { useStudioDraft, type StudioDraft } from './use-studio-draft';
 import { Conversation } from './conversation';
 import { AssetLibrary, Conversations } from './library';
 import { usePreferences } from './preferences';
 import { AuthPanel } from './auth-panel';
-import { Board } from './board';
 import { studioSkills, type StudioSkill } from './skills';
 import { fieldValidationMessage } from '@/lib/user-message';
 import { MentionEditor, type MentionEditorHandle } from './mention-editor';
+import { samePreviewFiles, previewRequestId } from './preview-request';
 
 type LocationState = { job: string | null; view: string | null; order: string | null };
+
+function NavigationPage({ mobile, title, onClose, children }: { mobile: boolean | null; title: string; onClose: () => void; children: ReactNode }) {
+  if (title !== '图库' && mobile === null) return null;
+  if (title !== '图库') return <Dialog title={title} onClose={onClose} inline={mobile === true}>{children}</Dialog>;
+  return <section className="studio-navigation-page" aria-label={title}>
+    {title !== '图库' && <header className="navigation-page-heading"><h2>{title}</h2></header>}
+    {children}
+  </section>;
+}
+
+// The drawing engine needs browser APIs; keep it out of the server module runtime.
+const Board = dynamic(() => import('./board').then(module => module.Board), {
+  ssr: false,
+  loading: () => <p className="studio-empty" role="status">正在加载画板…</p>,
+});
 
 export function Studio() {
   const client = useQueryClient();
@@ -44,11 +60,17 @@ export function Studio() {
     window.addEventListener('picup:preferences-updated', sync); return () => window.removeEventListener('picup:preferences-updated', sync);
   }, [draft.prompt, draft.files.length, draft.parentJobId, update]);
   const [location, setLocation] = useState<LocationState>({ job: null, view: null, order: null });
+  const [mobile, setMobile] = useState<boolean | null>(null);
+  useEffect(() => {
+    const media = window.matchMedia('(width < 1024px)');
+    const sync = () => setMobile(media.matches);
+    sync(); media.addEventListener('change', sync);
+    return () => media.removeEventListener('change', sync);
+  }, []);
+  const navigationPage = ['history', 'account', 'login'].includes(location.view ?? '');
   const [latestId, setLatestId] = useState<string | null>(null);
   const [freshJobId, setFreshJobId] = useState<string | null>(null);
   const [lightbox, setLightbox] = useState<{ images: PreviewImage[]; index: number; assetKey?: string; mode: ImagePreviewMode } | null>(null);
-  const [boardImageUrl, setBoardImageUrl] = useState<string | undefined>();
-  const [boardImageFileId, setBoardImageFileId] = useState<string | undefined>();
   const [error, setError] = useState<string | null>(null);
   const [skillIndex, setSkillIndex] = useState(0);
   const [skillsDismissed, setSkillsDismissed] = useState(false);
@@ -65,7 +87,7 @@ export function Studio() {
     const viewport = window.visualViewport;
     const resize = () => {
       if (!shell.current) return;
-      const height = window.innerWidth < 1024 ? viewport?.height ?? window.innerHeight : window.innerHeight;
+      const height = window.matchMedia('(width < 1024px)').matches ? viewport?.height ?? window.innerHeight : window.innerHeight;
       shell.current.style.setProperty('--studio-height', `${height}px`);
       shell.current.dataset.compact = String(height < 650);
     };
@@ -87,15 +109,9 @@ export function Studio() {
     readLocation();
   }, [readLocation]);
   const closeDialog = useCallback(() => navigate({ view: null, order: null }), [navigate]);
-  useEffect(() => {
-    if (location.view !== 'board') {
-      setBoardImageUrl(undefined);
-      setBoardImageFileId(undefined);
-    }
-  }, [location.view]);
   const selected = useQuery({ queryKey: ['job', location.job], queryFn: () => getImageJob(location.job!), enabled: Boolean(location.job),
     retry: 2, refetchInterval: query => query.state.status === 'error' ? 8000 : !query.state.data || isWorking(query.state.data.status) ? 2000 : false });
-  const latest = useQuery({ queryKey: ['job', latestId], queryFn: () => getImageJob(latestId!), enabled: Boolean(latestId && latestId !== location.job),
+  useQuery({ queryKey: ['job', latestId], queryFn: () => getImageJob(latestId!), enabled: Boolean(latestId && latestId !== location.job),
     refetchInterval: query => isWorking(query.state.data?.status) || !query.state.data ? 3000 : false });
   useEffect(() => {
     if (!me.data?.user.id) return;
@@ -200,10 +216,11 @@ export function Studio() {
     update({ awaitingJobId: undefined, ...(draft.parentJobId === selected.data.id && selected.data.status !== 'succeeded'
       ? { parentJobId: selected.data.parentJobId } : {}) });
   }, [selected.data, draft.awaitingJobId, draft.parentJobId, update, preferencesLoaded, ready]);
-  const currentWorking = isWorking((latestId === location.job ? selected.data : latest.data)?.status);
+  // Background jobs must not lock the composer in a different or new conversation.
+  const currentWorking = Boolean(location.job && selected.data?.id === location.job && isWorking(selected.data.status));
   useEffect(() => { if (selected.data?.id === freshJobId) setFreshJobId(null); }, [selected.data?.id, freshJobId]);
   const quoteCurrent = !quote.isPending && !quote.isError;
-  const busy = create.isPending || upload.isPending || continueJob.isPending || currentWorking;
+  const busy = create.isPending || upload.isPending || continueJob.isPending || currentWorking || Boolean(freshJobId && freshJobId === location.job);
   const canSubmit = ready && !busy && draft.prompt.trim().length > 0 && draft.files.length <= limit && !guest
     && draft.prompt.length <= 4000 && (!draft.promptParts || (draft.promptParts.length <= 200 && draft.promptParts.every(part => part.type === 'text' || draft.files.some(file => file.id === part.fileId))))
     && Boolean(selectedModel) && models.data?.source !== 'fallback' && quoteCurrent && Boolean(quote.data?.available) && !quote.isFetching;
@@ -220,13 +237,75 @@ export function Studio() {
     }
     update({ idempotencyKey: requestKey.current.key }); create.mutate({ ...request, idempotencyKey: requestKey.current.key });
   }
+  const previewRequestKey = useRef<{ signature: string; key: string; credits: number; selection: string } | null>(null);
+  const previewFiles = useRef<{ source: string; files: (File | undefined)[]; ids: string[]; guideId?: string; maskId?: string } | null>(null);
+  const previewSubmitting = useRef(false);
+  async function submitPreviewEdit(image: PreviewImage, edit: PreviewEdit) {
+    if (guest) throw new Error('请先登录后编辑图片');
+    if (busy && !previewRequestKey.current) throw new Error('当前任务处理中，请稍后提交');
+    const sourceUrl = new URL(image.url, window.location.origin);
+    const output = sourceUrl.pathname.match(/^\/api\/image\/jobs\/([^/]+)\/preview\/(\d+)$/);
+    const fileMatch = sourceUrl.pathname.match(/^\/api\/files\/([^/]+)\/content$/);
+    if (previewSubmitting.current) throw new Error('正在提交编辑');
+    previewSubmitting.current = true;
+    try {
+    edit.onProgress?.('正在上传原图和标记…');
+    const files = [edit.guide, edit.mask, edit.original];
+    if (previewFiles.current?.source !== image.url || !await samePreviewFiles(previewFiles.current.files, files)) {
+      let originalId: string;
+      if (edit.original) originalId = (await uploadSystemImage(edit.original)).id;
+      else if (output) originalId = (await referenceJobOutput(decodeURIComponent(output[1]), Number(output[2]))).id;
+      else if (fileMatch) originalId = decodeURIComponent(fileMatch[1]);
+      else throw new Error('无法识别原图，请从图库或对话重新打开');
+      const ids = [originalId];
+      const guideId = edit.guide ? (await uploadSystemImage(edit.guide)).id : undefined;
+      const maskId = edit.mask ? (await uploadSystemImage(edit.mask)).id : undefined;
+      previewFiles.current = { source: image.url, files, ids, maskId, guideId };
+    }
+    const imageIds = previewFiles.current.ids;
+    const input: ImageJobCreateRequest = { provider: 'auto', model: 'auto', quality: '1K', paymentMode: 'credits', mode: 'edit', template: 'freeform', prompt: edit.prompt, previewOperation: edit.operation, editComments: edit.comments, imageIds, guideFileId: previewFiles.current.guideId, maskFileId: previewFiles.current.maskId, parentJobId: output ? decodeURIComponent(output[1]) : undefined, aspectRatio: edit.aspectRatio ?? 'auto' };
+    const signature = JSON.stringify(input);
+    if (busy && previewRequestKey.current?.signature !== signature) throw new Error('当前任务处理中，请稍后提交新的编辑');
+    if (previewRequestKey.current?.signature !== signature) {
+      edit.onProgress?.('正在检查模型和额度…');
+      const estimate = await quoteImageJob(input);
+      if (!estimate.available) throw new Error(estimate.reason ?? '当前编辑配置不可用，请调整模型或尺寸');
+      if (!estimate.selection) throw new Error('编辑报价暂不可用，请刷新后重试');
+      edit.onProgress?.('等待确认');
+      if (!await notices.confirm({ title: edit.operation === 'background' ? '确认去除背景？' : '确认生成', message: `本次编辑将扣除 ${estimate.credits} 积分。`, confirmText: edit.operation === 'background' ? '确认去除背景' : '确认并生成', cancelText: '取消' })) return null;
+      previewRequestKey.current = { signature, key: previewRequestId(), credits: estimate.credits, selection: estimate.selection };
+    }
+    edit.onProgress?.('正在提交编辑任务…');
+    let result;
+    try {
+      result = await createImageJob({ ...input, idempotencyKey: previewRequestKey.current.key, confirmedCredits: previewRequestKey.current.credits, quotedSelection: previewRequestKey.current.selection });
+    } catch (error) {
+      if (error instanceof Error && error.message.includes('重新确认')) previewRequestKey.current = null;
+      throw error;
+    }
+    if (!result.jobId) throw new Error(result.paymentRequired ? '当前额度不足，请充值后重试' : '任务未创建，请重试');
+    setLatestId(result.jobId);
+    setFreshJobId(result.jobId);
+    if (me.data) { try { sessionStorage.setItem(`picup:latest:${me.data.user.id}`, result.jobId); } catch { /* Optional persistence. */ } }
+    // The conversation query owns progress and results once the server accepts the edit.
+    update({ parentJobId: result.jobId, awaitingJobId: result.jobId, idempotencyKey: undefined });
+    requestKey.current = null;
+    previewRequestKey.current = null;
+    previewFiles.current = null;
+    setError(null);
+    navigate({ job: result.jobId, view: null, order: null });
+    setLightbox(null);
+    for (const key of ['jobs', 'me', 'quote', 'conversations', 'activity']) void client.invalidateQueries({ queryKey: [key] });
+    return null;
+    } finally { previewSubmitting.current = false; }
+  }
   function reuseParameters(job: ImageJobRecord) {
     patchDraft({ prompt: job.prompt, promptParts: job.promptParts, files: job.inputFiles, provider: job.provider, model: job.model,
       aspectRatio: job.aspectRatio, quality: job.quality, parentJobId: job.parentJobId }); prompt.current?.focus();
   }
   async function newWork() {
     if ((draft.prompt.trim() || draft.files.length) && !await notices.confirm({ title: '开始新对话？', message: '当前草稿将被清空，已生成的图片仍保留在历史中。', confirmText: '新对话' })) return;
-    clear(); update({ quality: preferences.quality, aspectRatio: preferences.aspectRatio, provider: preferences.provider, model: preferences.model }); navigate({ job: null, view: null }); requestKey.current = null; setError(null);
+    clear(); update({ quality: preferences.quality, aspectRatio: preferences.aspectRatio, provider: preferences.provider, model: preferences.model }); navigate({ job: null, view: null }); setFreshJobId(null); requestKey.current = null; setError(null);
   }
   const openPayment = useCallback((order: PaymentOrderResponse) => { setPayment(order); navigate({ view: 'payment', order: order.id }); }, [navigate]);
   const restoredPayment = useQuery({ queryKey: ['payment-order', location.order], queryFn: () => getPaymentOrder(location.order!), enabled: Boolean(location.order && location.order !== payment?.id) });
@@ -242,7 +321,7 @@ export function Studio() {
   const paymentOrder = payment?.id === location.order ? payment : restoredPayment.data;
   const quoteLabel = models.data?.source === 'fallback' ? '模型暂不可用' : quote.isError ? '积分查询失败' : `${quote.data?.credits ?? selectedModel?.costCredits ?? 0} 积分`;
 
-  return <main ref={shell} className="studio-app chat-app" data-empty={!location.job} onInvalid={event => {
+  return <main ref={shell} className="studio-app chat-app" data-gallery-page={location.view === 'history'} data-navigation-page={navigationPage} data-empty={!location.job} onInvalid={event => {
     const field = event.target;
     if (field instanceof HTMLInputElement || field instanceof HTMLSelectElement || field instanceof HTMLTextAreaElement) field.setCustomValidity(fieldValidationMessage(field));
   }} onInput={event => {
@@ -253,16 +332,18 @@ export function Studio() {
   }} onPaste={event => { const files = Array.from(event.clipboardData.files); if (files.length) { event.preventDefault(); handleFiles(files); } }}>
     <header className="studio-header"><Link href="/" className="studio-brand" aria-label="PicUp 工作台"><img className="studio-wordmark" src="/brand/picup-wordmark.png" alt="PicUp 片刻 P 图" width={108} height={54} /></Link>
       <div className="header-spacer" />
-      {(location.job || draft.files.length > 0) && <button className="studio-icon" onClick={newWork} title="新对话" aria-label="新对话"><Plus size={20} /></button>}
-      {latestId && latestId !== location.job && <button className="studio-secondary return-latest" aria-label="当前任务" title="返回当前任务" onClick={() => navigate({ job: latestId, view: null })}><ArrowLeft size={16} /><span>当前任务</span></button>}
-      {me.data && !guest && <button className="balance-button" title="查看积分与交易" aria-label="查看积分与交易" onClick={() => navigate({ view: 'credits' })}>{me.data.credits.balance} <span>积分</span></button>}
-      <button className="studio-icon" title="对话历史" aria-label="对话历史" onClick={() => navigate({ view: 'conversations' })}><HistoryIcon size={20} /></button>
+      <div className="studio-header-actions">
+      {(location.job || draft.files.length > 0) && <button className="studio-icon header-new-conversation" onClick={newWork} title="新对话" aria-label="新对话"><Plus size={20} /></button>}
+      {me.data && !guest && <button className="balance-button" title="查看积分与交易" aria-label="查看积分与交易" onClick={() => navigate({ view: 'credits' })}><strong>{me.data.credits.balance}</strong><span>积分</span></button>}
+      <button className="studio-icon header-history" title="对话历史" aria-label="对话历史" onClick={() => navigate({ view: 'conversations' })}><HistoryIcon size={20} /></button>
+      </div>
     </header>
-    <div className="studio-workspace">
+    <div className="studio-workspace" data-navigation-page={navigationPage} data-gallery-page={location.view === 'history'}>
       <nav className="studio-navigation" aria-label="主导航">
+        {location.view === 'history' && <Link href="/" className="studio-brand navigation-brand" aria-label="PicUp 工作台"><img className="studio-wordmark" src="/brand/picup-wordmark.png" alt="PicUp 片刻 P 图" width={84} height={42} /></Link>}
         <button onClick={() => navigate({ view: null })} aria-current={!location.view ? 'page' : undefined}><Wand2 size={20} /><span>创作</span></button>
         <button onClick={() => navigate({ view: 'history' })} aria-current={location.view === 'history' ? 'page' : undefined}><Images size={20} /><span>图库</span></button>
-        <button className="navigation-account" title={guest ? '登录 / 注册' : '账户与设置'} aria-label={guest ? '登录 / 注册' : '账户与设置'} onClick={() => navigate({ view: guest ? 'login' : 'account' })}><span className="navigation-avatar"><UserRound size={20} /><i data-signed-in={!guest} /></span><span className="navigation-identity"><strong>{guest ? '登录 / 注册' : me.data?.user.displayName || me.data?.user.email || '已登录'}</strong><small>{guest ? '未登录' : '已登录'}</small></span></button>
+        <button className="navigation-account" aria-current={location.view === 'account' || location.view === 'login' ? 'page' : undefined} title={guest ? '登录 / 注册' : '账户与设置'} aria-label={mobile ? '用户' : guest ? '登录 / 注册' : '账户与设置'} onClick={() => navigate({ view: guest ? 'login' : 'account' })}><span className="navigation-avatar"><UserRound size={20} /><i data-signed-in={!guest} /></span><span className="navigation-identity"><strong>{guest ? '登录 / 注册' : me.data?.user.displayName || me.data?.user.email || '已登录'}</strong><small>{guest ? '未登录' : '已登录'}</small></span></button>
       </nav>
       <Conversation job={selected.data} loading={Boolean(location.job && selected.isPending)} error={selected.error?.message} onUpload={() => input.current?.click()} onOpen={(images, index) => setLightbox({ images, index, mode: 'conversation' })} onSkillSelect={applySkillById}>
       {(conversationImages) => <Canvas job={selected.data} editingJobId={draft.parentJobId} files={draft.files} loading={Boolean(location.job && selected.isPending && freshJobId !== location.job)} error={selected.error?.message}
@@ -308,50 +389,39 @@ export function Studio() {
           {draft.promptParts?.some(part => part.type === 'image' && !draft.files.some(file => file.id === part.fileId)) && <p role="alert" className="studio-error">引用图片不在参考图区，请删除该引用并重新选择。</p>}
           {me.isError && <button className="studio-text-button" onClick={() => me.refetch()}>账户连接失败，点击重试</button>}
           {draft.pendingPayment && <button className="studio-text-button" onClick={() => navigate({ view: 'payment', order: draft.pendingPayment!.orderId })}>继续支付中的任务</button>}
-          <div className="composer-bottom-row"><div className="composer-selectors"><button className="composer-selector" aria-label="打开画板" title="画板" onClick={() => { setBoardImageUrl(undefined); setBoardImageFileId(undefined); navigate({ view: 'board' }); }}><Paintbrush size={18} /><span>画板</span></button>
+      <div className="composer-bottom-row"><div className="composer-selectors"><button className="composer-selector" aria-label="打开画板" title="画板" onClick={() => navigate({ view: 'board' })}><Paintbrush size={18} /><span>画板</span></button>
             <button className="composer-selector composer-mention-trigger" aria-label="引用图片或主体" title="引用图片或主体" aria-haspopup="listbox" disabled={!ready || create.isPending} onPointerDown={event => event.preventDefault()} onClick={event => prompt.current?.openMentions(event.currentTarget)}><AtSign size={19} /></button>
-            <button ref={modelTrigger} className="composer-selector model-selector" aria-label="选择模型" aria-haspopup="dialog" aria-expanded={location.view === 'models'} onClick={() => navigate({ view: 'models' })}><Box size={18} /><span>{draft.provider === 'auto' ? '自动推荐' : selectedModel?.displayName || '选择模型'}</span><ChevronDown size={14} /></button>
-            <button ref={sizeTrigger} className="composer-selector" aria-label="比例与清晰度" aria-haspopup="dialog" aria-expanded={location.view === 'settings'} onClick={() => navigate({ view: 'settings' })}><RectangleVertical size={17} /><span>{draft.aspectRatio === 'auto' ? '智能' : draft.aspectRatio} · {draft.quality}</span><ChevronDown size={14} /></button>
-          </div><div className="composer-submit"><span className="quote-label" aria-live="polite">{quoteLabel}</span>
+            <button ref={modelTrigger} className="composer-selector model-selector" title={draft.provider === 'auto' ? '模型：自动推荐' : selectedModel?.displayName || '选择模型'} aria-label="选择模型" aria-haspopup="dialog" aria-expanded={location.view === 'models'} onClick={() => navigate({ view: 'models' })}><Box size={18} /><span>{draft.provider === 'auto' ? '自动推荐' : selectedModel?.displayName || '选择模型'}</span><ChevronDown size={14} /></button>
+            <button ref={sizeTrigger} className="composer-selector size-selector" title={`比例与清晰度：${draft.aspectRatio} · ${draft.quality}`} aria-label="比例与清晰度" aria-haspopup="dialog" aria-expanded={location.view === 'settings'} onClick={() => navigate({ view: 'settings' })}><RectangleVertical size={17} /><span>{draft.aspectRatio === 'auto' ? '智能' : draft.aspectRatio} · {draft.quality}</span><ChevronDown size={14} /></button>
+          </div><div className="composer-submit">
             {guest ? <button className="studio-primary" onClick={() => navigate({ view: 'login' })}>登录后生成</button> : <button className="studio-primary chat-send" title="发送并生成图片" aria-label={create.isPending ? '提交中' : currentWorking ? '生成中' : '生成'} onClick={submit} disabled={!canSubmit}>
-              {busy ? <Loader2 className="animate-spin" size={18} /> : <ArrowUp size={21} />}
+              <span className="send-cost" aria-live="polite">{quoteLabel}</span>
+              <span className="send-icon" aria-hidden="true">{busy ? <Loader2 className="animate-spin" size={18} /> : <ArrowUp size={21} />}</span>
             </button>}
           </div></div>
         </div>
       </aside>
-    </div>
     <input ref={input} type="file" multiple accept="image/jpeg,image/png,image/webp" hidden onChange={event => { handleFiles(Array.from(event.target.files ?? [])); event.target.value = ''; }} />
     {location.view === 'references' && <Dialog title="参考图片" onClose={closeDialog}><div className="reference-manager">
       {error && <p className="studio-error" role="alert">{error}</p>}
       <div className="reference-tray">{draft.files.map((file, index) => <div key={file.id} className={index >= limit ? 'reference-over-limit' : undefined}>
         <button className="reference-preview" aria-label={`预览参考图 ${index + 1}${index >= limit ? '，超出当前模型上限' : ''}`} onClick={() => setLightbox({ images: draft.files.map((item, i) => ({ url: item.url, label: `参考图 ${i + 1}`, alt: `参考图 ${i + 1}` })), index, mode: 'references' })}><img src={file.url} alt={`参考图 ${index + 1}`} /></button>
-        <button className="reference-edit" aria-label={`继续绘制参考图 ${index + 1}`} title="继续绘制" onClick={() => { setBoardImageUrl(file.url); setBoardImageFileId(file.id); closeDialog(); navigate({ view: 'board' }); }}><Pencil size={16} /></button>
+        <button className="reference-edit" aria-label={`编辑参考图 ${index + 1}`} title="编辑图片" onClick={() => setLightbox({ images: draft.files.map((item, i) => ({ url: item.url, label: `参考图 ${i + 1}`, alt: `参考图 ${i + 1}` })), index, mode: 'references' })}><Pencil size={16} /></button>
         <button className="reference-remove" aria-label={`移除参考图 ${index + 1}`} title="移除参考图" onClick={() => { const parts = draft.promptParts?.filter(part => part.type === 'text' || part.fileId !== file.id); patchDraft({ files: draft.files.filter(item => item.id !== file.id), parentJobId: undefined, ...(parts ? { prompt: promptPartsText(parts), promptParts: parts } : {}) }); }}><Trash2 size={16} /></button>
       </div>)}</div>
       {!draft.files.length && <p className="studio-empty">还没有参考图片</p>}
       <div className="reference-manager-actions"><button className="studio-secondary" disabled={upload.isPending || draft.files.length >= limit} onClick={() => input.current?.click()}><Plus size={17} />添加参考图</button></div>
       <span className="reference-limit">{draft.files.length} / {limit} 张</span>
     </div></Dialog>}
-    {location.view === 'board' && <Dialog title="画板" hideHeading onClose={closeDialog}><Board initialImageUrl={boardImageUrl} onClose={closeDialog} onSave={async file => {
-      let replacement;
-      try {
-        replacement = await uploadImage(file);
-      } catch (uploadError) {
-        setError(uploadError instanceof Error ? uploadError.message : '画板图片上传失败');
-        return;
-      }
-      if (boardImageFileId) {
-        patchDraft({ files: draft.files.map(item => item.id === boardImageFileId ? replacement : item), promptParts: draft.promptParts?.map(part => part.type === 'image' && part.fileId === boardImageFileId ? { type: 'image', fileId: replacement.id, label: part.label } : part) });
-        await updateStudioAsset(`file:${boardImageFileId}`, { hidden: true });
-      } else {
-        patchDraft({ files: [...draft.files, replacement] });
-      }
-      setBoardImageUrl(undefined); setBoardImageFileId(undefined); closeDialog();
+    {location.view === 'board' && <Dialog title="画板" hideHeading onClose={closeDialog}><Board onClose={closeDialog} onSave={async file => {
+      if (draft.files.length >= limit) throw new Error(`当前模型最多支持 ${limit} 张参考图`);
+      const replacement = await uploadImage(file);
+      patchDraft({ files: [...draft.files, replacement] });
       void client.invalidateQueries({ queryKey: ['assets'] });
     }} /></Dialog>}
     {location.view === 'models' && <Dialog title="选择模型" anchor={modelTrigger.current} onClose={closeDialog}><div className="composer-model-list">
-      <button className="composer-model-option" aria-pressed={draft.provider === 'auto'} onClick={() => { patchDraft({ provider: 'auto', model: 'auto' }); closeDialog(); }}><span className="model-symbol"><Wand2 size={22} /></span><span><strong>自动推荐</strong><small>{selectedModel?.displayName || '自动选择可用模型'}</small></span>{draft.provider === 'auto' && <Check size={19} />}</button>
-      {modelOptions.map(model => <button className="composer-model-option" key={`${model.provider}:${model.model}`} aria-pressed={draft.provider === model.provider && draft.model === model.model} onClick={() => { patchDraft({ provider: model.provider, model: model.model }); closeDialog(); }}><span className="model-symbol"><Box size={22} /></span><span><strong>{model.displayName}</strong><small>{model.description}</small></span>{draft.provider === model.provider && draft.model === model.model && <Check size={19} />}</button>)}
+      <button className="composer-model-option" aria-pressed={draft.provider === 'auto'} onClick={() => { patchDraft({ provider: 'auto', model: 'auto' }); closeDialog(); }}><span className="model-symbol"><Wand2 size={22} /></span><span><strong>自动推荐</strong><small>{selectedModel?.displayName || '自动选择可用模型'}</small></span></button>
+      {modelOptions.map(model => <button className="composer-model-option" key={`${model.provider}:${model.model}`} aria-pressed={draft.provider === model.provider && draft.model === model.model} onClick={() => { patchDraft({ provider: model.provider, model: model.model }); closeDialog(); }}><span className="model-symbol"><Box size={22} /></span><span><strong>{model.displayName}</strong><small>{model.description}</small></span></button>)}
     </div></Dialog>}
     {location.view === 'settings' && <Dialog title="生成设置" anchor={sizeTrigger.current} onClose={closeDialog}><div className="composer-size-options">
       <fieldset><legend>图片比例</legend><div className="ratio-options">{ratioOptions.map(option => <button key={option.value} aria-pressed={draft.aspectRatio === option.value} onClick={() => patchDraft({ aspectRatio: option.value })}>{option.value === 'auto' ? <Scan size={20} /> : <span className="ratio-symbol" style={{ aspectRatio: option.value.replace(':', '/'), width: option.value.split(':').map(Number)[0] >= option.value.split(':').map(Number)[1] ? 23 : undefined, height: option.value.split(':').map(Number)[0] < option.value.split(':').map(Number)[1] ? 23 : undefined }} />}<span>{option.value === 'auto' ? '智能' : option.value}</span></button>)}</div></fieldset>
@@ -366,7 +436,7 @@ export function Studio() {
         patchDraft({ prompt: '', files: [], parentJobId: undefined }); navigate({ job: id, view: null });
       } catch (error) { notices.error('打开对话失败', error instanceof Error ? error.message : '请重试'); }
     }} /></Dialog>}
-    {location.view === 'history' && <Dialog title="图库" drawer onClose={closeDialog}><AssetLibrary onPreview={(asset, collection) => {
+    {location.view === 'history' && <NavigationPage mobile={mobile} title="图库" onClose={closeDialog}><AssetLibrary mobilePage onPreview={(asset, collection) => {
       const images = collection.map(item => ({
         url: item.url,
         label: item.title,
@@ -383,31 +453,32 @@ export function Studio() {
         navigate({ job: asset.jobId, view: null });
       } else if (asset.fileId) {
         patchDraft({ files: [{ id: asset.fileId, url: asset.url, mimeType: '', size: 0, createdAt: asset.createdAt }], parentJobId: activeParentJobId });
-        // Close the drawer while preserving the currently open conversation.
+        // Return to creation while preserving the currently open conversation.
         navigate({ view: null });
       }
       prompt.current?.focus();
-    }} /></Dialog>}
-    {location.view === 'login' && <Dialog title="登录 PicUp" onClose={closeDialog}><AuthPanel onSuccess={async () => {
+    }} /></NavigationPage>}
+    {location.view === 'login' && <NavigationPage mobile={mobile} title="登录 PicUp" onClose={closeDialog}><AuthPanel onSuccess={async () => {
       const account = await getMe();
       if (account.user.isGuest) throw new Error('登录状态尚未更新，请重试');
       try { sessionStorage.setItem(`picup:studio:${account.user.id}`, JSON.stringify(draft)); } catch { /* Storage can be unavailable in private browsing. */ }
       client.setQueryData(['me'], account);
       await client.invalidateQueries({ queryKey: ['studio-preferences'] });
       closeDialog();
-    }} /></Dialog>}
+    }} /></NavigationPage>}
     {location.view === 'recharge' && <Dialog title="积分充值" onClose={closeDialog}><Recharge me={me.data} onPayment={openPayment} /></Dialog>}
     {location.view === 'credits' && <Dialog title="积分与交易" onClose={closeDialog}><CreditActivity me={me.data} onRecharge={() => navigate({ view: 'recharge' })} onPayment={openPayment} /></Dialog>}
-    {location.view === 'account' && <Dialog title="账户与设置" drawer onClose={closeDialog}><Account me={me.data} models={models.data} onRecharge={() => navigate({ view: 'recharge' })} onPayment={openPayment} onLogin={() => navigate({ view: 'login' })} onLogout={() => {
+    {location.view === 'account' && <NavigationPage mobile={mobile} title="账户与设置" onClose={closeDialog}><Account me={me.data} models={models.data} onRecharge={() => navigate({ view: 'recharge' })} onPayment={openPayment} onLogin={() => navigate({ view: 'login' })} onLogout={() => {
       clear(); if (me.data) sessionStorage.removeItem(`picup:latest:${me.data.user.id}`); setLatestId(null); setPayment(null);
       navigate({ job: null, view: null, order: null }); client.clear(); void me.refetch();
-    }} /></Dialog>}
+    }} /></NavigationPage>}
     {location.view === 'payment' && <Dialog title="微信支付" onClose={closeDialog}>{paymentOrder && ready ? <Payment key={paymentOrder.id} order={paymentOrder} onPaid={paid} /> : <div className="studio-empty">{restoredPayment.isError ? '订单加载失败' : '正在恢复订单'}{restoredPayment.isError && <button className="studio-secondary" onClick={() => restoredPayment.refetch()}>重试</button>}</div>}</Dialog>}
-    {lightbox && <Dialog title="图片预览" fullscreen onClose={() => setLightbox(null)}><ImageLightbox mode={lightbox.mode} title="图片预览" images={lightbox.images} index={lightbox.index} onIndexChange={index => setLightbox(previous => previous ? { ...previous, index, ...(previous.assetKey ? { assetKey: previous.images[index]?.meta } : {}) } : previous)} onEdit={image => { setBoardImageUrl(image.url); setBoardImageFileId(lightbox.assetKey?.startsWith('file:') ? lightbox.assetKey.slice(5) : undefined); setLightbox(null); navigate({ view: 'board' }); }} onDelete={lightbox.mode === 'gallery' && lightbox.assetKey ? async () => {
+    {lightbox && <Dialog title="图片预览" fullscreen onClose={() => { if (!previewSubmitting.current) setLightbox(null); }}><ImageLightbox onSubmitEdit={submitPreviewEdit} ratios={aspectRatioOptions.map(option => option.value)} draftScope={me.data?.user.id} mode={lightbox.mode} title="图片预览" images={lightbox.images} index={lightbox.index} onIndexChange={index => setLightbox(previous => previous ? { ...previous, index, ...(previous.assetKey ? { assetKey: previous.images[index]?.meta } : {}) } : previous)} onDelete={lightbox.mode === 'gallery' && lightbox.assetKey ? async () => {
       if (!await notices.confirm({ title: '删除这张图片？', message: '删除后将从图库中隐藏，对话中的图片仍会保留。', confirmText: '删除', tone: 'danger' })) return;
       await updateStudioAsset(lightbox.assetKey!, { hidden: true });
       setLightbox(null);
       void client.invalidateQueries({ queryKey: ['assets'] });
     } : undefined} onClose={() => setLightbox(null)} /></Dialog>}
+    </div>
   </main>;
 }

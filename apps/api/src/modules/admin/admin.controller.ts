@@ -1,4 +1,6 @@
-import { BadRequestException, Body, Controller, Delete, Get, Inject, NotFoundException, Param, Patch, Post, Put, Query, Req, UseGuards } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Delete, Get, Inject, NotFoundException, Param, Patch, Post, Put, Query, Req, Res, UseGuards } from '@nestjs/common';
+import type { Response } from 'express';
+import { ObjectStorageService } from '../../common/object-storage.service';
 import { Prisma } from '@prisma/client';
 import type { ImageJobStatus, UserRole, UserStatus } from '@picup/shared';
 import { AuthService } from '../auth/auth.service';
@@ -32,7 +34,8 @@ export class AdminController {
     @Inject(StorageService) private readonly storage: StorageService,
     @Inject(AuthService) private readonly auth: AuthService,
     @Inject(ModelsService) private readonly models: ModelsService,
-    @Inject(AiConfigService) private readonly aiConfig: AiConfigService
+    @Inject(AiConfigService) private readonly aiConfig: AiConfigService,
+    @Inject(ObjectStorageService) private readonly objectStorage: ObjectStorageService
   ) {}
 
   @Get('users')
@@ -200,6 +203,18 @@ export class AdminController {
     const job = await this.storage.getJob(id, undefined, true);
     if (!job) throw new NotFoundException('任务不存在');
     return job;
+  }
+
+  @Get('jobs/:id/media/:kind/:index')
+  async jobMedia(@Param('id') id: string, @Param('kind') kind: string, @Param('index') index: string, @Res() res: Response) {
+    const job = await this.storage.getJob(id, undefined, true);
+    if (!job || !/^\d+$/.test(index)) throw new NotFoundException('图片不存在');
+    const file = kind === 'input' ? job.inputFiles[Number(index)] : kind === 'output' ? job.outputImages[Number(index)] : kind === 'mask' && index === '0' ? job.maskFile : undefined;
+    if (!file) throw new NotFoundException('图片不存在');
+    res.setHeader('Content-Type', file.mimeType);
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.send(await this.objectStorage.readByUrl(file.url));
   }
 
   @Get('models')

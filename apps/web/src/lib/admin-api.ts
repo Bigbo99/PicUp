@@ -7,6 +7,7 @@ import type {
   AdminAppSettingRecord,
   AdminAuditLogListResponse,
   AdminJobsResponse,
+  ImageJobRecord,
   AdminOverviewResponse,
   AdminProviderHealthResponse,
   AdminStatsResponse,
@@ -45,7 +46,7 @@ export function getAdminStats() {
 }
 
 export function getAdminOverview(range = '24h') {
-  return adminRequest<AdminOverviewResponse>(`/api/admin/overview?range=${encodeURIComponent(range)}`);
+  return adminRequest<AdminOverviewResponse>(`/api/admin/overview?range=${encodeURIComponent(range)}`).then(result => ({ ...result, recentFailures: result.recentFailures.map(adminJobMedia) }));
 }
 
 export function getAdminProviderHealth() {
@@ -97,7 +98,12 @@ export function deleteAdminUser(id: string) {
 }
 
 export function listAdminJobs(params = new URLSearchParams()) {
-  return adminRequest<AdminJobsResponse>(`/api/admin/jobs?${params.toString()}`);
+  return adminRequest<AdminJobsResponse>(`/api/admin/jobs?${params.toString()}`).then(result => Array.isArray(result) ? result.map(adminJobMedia) : { ...result, jobs: result.jobs.map(adminJobMedia) });
+}
+
+function adminJobMedia(job: ImageJobRecord): ImageJobRecord {
+  const url = (kind: string, index: number) => `/api/admin/jobs/${encodeURIComponent(job.id)}/media/${kind}/${index}`;
+  return { ...job, inputFiles: job.inputFiles.map((file, i) => ({ ...file, url: url('input', i) })), outputImages: job.outputImages.map((image, i) => ({ ...image, url: url('output', i) })), maskFile: job.maskFile ? { ...job.maskFile, url: url('mask', 0) } : undefined };
 }
 
 export function getAdminAiConfig() {

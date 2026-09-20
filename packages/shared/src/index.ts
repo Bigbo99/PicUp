@@ -19,6 +19,7 @@ export type ImageTemplate =
   | 'freeform';
 
 export interface UploadedFileRecord {
+  purpose?: 'user' | 'system';
   id: string;
   userId?: string;
   hash?: string;
@@ -54,6 +55,13 @@ export function promptPartsText(parts: PromptPart[]): string {
 }
 
 export interface ImageJobCreateRequest {
+  previewOperation?: 'describe' | 'annotate' | 'comment' | 'background' | 'remove' | 'resize';
+  guideFileId?: string;
+  editComments?: { x: number; y: number; text: string }[];
+  confirmedCredits?: number;
+  quotedSelection?: string;
+  maskFileId?: string;
+  background?: 'transparent';
   mode: ImageJobMode;
   provider: ImageProviderName;
   model: string;
@@ -79,6 +87,7 @@ export interface ImageJobCreateResponse {
 }
 
 export interface JobQuote {
+  selection?: string;
   paymentMode: 'free' | 'credits';
   credits: number;
   available: boolean;
@@ -86,6 +95,8 @@ export interface JobQuote {
 }
 
 export interface ImageJobRecord extends ImageJobCreateRequest {
+  systemFileIds?: string[];
+  maskFile?: UploadedFileRecord;
   id: string;
   userId?: string;
   status: ImageJobStatus;
@@ -116,6 +127,8 @@ export interface ModelConfig {
   provider: Exclude<ImageProviderName, 'auto'>;
   providerDisplayName?: string;
   providerType?: AiProviderType;
+  supportsMask?: boolean;
+  supportsTransparentBackground?: boolean;
   model: string;
   displayName: string;
   description: string;

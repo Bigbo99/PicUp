@@ -1,5 +1,6 @@
 import type { NextConfig } from 'next';
 import path from 'node:path';
+import { networkInterfaces } from 'node:os';
 
 // pnpm's Windows symlink layout cannot be copied into Next's standalone
 // trace directory without Developer Mode/admin privileges. Docker/Linux
@@ -8,6 +9,11 @@ const standaloneOutput = process.env.NEXT_DISABLE_STANDALONE !== '1' && process.
 
 const nextConfig: NextConfig = {
   devIndicators: false,
+  // Allow development access from computers on the local network.
+  allowedDevOrigins: ['localhost', '127.0.0.1', ...Object.values(networkInterfaces())
+    .flatMap((addresses) => addresses ?? [])
+    .filter((address) => address.family === 'IPv4' && !address.internal)
+    .map((address) => address.address)],
   distDir: process.env.NEXT_DIST_DIR || '.next',
   ...(standaloneOutput
     ? {

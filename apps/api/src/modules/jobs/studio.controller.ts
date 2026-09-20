@@ -35,7 +35,7 @@ export class StudioController {
   @Get('subjects')
   async subjects(@Req() req: AuthenticatedRequest, @Query('q') q = '', @Query('offset') offset = '0') {
     const start = Math.max(0, Math.floor(Number(offset) || 0));
-    const items = await this.db.studioSubject.findMany({ where: { userId: req.authUser.id, name: { contains: q.trim(), mode: 'insensitive' } },
+    const items = await this.db.studioSubject.findMany({ where: { userId: req.authUser.id, file: { purpose: 'user' }, name: { contains: q.trim(), mode: 'insensitive' } },
       include: { file: true }, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], skip: start, take: 21 });
     return { items: items.slice(0, 20), next: items.length > 20 ? start + 20 : null };
   }
@@ -43,7 +43,7 @@ export class StudioController {
   @Post('subjects')
   async createSubject(@Body() body: SubjectDto, @Req() req: AuthenticatedRequest) {
     if (!body.name.trim()) throw new BadRequestException('请输入主体名称');
-    const file = await this.db.fileRecord.findFirst({ where: { id: body.fileId, userId: req.authUser.id, mimeType: { startsWith: 'image/' } } });
+    const file = await this.db.fileRecord.findFirst({ where: { id: body.fileId, userId: req.authUser.id, purpose: 'user', mimeType: { startsWith: 'image/' } } });
     if (!file) throw new NotFoundException('主体参考图片不存在');
     return this.db.studioSubject.create({ data: { userId: req.authUser.id, fileId: file.id, name: body.name.trim(), description: body.description?.trim() ?? '' }, include: { file: true } });
   }
@@ -139,13 +139,13 @@ export class StudioController {
 
   private async assets(userId: string) {
     const [files, jobs, metadata, subjects] = await Promise.all([
-      this.db.fileRecord.findMany({ where: { userId }, orderBy: { createdAt: 'desc' }, take: 5000 }),
-      this.db.imageJob.findMany({ where: { userId, deletedAt: null, status: 'succeeded' }, orderBy: { createdAt: 'desc' }, take: 5000, select: { id: true, prompt: true, outputImages: true, imageIds: true, createdAt: true, status: true } }),
+      this.db.fileRecord.findMany({ where: { userId, purpose: 'user' }, orderBy: { createdAt: 'desc' }, take: 5000 }),
+      this.db.imageJob.findMany({ where: { userId, deletedAt: null, status: 'succeeded' }, orderBy: { createdAt: 'desc' }, take: 5000, select: { id: true, prompt: true, outputImages: true, imageIds: true, editOptions: true, createdAt: true, status: true } }),
       this.db.studioAssetMetadata.findMany({ where: { userId }, take: 5000 }),
-      this.db.studioSubject.findMany({ where: { userId }, include: { file: true }, orderBy: { createdAt: 'desc' }, take: 5000 })
+      this.db.studioSubject.findMany({ where: { userId, file: { purpose: 'user' } }, include: { file: true }, orderBy: { createdAt: 'desc' }, take: 5000 })
     ]);
     const meta = new Map(metadata.map(item => [item.key, item]));
-    const referenced = new Set(jobs.flatMap(job => (job.imageIds as string[]) ?? []));
+    const referenced = new Set(jobs.filter(job => !(job.editOptions as { previewOperation?: string } | null)?.previewOperation).flatMap(job => (job.imageIds as string[]) ?? []));
     const items = [
       ...subjects.map(subject => ({ key: `subject:${subject.id}`, subjectId: subject.id, fileId: subject.fileId, jobId: null as string | null, index: 0, url: subject.file.url, title: subject.name, kind: 'subject', createdAt: subject.createdAt })),
       ...files.filter(file => referenced.has(file.id)).map(file => ({ key: `file:${file.id}`, fileId: file.id, jobId: null as string | null, index: 0, url: file.url, title: '上传图片', kind: 'upload', createdAt: file.createdAt })),

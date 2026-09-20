@@ -136,6 +136,7 @@ model PaymentOrder {
 }
 
 model FileRecord {
+  purpose   String   @default("user") @db.VarChar(16)
   id        String   @id @default(uuid()) @db.Uuid
   userId    String?  @map("user_id") @db.Uuid
   hash      String?  @db.VarChar(64)
@@ -162,6 +163,7 @@ model ImageJob {
   template         String         @db.VarChar(80)
   prompt           String
   promptParts      Json?          @map("prompt_parts")
+  editOptions      Json?          @map("edit_options")
   imageIds         Json           @map("image_ids")
   aspectRatio      String         @map("aspect_ratio") @db.VarChar(24)
   quality          String         @db.VarChar(24)
