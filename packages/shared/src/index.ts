@@ -317,6 +317,8 @@ export interface CreditRechargePlan {
 }
 
 export interface PaymentOrderResponse {
+  checkoutUrl?: string;
+  paymentProvider?: string;
   id: string;
   status: 'pending' | 'paid' | 'failed' | 'closed';
   orderType: 'credit_recharge' | 'single_job';

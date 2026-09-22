@@ -1,4 +1,5 @@
-import { Body, Controller, Get, Headers, Inject, Param, Post, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Headers, Inject, Param, Post, Req, Res, UseGuards } from '@nestjs/common';
+import type { Response } from 'express';
 import { AuthGuard } from '../auth/auth.guard';
 import { AuthService } from '../auth/auth.service';
 import type { AuthenticatedRequest } from '../auth/auth.types';
@@ -41,5 +42,11 @@ export class PaymentsController {
   @Post('wechat/notify')
   async wechatNotify(@Body() body: string | Record<string, unknown>, @Headers('content-type') contentType?: string) {
     return this.payments.handleWechatNotify(typeof body === 'string' ? body : String(body), contentType);
+  }
+
+  @Post('center/notify')
+  async centerNotify(@Body() body: Record<string, string>, @Res() res: Response) {
+    const result = await this.payments.handleCenterNotify(body ?? {});
+    res.status(result === 'success' ? 200 : 400).type('text/plain').send(result);
   }
 }

@@ -1099,6 +1099,18 @@ export class StorageService {
     return order?.externalOrderId ?? null;
   }
 
+  async setPaymentCheckoutUrl(id: string, checkoutUrl: string) {
+    const order = await this.prisma.paymentOrder.findUniqueOrThrow({ where: { id } });
+    const metadata = order.metadata && typeof order.metadata === 'object' && !Array.isArray(order.metadata) ? order.metadata : {};
+    const updated = await this.prisma.paymentOrder.update({ where: { id }, data: { metadata: { ...metadata, checkoutUrl } } });
+    return this.toPaymentOrder(updated);
+  }
+
+  async getPaymentOrderByExternalId(externalOrderId: string) {
+    const order = await this.prisma.paymentOrder.findUnique({ where: { externalOrderId } });
+    return order ? this.toPaymentOrder(order) : null;
+  }
+
   async isPaymentOrderUsed(paymentOrderId: string) {
     const count = await this.prisma.imageJob.count({ where: { paymentOrderId } });
     return count > 0;
@@ -1307,6 +1319,8 @@ export class StorageService {
       amountCents: order.amountCents,
       credits: order.credits,
       codeUrl: this.metadataString(order.metadata, 'codeUrl'),
+      checkoutUrl: this.metadataString(order.metadata, 'checkoutUrl'),
+      paymentProvider: this.metadataString(order.metadata, 'paymentProvider'),
       createdAt: order.createdAt.toISOString(),
       paidAt: order.paidAt?.toISOString()
     };

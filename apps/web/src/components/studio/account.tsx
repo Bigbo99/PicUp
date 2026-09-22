@@ -71,22 +71,27 @@ export function Payment({ order, onPaid }: { order: PaymentOrderResponse; onPaid
   useEffect(() => {
     let active = true;
     setQr(null);
-    if (current.codeUrl) void QRCode.toDataURL(current.codeUrl, { width: 220, margin: 2 })
+    const content = current.checkoutUrl ?? current.codeUrl;
+    if (content) void QRCode.toDataURL(content, { width: 440, margin: 4 })
       .then(url => { if (active) setQr(url); }).catch(() => { if (active) setQr(null); });
     return () => { active = false; };
-  }, [current.codeUrl]);
+  }, [current.codeUrl, current.checkoutUrl]);
   useEffect(() => { if (current.status === 'paid' && !handled.current) { handled.current = true; onPaid(); } }, [current.status, onPaid]);
   return <div className="payment-content"><p>{current.orderType === 'credit_recharge' ? '积分充值' : '单次生成'}</p><strong className="payment-amount">¥{(current.amountCents / 100).toFixed(2)}</strong>
     {qr && current.status === 'pending' && <img src={qr} alt="微信支付二维码" width={220} height={220} />}
     <p role="status">{current.status === 'paid' ? '支付成功' : current.status === 'pending' ? '等待微信支付' : '订单已结束'}</p>
     {query.error && <p role="alert" className="studio-error">{query.errorUpdateCount >= 5 ? '连接暂时中断，请关闭后从账户中的待支付订单重新打开。' : '支付结果确认中，请稍候。'}</p>}
-    {current.codeUrl && current.status === 'pending' && <a className="studio-primary" href={current.codeUrl}>打开微信支付</a>}
+    {current.checkoutUrl && current.status === 'pending' && <a className="studio-primary" href={current.checkoutUrl}>前往收银台</a>}
+    {current.status === 'pending' && <button className="studio-secondary" disabled={query.isFetching} onClick={() => query.refetch()}>刷新支付状态</button>}
   </div>;
 }
 
 export function Recharge({ me, onPayment }: { me?: AuthMeResponse; onPayment: (order: PaymentOrderResponse) => void }) {
   const [selectedPlanId, setSelectedPlanId] = useState<string | null>(null);
-  const recharge = useMutation({ mutationFn: createRechargeOrder, onSuccess: onPayment });
+  const recharge = useMutation({ mutationFn: createRechargeOrder, onSuccess: order => {
+    onPayment(order);
+    if (order.checkoutUrl && /MicroMessenger/i.test(navigator.userAgent)) window.location.assign(order.checkoutUrl);
+  } });
   const selectedPlan = me?.credits.rechargePlans.find(plan => plan.id === selectedPlanId);
   return <div className="recharge-content"><div className="recharge-balance"><span>当前余额</span><strong>{me?.credits.balance ?? 0}<small>积分</small></strong></div><p className="recharge-hint">选择积分套餐，使用微信安全支付</p>
     <div className="recharge-options">{me?.credits.rechargePlans.map((plan, index) => { const minImages = Math.ceil(plan.credits / 2); return <button type="button" className={`recharge-plan ${index === 1 ? 'is-recommended' : ''} ${selectedPlanId === plan.id ? 'is-selected' : ''}`} key={plan.id} disabled={recharge.isPending} aria-pressed={selectedPlanId === plan.id} onClick={() => setSelectedPlanId(plan.id)}><span className="recharge-plan-top">{index === 1 && <em>更划算</em>}<strong>{plan.credits}</strong> 积分</span><span className="recharge-plan-price">¥{(plan.amountCents / 100).toFixed(2)}</span><span className="recharge-plan-estimate">约可生成 {minImages}–{plan.credits} 张图片</span><span className="recharge-plan-action">{selectedPlanId === plan.id ? '已选择' : '选择套餐'}</span></button>; })}</div>

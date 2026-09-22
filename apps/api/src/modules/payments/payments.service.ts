@@ -3,6 +3,7 @@ import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypt
 import type { AuthUser, CreditRechargePlan } from '@picup/shared';
 import { StorageService } from '../../common/storage.service';
 import { singleUsePriceCents } from '../auth/auth.service';
+import { centerConfig, centerVerify, createCenterCheckout, queryCenterOrder } from './payment-center';
 
 const paymentRechargePlans: CreditRechargePlan[] = [
   // { id: 'credits_10_trial', title: '10 积分', amountCents: 10, credits: 10 },
@@ -27,6 +28,15 @@ export class PaymentsService {
     if (!order) throw new NotFoundException('支付订单不存在');
     if (order.status === 'paid' || !order.id) return order;
 
+    if (order.paymentProvider === 'payingpage') {
+      const externalId = await this.storage.getPaymentOrderExternalId(order.id);
+      if (!externalId) return order;
+      const result = await queryCenterOrder(externalId);
+      if (result.money !== (order.amountCents / 100).toFixed(2)) throw new BadRequestException('支付金额不匹配');
+      if (result.status === 'paid' || result.status === 'notified') return await this.storage.markPaymentOrderPaid(externalId) ?? order;
+      return order;
+    }
+
     const queryResult = await this.queryWechatOrder(order.id).catch((error) => {
       console.warn(`[payment] query order failed id=${order.id}: ${error instanceof Error ? error.message : String(error)}`);
       return null;
@@ -47,7 +57,12 @@ export class PaymentsService {
 
     const id = randomUUID();
     const externalOrderId = `RC${Date.now()}${randomBytes(4).toString('hex')}`;
-    const codeUrl = await this.createWechatNativeOrder({
+    if (centerConfig()) {
+      await this.storage.createPaymentOrder({ id, userId: user.id, externalOrderId, orderType: 'credit_recharge', amountCents: plan.amountCents, credits: plan.credits, metadata: { planId, paymentProvider: 'payingpage' } });
+      const checkoutUrl = await createCenterCheckout(id, externalOrderId, `PicUp ${plan.title}`, plan.amountCents);
+      return this.storage.setPaymentCheckoutUrl(id, checkoutUrl);
+    }
+    const paymentValue = await this.createWechatOrder({
       outTradeNo: externalOrderId,
       body: `PicUp ${plan.title}`,
       amountCents: plan.amountCents,
@@ -61,14 +76,19 @@ export class PaymentsService {
       orderType: 'credit_recharge',
       amountCents: plan.amountCents,
       credits: plan.credits,
-      metadata: { planId, codeUrl }
+      metadata: { planId, codeUrl: paymentValue }
     });
   }
 
   async createSingleJobOrder(user: AuthUser) {
     const id = randomUUID();
     const externalOrderId = `SJ${Date.now()}${randomBytes(4).toString('hex')}`;
-    const codeUrl = await this.createWechatNativeOrder({
+    if (centerConfig()) {
+      await this.storage.createPaymentOrder({ id, userId: user.id, externalOrderId, orderType: 'single_job', amountCents: singleUsePriceCents, credits: 0, metadata: { paymentProvider: 'payingpage' } });
+      const checkoutUrl = await createCenterCheckout(id, externalOrderId, 'PicUp single image generation', singleUsePriceCents);
+      return this.storage.setPaymentCheckoutUrl(id, checkoutUrl);
+    }
+    const codeUrl = await this.createWechatOrder({
       outTradeNo: externalOrderId,
       body: 'PicUp single image generation',
       amountCents: singleUsePriceCents,
@@ -96,11 +116,22 @@ export class PaymentsService {
       return this.wechatXmlResponse('SUCCESS', 'ignored');
     }
 
+    const order = await this.storage.getPaymentOrderByExternalId(payload.out_trade_no);
+    if (!order || order.paymentProvider === 'payingpage' || payload.total_fee !== String(order.amountCents)) return this.wechatXmlResponse('FAIL', 'invalid order');
     await this.storage.markPaymentOrderPaid(payload.out_trade_no);
     return this.wechatXmlResponse('SUCCESS', 'OK');
   }
 
-  private async createWechatNativeOrder(input: {
+  async handleCenterNotify(payload: Record<string, string>) {
+    const config = centerConfig();
+    if (!config || Object.values(payload).some(value => typeof value !== 'string') || !centerVerify(payload, config.key) || payload.pid !== config.pid || payload.type !== 'wxpay' || payload.trade_status !== 'TRADE_SUCCESS') return 'fail';
+    const order = await this.storage.getPaymentOrderByExternalId(payload.out_trade_no);
+    if (!order || order.paymentProvider !== 'payingpage' || payload.money !== (order.amountCents / 100).toFixed(2)) return 'fail';
+    await this.storage.markPaymentOrderPaid(payload.out_trade_no);
+    return 'success';
+  }
+
+  private async createWechatOrder(input: {
     outTradeNo: string;
     body: string;
     amountCents: number;
@@ -134,17 +165,19 @@ export class PaymentsService {
     const response = await fetch('https://api.mch.weixin.qq.com/pay/unifiedorder', {
       method: 'POST',
       headers: { 'Content-Type': 'text/xml; charset=utf-8' },
-      body: this.toXml(params)
+      body: this.toXml(params),
+      signal: AbortSignal.timeout(15_000)
     }).catch((error) => {
       throw new ServiceUnavailableException(`微信支付下单失败：${error instanceof Error ? error.message : String(error)}`);
     });
 
     const text = await response.text();
     const result = this.parseXml(text);
-    if (result.return_code !== 'SUCCESS' || result.result_code !== 'SUCCESS' || !result.code_url) {
+    const paymentValue = result.code_url;
+    if (result.return_code !== 'SUCCESS' || result.result_code !== 'SUCCESS' || !paymentValue || !this.verifyWechatSign(result)) {
       throw new ServiceUnavailableException(this.wechatErrorMessage(result, text));
     }
-    return result.code_url;
+    return paymentValue;
   }
 
   private async queryWechatOrder(orderId: string) {
