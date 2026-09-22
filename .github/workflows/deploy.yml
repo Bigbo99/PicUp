@@ -51,6 +51,7 @@ jobs:
     name: Build and Push Image
     runs-on: ubuntu-latest
     needs: check
+    timeout-minutes: 45
     environment: production
     outputs:
       image_tag: ${{ steps.meta.outputs.image_tag }}
@@ -88,11 +89,12 @@ jobs:
           set -euo pipefail
           echo "image_tag=sha-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
 
-      - name: Build and push
+      - name: Build image locally
+        timeout-minutes: 20
         uses: docker/build-push-action@v6
         with:
           context: .
-          push: true
+          load: true
           tags: |
             ${{ secrets.ACR_IMAGE }}:latest
             ${{ secrets.ACR_IMAGE }}:${{ steps.meta.outputs.image_tag }}
@@ -100,9 +102,24 @@ jobs:
             NEXT_PUBLIC_API_BASE_URL=
             API_INTERNAL_URL=http://api:4000
           cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-to: type=gha,mode=max,timeout=3m,ignore-error=true
           provenance: false
           sbom: false
+
+      - name: Push immutable image to ACR
+        timeout-minutes: 20
+        env:
+          PUSH_IMAGE: ${{ secrets.ACR_IMAGE }}:${{ steps.meta.outputs.image_tag }}
+        run: bash deploy/push-image.sh "$PUSH_IMAGE"
+
+      - name: Update latest tag
+        timeout-minutes: 4
+        continue-on-error: true
+        env:
+          PUSH_IMAGE: ${{ secrets.ACR_IMAGE }}:latest
+          PUSH_TIMEOUT_SECONDS: '90'
+          PUSH_ATTEMPTS: '2'
+        run: bash deploy/push-image.sh "$PUSH_IMAGE"
 
   deploy:
     name: Deploy
