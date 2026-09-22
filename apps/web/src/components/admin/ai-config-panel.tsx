@@ -93,8 +93,8 @@ export function AiConfigPanel() {
   const config = configQuery.data;
 
   return (
-    <div className="grid gap-4">
-      <section className="rounded-lg border border-emerald-950/10 bg-white p-4 shadow-sm">
+    <div className="admin-config-panel">
+      <section className="admin-config-card">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
           <div>
             <h3 className="text-lg font-black text-[#083b2d]">AI Provider 配置</h3>
@@ -119,7 +119,7 @@ export function AiConfigPanel() {
       </section>
 
       {config.providers.map((provider) => (
-        <section key={provider.id} className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
+        <section key={provider.id} className="admin-config-card overflow-hidden">
           <header className="flex flex-col gap-3 border-b border-slate-200 p-4 lg:flex-row lg:items-start lg:justify-between">
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2">
@@ -490,9 +490,9 @@ function ModelEditorDialog({ providerId, model, pending, onClose, onSave }: {
 
 function ConfigDialog({ title, onClose, children }: { title: string; onClose: () => void; children: React.ReactNode }) {
   return (
-    <div className="fixed inset-0 z-[100] flex items-end justify-center bg-slate-950/45 p-3 sm:items-center sm:p-6" role="dialog" aria-modal="true" aria-label={title}>
-      <button type="button" className="absolute inset-0 h-full w-full cursor-default" aria-label="关闭" onClick={onClose} />
-      <section className="relative max-h-[92dvh] w-full max-w-2xl overflow-y-auto rounded-lg border border-slate-200 bg-white p-5 shadow-2xl">
+    <div className="admin-dialog-backdrop" role="dialog" aria-modal="true" aria-label={title}>
+      <button type="button" className="admin-dialog-dismiss" aria-label="关闭" onClick={onClose} />
+      <section className="admin-dialog admin-config-dialog">
         <header className="mb-5 flex items-center justify-between gap-3">
           <h2 className="text-xl font-black text-[#083b2d]">{title}</h2>
           <button type="button" className="admin-icon-button" onClick={onClose} aria-label="关闭"><X size={18} /></button>
@@ -568,13 +568,7 @@ function InlineNumberField({ label, value, onSave }: { label: string; value: num
 }
 
 function ConfigBadge({ label, tone }: { label: string; tone: 'success' | 'warning' | 'danger' | 'info' }) {
-  const styles = {
-    success: 'border-emerald-200 bg-emerald-50 text-emerald-700',
-    warning: 'border-amber-200 bg-amber-50 text-amber-700',
-    danger: 'border-red-200 bg-red-50 text-red-700',
-    info: 'border-blue-200 bg-blue-50 text-blue-700'
-  }[tone];
-  return <span className={`inline-flex min-h-7 items-center rounded-full border px-2.5 text-xs font-black ${styles}`}>{label}</span>;
+  return <span className={`admin-badge is-${tone}`}>{label}</span>;
 }
 
 function splitList(value: string) {

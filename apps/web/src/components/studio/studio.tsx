@@ -4,7 +4,7 @@ import Link from 'next/link';
 import dynamic from 'next/dynamic';
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { AtSign, ArrowUp, Box, ChevronDown, History as HistoryIcon, Images, Loader2, Paintbrush, Pencil, Plus, Scan, RectangleVertical, Trash2, UserRound, Wand2 } from 'lucide-react';
+import { AtSign, ArrowUp, Box, ChevronDown, History as HistoryIcon, Images, Loader2, Paintbrush, Pencil, Plus, Scan, RectangleVertical, Trash2, Wand2 } from 'lucide-react';
 import { aspectRatioOptions, resolutionOptions, promptPartsText, type ImageJobCreateRequest, type ImageJobRecord, type PaymentOrderResponse } from '@picup/shared';
 import { createImageJob, getImageJob, getMe, getModels, getPaymentOrder, quoteImageJob, referenceJobOutput, updateStudioAsset, uploadImage, uploadSystemImage } from '@/lib/api';
 import { useNotifications } from '@/components/notification-provider';
@@ -17,6 +17,7 @@ import { Conversation } from './conversation';
 import { AssetLibrary, Conversations } from './library';
 import { usePreferences } from './preferences';
 import { AuthPanel } from './auth-panel';
+import { ProfileAvatar } from './profile-avatar';
 import { studioSkills, type StudioSkill } from './skills';
 import { fieldValidationMessage } from '@/lib/user-message';
 import { MentionEditor, type MentionEditorHandle } from './mention-editor';
@@ -343,7 +344,7 @@ export function Studio() {
         {location.view === 'history' && <Link href="/" className="studio-brand navigation-brand" aria-label="PicUp 工作台"><img className="studio-wordmark" src="/brand/picup-wordmark.png" alt="PicUp 片刻 P 图" width={84} height={42} /></Link>}
         <button onClick={() => navigate({ view: null })} aria-current={!location.view ? 'page' : undefined}><Wand2 size={20} /><span>创作</span></button>
         <button onClick={() => navigate({ view: 'history' })} aria-current={location.view === 'history' ? 'page' : undefined}><Images size={20} /><span>图库</span></button>
-        <button className="navigation-account" aria-current={location.view === 'account' || location.view === 'login' ? 'page' : undefined} title={guest ? '登录 / 注册' : '账户与设置'} aria-label={mobile ? '用户' : guest ? '登录 / 注册' : '账户与设置'} onClick={() => navigate({ view: guest ? 'login' : 'account' })}><span className="navigation-avatar"><UserRound size={20} /><i data-signed-in={!guest} /></span><span className="navigation-identity"><strong>{guest ? '登录 / 注册' : me.data?.user.displayName || me.data?.user.email || '已登录'}</strong><small>{guest ? '未登录' : '已登录'}</small></span></button>
+        <button className="navigation-account" aria-current={location.view === 'account' || location.view === 'login' ? 'page' : undefined} title={guest ? '登录 / 注册' : '账户与设置'} aria-label={mobile ? '用户' : guest ? '登录 / 注册' : '账户与设置'} onClick={() => navigate({ view: guest ? 'login' : 'account' })}><span className="navigation-avatar"><ProfileAvatar url={me.data?.user.avatarUrl} size={20} /><i data-signed-in={!guest} /></span><span className="navigation-identity"><strong>{guest ? '登录 / 注册' : me.data?.user.displayName || me.data?.user.email || '已登录'}</strong><small>{guest ? '未登录' : '已登录'}</small></span></button>
       </nav>
       <Conversation job={selected.data} loading={Boolean(location.job && selected.isPending)} error={selected.error?.message} onUpload={() => input.current?.click()} onOpen={(images, index) => setLightbox({ images, index, mode: 'conversation' })} onSkillSelect={applySkillById}>
       {(conversationImages) => <Canvas job={selected.data} editingJobId={draft.parentJobId} files={draft.files} loading={Boolean(location.job && selected.isPending && freshJobId !== location.job)} error={selected.error?.message}
@@ -464,6 +465,14 @@ export function Studio() {
       try { sessionStorage.setItem(`picup:studio:${account.user.id}`, JSON.stringify(draft)); } catch { /* Storage can be unavailable in private browsing. */ }
       client.setQueryData(['me'], account);
       await client.invalidateQueries({ queryKey: ['studio-preferences'] });
+      if (account.user.wechatBound && !account.user.avatarUrl) {
+        try {
+          const key = `picup:profile-offered:${account.user.id}`;
+          if (!localStorage.getItem(key)) {
+            localStorage.setItem(key, '1'); navigate({ view: 'account' }); return;
+          }
+        } catch { /* The settings page remains available when storage is blocked. */ }
+      }
       closeDialog();
     }} /></NavigationPage>}
     {location.view === 'recharge' && <Dialog title="积分充值" onClose={closeDialog}><Recharge me={me.data} onPayment={openPayment} /></Dialog>}

@@ -232,6 +232,8 @@ export interface AdminAiProviderInput {
 export type AdminAiModelInput = AdminAiModelConfig;
 
 export interface AuthUser {
+  avatarUrl?: string | null;
+  wechatBound?: boolean;
   id: string;
   email: string | null;
   displayName?: string | null;

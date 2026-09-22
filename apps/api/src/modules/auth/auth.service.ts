@@ -81,7 +81,51 @@ export class AuthService {
 
   async me(req: AuthenticatedRequest, res: Response): Promise<AuthMeResponse> {
     const user = await this.ensureRequestUser(req, res);
-    return this.withQuota(user);
+    const result = await this.withQuota(user);
+    const identity = user.isGuest ? null : await this.prisma.externalIdentity.findFirst({ where: { userId: user.id, provider: 'wechat' } });
+    const profile = (identity?.profile ?? {}) as Record<string, unknown>;
+    return { ...result, user: { ...result.user, avatarUrl: typeof profile.avatarUrl === 'string' ? profile.avatarUrl : null, wechatBound: Boolean(identity) } } as AuthMeResponse;
+  }
+
+  private async profileIdentity(req: AuthenticatedRequest) {
+    const user = await this.requireUser(req);
+    if (user.isGuest) throw new UnauthorizedException('请先登录');
+    const identity = await this.prisma.externalIdentity.findFirst({ where: { userId: user.id, provider: 'wechat' } });
+    if (!identity) throw new BadRequestException('当前账户未绑定微信');
+    return { user, identity, profile: (identity.profile ?? {}) as Record<string, Prisma.InputJsonValue> };
+  }
+
+  async authorizeWechatProfile(req: AuthenticatedRequest) {
+    const { user, identity } = await this.profileIdentity(req);
+    const grant = await this.requestWxmid<{ authorization_url: string; authorization_id: string; expires_at: string }>('/profile/authorize/', {
+      method: 'POST', body: JSON.stringify({ app_code: this.wxmidAppCode(), app_user_id: user.id, return_url: 'https://picup.ai-mendao.xyz/?view=account' })
+    });
+    await this.prisma.$transaction(async tx => {
+      await tx.$queryRaw`SELECT id FROM external_identities WHERE id = ${identity.id}::uuid FOR UPDATE`;
+      const latest = await tx.externalIdentity.findUniqueOrThrow({ where: { id: identity.id } });
+      const profile = (latest.profile ?? {}) as Record<string, Prisma.InputJsonValue>;
+      await tx.externalIdentity.update({ where: { id: identity.id }, data: { profile: { ...profile, profileGrantId: grant.authorization_id } } });
+    });
+    return grant;
+  }
+
+  async syncWechatProfile(req: AuthenticatedRequest) {
+    const { user, identity, profile } = await this.profileIdentity(req);
+    if (typeof profile.profileGrantId !== 'string') return { status: 'idle' };
+    const result = await this.requestWxmid<{ status: string; nickname?: string; avatar?: string }>('/profile/authorization-status/?' + new URLSearchParams({ authorization_id: profile.profileGrantId }));
+    if (result.status === 'succeeded') {
+      if (typeof result.nickname !== 'string' || typeof result.avatar !== 'string') throw new ServiceUnavailableException('微信资料暂不可用');
+      await this.prisma.$transaction(async tx => {
+        // A repeated poll must not overwrite a later manual edit of the display name.
+        await tx.$queryRaw`SELECT id FROM external_identities WHERE id = ${identity.id}::uuid FOR UPDATE`;
+        const latest = await tx.externalIdentity.findUnique({ where: { id: identity.id } });
+        const latestProfile = (latest?.profile ?? {}) as Record<string, Prisma.InputJsonValue>;
+        if (latestProfile.profileGrantId !== profile.profileGrantId) return;
+        await tx.user.update({ where: { id: user.id }, data: { displayName: result.nickname!.slice(0, 120) } });
+        await tx.externalIdentity.update({ where: { id: identity.id }, data: { profile: { ...latestProfile, profileGrantId: null, avatarUrl: result.avatar!, nickname: result.nickname! } } });
+      });
+    }
+    return { status: result.status };
   }
 
   async register(input: AuthCredentials, res: Response, req?: AuthenticatedRequest): Promise<AuthMeResponse> {
@@ -327,7 +371,7 @@ export class AuthService {
     }
 
     if (statusPayload.status === 'login_not_bound') {
-      const userId = await this.syncWechatFirstLogin(statusPayload);
+      const userId = await this.syncWechatFirstLogin(statusPayload, req);
       await this.prisma.wechatLoginSession.update({
         where: { state },
         data: {
@@ -942,8 +986,11 @@ export class AuthService {
   }
 
   private async consumeConfirmedWechatSession(userId: string, state: string, res: Response, req?: AuthenticatedRequest): Promise<WechatAuthStatusResponse> {
-    const stored = await this.storage.getUserById(userId);
+    let stored = await this.storage.getUserById(userId);
     if (!stored || stored.status !== 'active') throw new UnauthorizedException('User is not active');
+    if (stored.isGuest || stored.role === 'guest') {
+      stored = await this.storage.updateUser({ ...stored, isGuest: false, role: 'user' });
+    }
     await this.transferGuestFiles(req, stored.id);
     await this.prisma.wechatLoginSession.update({
       where: { state },
@@ -977,55 +1024,44 @@ export class AuthService {
     return identity.userId;
   }
 
-  private async syncWechatFirstLogin(payload: WxmidQrStatusPayload) {
+  private async syncWechatFirstLogin(payload: WxmidQrStatusPayload, req?: AuthenticatedRequest) {
     const openId = payload.openid?.trim();
     if (!openId) {
       throw new BadRequestException('Wechat login succeeded without openid');
     }
 
-    const existingIdentity = await this.findWechatIdentity(openId);
-    if (existingIdentity) {
-      await this.requestWxmid('/sync-bind/', {
-        method: 'POST',
-        body: JSON.stringify({
-          app_code: this.wxmidAppCode(),
-          app_user_id: existingIdentity.userId,
-          openid: openId
-        })
+    const token = req ? this.readToken(req) : null;
+    const guestId = token ? this.verifySession(token)?.sub : undefined;
+    const userId = await this.prisma.$transaction(async tx => {
+      // Serialize first registration across API processes before creating an account.
+      await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`wechat:${openId}`}, 0))::text`;
+      const identity = await tx.externalIdentity.findUnique({
+        where: { provider_providerUserId: { provider: 'wechat', providerUserId: openId } }
       });
-      return existingIdentity.userId;
-    }
-
-    const user = await this.storage.addUser(this.storage.createStoredUser({
-      id: randomUUID(),
-      email: null,
-      role: 'user',
-      status: 'active',
-      isGuest: false
-    }));
+      if (identity) return identity.userId;
+      if (guestId) {
+        await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`guest:${guestId}`}, 0))::text`;
+      }
+      const guest = guestId ? await tx.user.findUnique({ where: { id: guestId } }) : null;
+      const user = guest?.isGuest && guest.status === 'active'
+        ? await tx.user.update({ where: { id: guest.id }, data: { isGuest: false, role: 'user' } })
+        : await tx.user.create({ data: { role: 'user', isGuest: false, status: 'active' } });
+      await tx.externalIdentity.create({ data: {
+        userId: user.id, provider: 'wechat', providerUserId: openId, profile: { openId }
+      } });
+      return user.id;
+    });
 
     await this.requestWxmid('/sync-bind/', {
       method: 'POST',
       body: JSON.stringify({
         app_code: this.wxmidAppCode(),
-        app_user_id: user.id,
+        app_user_id: userId,
         openid: openId
       })
     });
 
-    await this.prisma.externalIdentity.upsert({
-      where: { provider_providerUserId: { provider: 'wechat', providerUserId: openId } },
-      update: { userId: user.id, unionId: null, profile: { openId } },
-      create: {
-        userId: user.id,
-        provider: 'wechat',
-        providerUserId: openId,
-        unionId: null,
-        profile: { openId }
-      }
-    });
-
-    return user.id;
+    return userId;
   }
 
   private assertWxmidConfigured() {
@@ -1059,6 +1095,7 @@ export class AuthService {
     try {
       response = await fetch(url, {
         ...init,
+        signal: AbortSignal.timeout(15000),
         headers: {
           'Content-Type': 'application/json',
           'X-API-Key': this.wxmidApiKey(),

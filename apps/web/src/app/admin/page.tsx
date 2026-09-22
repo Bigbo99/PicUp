@@ -4,17 +4,15 @@ import Link from 'next/link';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
+  AlertTriangle,
   ArrowLeft,
   ArrowRight,
   BarChart3,
+  ChevronDown,
   ClipboardList,
-  Database,
   ChevronLeft,
   ChevronRight,
-  Clock,
   FileImage,
-  Gauge,
-  Globe2,
   Home,
   Infinity as InfinityIcon,
   Loader2,
@@ -25,10 +23,7 @@ import {
   Settings,
   ShieldCheck,
   SlidersHorizontal,
-  TrendingUp,
-  Trash2,
   Users,
-  Wand2,
   XCircle
 } from 'lucide-react';
 import type {
@@ -61,13 +56,13 @@ import { AiConfigPanel } from '@/components/admin/ai-config-panel';
 type AdminTab = 'overview' | 'users' | 'jobs' | 'models' | 'settings' | 'audit';
 type AdminUserDraft = Parameters<typeof updateAdminUser>[1];
 
-const tabs: Array<{ id: AdminTab; label: string; icon: React.ReactNode }> = [
-  { id: 'overview', label: '数据监控', icon: <BarChart3 size={17} aria-hidden /> },
-  { id: 'users', label: '用户管理', icon: <Users size={17} aria-hidden /> },
-  { id: 'jobs', label: '任务监控', icon: <ClipboardList size={17} aria-hidden /> },
-  { id: 'models', label: '模型配置', icon: <SlidersHorizontal size={17} aria-hidden /> },
-  { id: 'settings', label: '功能设置', icon: <Settings size={17} aria-hidden /> },
-  { id: 'audit', label: '审计日志', icon: <ShieldCheck size={17} aria-hidden /> }
+const tabs: Array<{ id: AdminTab; label: string; description: string; icon: React.ReactNode }> = [
+  { id: 'overview', label: '概览', description: '关键运行指标与需要处理的异常', icon: <BarChart3 size={17} aria-hidden /> },
+  { id: 'users', label: '用户', description: '账号、权限、积分与访问状态', icon: <Users size={17} aria-hidden /> },
+  { id: 'jobs', label: '任务', description: '查看生成任务、结果和失败原因', icon: <ClipboardList size={17} aria-hidden /> },
+  { id: 'models', label: '模型', description: '服务商、模型能力与调用路由', icon: <SlidersHorizontal size={17} aria-hidden /> },
+  { id: 'settings', label: '系统设置', description: '高级功能参数与运行策略', icon: <Settings size={17} aria-hidden /> },
+  { id: 'audit', label: '操作记录', description: '管理员关键操作的变更记录', icon: <ShieldCheck size={17} aria-hidden /> }
 ];
 
 function usersFromResponse(response?: AdminUsersResponse) {
@@ -95,10 +90,10 @@ function formatGeo(country?: string | null, region?: string | null, city?: strin
 }
 
 function statusTone(status: string) {
-  if (['active', 'succeeded', 'healthy', 'enabled', 'paid'].includes(status)) return 'bg-emerald-50 text-emerald-700 border-emerald-200';
-  if (['running', 'queued', 'retrying', 'degraded', 'pending'].includes(status)) return 'bg-amber-50 text-amber-700 border-amber-200';
-  if (['failed', 'disabled', 'closed'].includes(status)) return 'bg-red-50 text-red-700 border-red-200';
-  return 'bg-slate-100 text-slate-700 border-slate-200';
+  if (['active', 'succeeded', 'healthy', 'enabled', 'paid'].includes(status)) return 'is-success';
+  if (['running', 'queued', 'retrying', 'degraded', 'pending'].includes(status)) return 'is-warning';
+  if (['failed', 'disabled', 'closed'].includes(status)) return 'is-danger';
+  return 'is-neutral';
 }
 
 function labelFor(value: string) {
@@ -148,6 +143,17 @@ export default function AdminPage() {
       window.location.href = '/login?next=/admin';
     }
   });
+  useEffect(() => {
+    const requestedTab = new URLSearchParams(window.location.search).get('tab');
+    if (tabs.some((tab) => tab.id === requestedTab)) setActiveTab(requestedTab as AdminTab);
+  }, []);
+  const selectTab = (tab: AdminTab) => {
+    setActiveTab(tab);
+    const url = new URL(window.location.href);
+    if (tab === 'overview') url.searchParams.delete('tab');
+    else url.searchParams.set('tab', tab);
+    window.history.replaceState(null, '', `${url.pathname}${url.search}`);
+  };
 
   if (meQuery.isLoading) {
     return <CenteredState icon={<Loader2 className="animate-spin" size={28} />} title="正在验证管理员身份" />;
@@ -181,21 +187,16 @@ export default function AdminPage() {
   }
 
   return (
-    <main className="min-h-screen bg-[#f4f7f5] text-[#083b2d]">
-      <div className="mx-auto flex min-h-screen max-w-[1680px] flex-col lg:flex-row">
-        <aside className={`grid border-b border-emerald-950/10 bg-white/95 px-4 py-3 shadow-sm transition-all lg:sticky lg:top-0 lg:h-screen lg:flex lg:flex-col lg:px-4 lg:py-4 lg:border-b-0 lg:border-r ${sidebarCollapsed ? 'lg:w-24' : 'lg:w-72'}`}>
-          <div className="flex items-center justify-between gap-3">
-            <div className={`flex min-w-0 items-center gap-3 ${sidebarCollapsed ? 'lg:justify-center' : ''}`}>
-              <span className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-emerald-100 text-emerald-700 sm:h-11 sm:w-11">
-                <Wand2 size={20} aria-hidden />
-              </span>
-              <div className={`min-w-0 ${sidebarCollapsed ? 'lg:hidden' : ''}`}>
-                <p className="text-[11px] font-black uppercase leading-none tracking-[0.18em] text-emerald-700">PicUp Admin</p>
-                <h1 className="mt-1 truncate text-lg font-black tracking-normal sm:text-xl">后台</h1>
-              </div>
-            </div>
+    <main className="admin-shell">
+      <div className="admin-layout">
+        <aside className={`admin-sidebar ${sidebarCollapsed ? 'admin-sidebar-collapsed' : ''}`}>
+          <div className="admin-brand-row">
+            <Link className="admin-brand" href="/" aria-label="返回 PicUp 工作台">
+              <img src="/brand/picup-icon.png" width="36" height="36" alt="" />
+              <span className={sidebarCollapsed ? 'lg:hidden' : ''}><strong>PicUp</strong><small>管理后台</small></span>
+            </Link>
             <div className="flex items-center gap-2 lg:hidden">
-              <span className="max-w-28 truncate rounded-full bg-emerald-50 px-3 py-2 text-xs font-black text-emerald-800">
+              <span className="admin-role-label">
                 {user.isSuperAdmin ? '超级管理员' : '管理员'}
               </span>
               <Link className="admin-icon-button" href="/" title="返回工作台" aria-label="返回工作台">
@@ -204,16 +205,14 @@ export default function AdminPage() {
             </div>
           </div>
 
-          <nav className="admin-mobile-tabs -mx-4 mt-3 flex gap-2 overflow-x-auto border-t border-emerald-950/10 px-4 pt-3 [scrollbar-width:none] lg:mx-0 lg:mt-6 lg:grid lg:gap-4 lg:overflow-visible lg:border-t-0 lg:px-0 lg:pt-0">
+          <nav className="admin-navigation" aria-label="后台导航">
             {tabs.map((tab) => (
               <button
                 key={tab.id}
-                className={`inline-flex h-10 shrink-0 items-center gap-2 rounded-lg text-sm font-black transition-colors sm:h-11 ${sidebarCollapsed ? 'lg:w-11 lg:justify-center lg:px-0' : 'px-3'} ${
-                  activeTab === tab.id
-                    ? 'bg-emerald-50 text-emerald-800 shadow-[inset_3px_0_0_#059669]'
-                    : 'text-slate-500 hover:bg-slate-50 hover:text-emerald-800'
-                }`}
-                onClick={() => setActiveTab(tab.id)}
+                className={activeTab === tab.id ? 'is-active' : ''}
+                onClick={() => selectTab(tab.id)}
+                aria-current={activeTab === tab.id ? 'page' : undefined}
+                aria-label={sidebarCollapsed ? tab.label : undefined}
                 title={tab.label}
               >
                 <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center">{tab.icon}</span>
@@ -222,62 +221,43 @@ export default function AdminPage() {
             ))}
           </nav>
 
-          <div className={`mt-auto hidden pt-6 lg:grid ${sidebarCollapsed ? 'justify-items-center gap-3' : 'gap-3'}`}>
+          <div className="admin-sidebar-footer">
             <button
-              className="admin-icon-button"
+              className="admin-icon-button admin-collapse-button"
               onClick={() => setSidebarCollapsed((collapsed) => !collapsed)}
               title={sidebarCollapsed ? '展开侧边栏' : '折叠侧边栏'}
               aria-label={sidebarCollapsed ? '展开侧边栏' : '折叠侧边栏'}
             >
               {sidebarCollapsed ? <ChevronRight size={17} aria-hidden /> : <ChevronLeft size={17} aria-hidden />}
             </button>
-            {sidebarCollapsed ? (
-              <>
-                <div className="inline-flex h-11 w-11 items-center justify-center rounded-full bg-emerald-50 text-sm font-black text-emerald-800" title={user.displayName || user.email || user.id}>
-                  {(user.displayName || user.email || user.id).slice(0, 1).toUpperCase()}
-                </div>
-                <Link className="admin-icon-button" href="/" title="返回工作台" aria-label="返回工作台">
-                  <Home size={17} aria-hidden />
-                </Link>
-                <button className="admin-icon-button" onClick={() => logoutMutation.mutate()} title="退出" aria-label="退出">
-                  <ArrowLeft size={17} aria-hidden />
-                </button>
-              </>
-            ) : (
-              <div className="rounded-lg border border-emerald-950/10 bg-white p-4 shadow-sm">
-                <p className="text-xs font-bold text-slate-500">当前管理员</p>
-                <p className="mt-2 truncate text-lg font-black text-[#083b2d]">{user.displayName || user.email || user.id}</p>
-                <p className="mt-1 text-sm font-black text-emerald-700">{user.isSuperAdmin ? '超级管理员' : '管理员'}</p>
-                <div className="mt-5 grid grid-cols-[60px_minmax(0,1fr)] gap-3">
-                  <Link className="admin-icon-button h-[60px] w-[60px]" href="/" title="返回工作台" aria-label="返回工作台">
-                    <Home size={21} aria-hidden />
-                  </Link>
-                  <button className="admin-secondary-button min-h-[60px] text-lg" onClick={() => logoutMutation.mutate()}>
-                    退出
-                  </button>
-                </div>
+            <div className="admin-account-row" title={user.displayName || user.email || user.id}>
+              <span>{(user.displayName || user.email || user.id).slice(0, 1).toUpperCase()}</span>
+              <div className={sidebarCollapsed ? 'lg:hidden' : ''}>
+                <strong>{user.displayName || user.email || '管理员'}</strong>
+                <small>{user.isSuperAdmin ? '超级管理员' : '管理员'}</small>
               </div>
-            )}
+            </div>
+            <div className={`admin-sidebar-actions ${sidebarCollapsed ? 'lg:grid' : ''}`}>
+              <Link className="admin-icon-button" href="/" title="返回工作台" aria-label="返回工作台"><Home size={17} aria-hidden /></Link>
+              <button className="admin-icon-button" onClick={() => logoutMutation.mutate()} title="退出登录" aria-label="退出登录"><ArrowLeft size={17} aria-hidden /></button>
+            </div>
           </div>
         </aside>
 
-        <section className="min-w-0 flex-1 px-4 py-4 lg:px-7 lg:py-5">
-          <header className="mb-4 flex flex-row items-end justify-between gap-3 border-b border-emerald-950/10 pb-4">
+        <section className="admin-content">
+          <header className="admin-page-header">
             <div>
-              <p className="text-xs font-black text-emerald-700 sm:text-sm">{activeTab === 'overview' ? 'Dashboard' : 'Management'}</p>
-              <h2 className="mt-1 text-2xl font-black tracking-normal sm:text-3xl">{activeTab === 'overview' ? '数据看板' : tabs.find((tab) => tab.id === activeTab)?.label}</h2>
+              <h1>{tabs.find((tab) => tab.id === activeTab)?.label}</h1>
+              <p>{tabs.find((tab) => tab.id === activeTab)?.description}</p>
             </div>
-            <div className="flex shrink-0 items-center gap-2 text-sm text-slate-500">
-              <span className="hidden rounded-lg border border-emerald-950/10 bg-white px-3 py-2 text-xs font-bold text-slate-500 md:inline-flex">
-                自动刷新 30 秒
-              </span>
+            <div className="admin-header-actions">
               <button className="admin-icon-button" onClick={() => queryClient.invalidateQueries({ queryKey: ['admin'] })} title="刷新" aria-label="刷新">
                 <RefreshCw size={17} aria-hidden />
               </button>
             </div>
           </header>
 
-          {activeTab === 'overview' && <OverviewTab />}
+          {activeTab === 'overview' && <OverviewTab onOpenJobs={() => selectTab('jobs')} onOpenModels={() => selectTab('models')} />}
           {activeTab === 'users' && <UsersTab />}
           {activeTab === 'jobs' && <JobsTab />}
           {activeTab === 'models' && <ModelsTab />}
@@ -289,7 +269,7 @@ export default function AdminPage() {
   );
 }
 
-function OverviewTab() {
+function OverviewTab({ onOpenJobs, onOpenModels }: { onOpenJobs: () => void; onOpenModels: () => void }) {
   const [range, setRange] = useState('24h');
   const overviewQuery = useQuery({
     queryKey: ['admin', 'overview', range],
@@ -302,83 +282,84 @@ function OverviewTab() {
     refetchInterval: 30000
   });
   const overview = overviewQuery.data;
-  const completed = (overview?.jobs.succeeded ?? 0) + (overview?.jobs.failed ?? 0);
+  const periodFailures = (overview?.jobs.failed ?? 0) + (overview?.jobs.refunded ?? 0);
+  const completed = (overview?.jobs.succeeded ?? 0) + periodFailures;
   const activeJobs = (overview?.jobs.queued ?? 0) + (overview?.jobs.running ?? 0) + (overview?.jobs.retrying ?? 0);
-  const statusRows = (['queued', 'running', 'retrying', 'succeeded', 'failed', 'refunded'] as ImageJobStatus[]).map((status) => ({
+  const activeStatusRows = (['queued', 'running', 'retrying'] as ImageJobStatus[]).map((status) => ({
     status,
     value: overview?.jobs[status] ?? 0
   }));
+  const updatedAt = overviewQuery.dataUpdatedAt
+    ? new Intl.DateTimeFormat('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' }).format(overviewQuery.dataUpdatedAt)
+    : '';
+
+  if (overviewQuery.isPending) {
+    return <div className="admin-loading-grid" aria-label="正在加载概览">{Array.from({ length: 7 }, (_, index) => <i key={index} />)}</div>;
+  }
+  if (overviewQuery.isError && !overview) {
+    return <EmptyLine text="概览数据加载失败，请使用右上角刷新按钮重试。" />;
+  }
+  if (!overview) {
+    return <EmptyLine text="概览数据暂不可用，请使用右上角刷新按钮重试。" />;
+  }
 
   return (
-    <div className="grid gap-4">
-      <div className="flex justify-end">
+    <div className="admin-overview">
+      <div className="admin-overview-controls">
+        <span>{updatedAt ? `${updatedAt} 更新` : '自动更新'}</span>
         <Segmented value={range} onChange={setRange} options={[['24h', '24 小时'], ['7d', '7 天'], ['30d', '30 天'], ['all', '全部']]} />
       </div>
 
-      <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
-        <DashboardMetric icon={<Users size={18} />} label="用户总数" value={overview?.totals.users} sub={`${overview?.totals.registeredUsers ?? 0} 注册 / ${overview?.totals.guests ?? 0} 游客`} trend={`活跃 ${overview?.totals.activeUsers ?? 0}`} />
-        <DashboardMetric icon={<ClipboardList size={18} />} label="任务总数" value={overview?.totals.jobs} sub={`当前范围新增 ${overview?.jobs.rangeCreated ?? 0}`} trend={`处理中 ${activeJobs}`} tone="blue" />
-        <DashboardMetric icon={<Gauge size={18} />} label="任务成功率" value={`${overview?.jobs.successRate ?? 0}%`} sub={`${completed} 个已完成任务`} trend={`${overview?.jobs.succeeded ?? 0} 成功`} tone="emerald" />
-        <DashboardMetric icon={<Globe2 size={18} />} label="游客来源" value={overview?.guestGeo.length ?? 0} sub="基于游客 IP 记录" trend={`${overview?.totals.guests ?? 0} 游客`} tone="cyan" />
-        <DashboardMetric icon={<Database size={18} />} label="素材与审计" value={overview?.totals.files} sub={`${overview?.totals.auditLogs ?? 0} 条审计日志`} trend={`${overview?.totals.settings ?? 0} 项设置`} tone="amber" />
+      <section className="admin-metrics-strip" aria-label="关键指标">
+        <DashboardMetric label="周期任务" value={overview.jobs.rangeCreated} sub={`历史累计 ${overview.totals.jobs}`} />
+        <DashboardMetric label="周期成功率" value={`${overview.jobs.successRate}%`} sub={`${completed} 个已完成`} tone={overview.jobs.successRate < 90 ? 'warning' : 'default'} />
+        <DashboardMetric label="当前处理中" value={activeJobs} sub={`${overview.jobs.running} 运行 · ${overview.jobs.queued} 排队 · ${overview.jobs.retrying} 重试`} tone={activeJobs > 0 ? 'accent' : 'default'} />
+        <DashboardMetric label="周期失败" value={periodFailures} sub={periodFailures ? `${overview.jobs.refunded} 个已退回积分` : '当前周期无失败'} tone={periodFailures ? 'danger' : 'default'} />
       </section>
 
-      <div className="grid gap-4 xl:grid-cols-[minmax(0,1.35fr)_minmax(340px,0.65fr)]">
-        <Panel
-          title="模型调用表现"
-          action={
-            <div className="flex items-center gap-3 text-xs font-bold text-slate-500">
-              <span className="inline-flex items-center gap-1"><i className="h-2 w-2 rounded-full bg-emerald-500" />成功</span>
-              <span className="inline-flex items-center gap-1"><i className="h-2 w-2 rounded-full bg-rose-500" />失败</span>
-            </div>
-          }
-        >
+      <div className="admin-overview-main">
+        <Panel title="模型表现" action={<button className="admin-text-button" onClick={onOpenModels}>管理模型 <ArrowRight size={14} /></button>}>
           <ModelUsageChart models={overview?.models ?? []} />
         </Panel>
-        <Panel title="任务状态分布">
-          <StatusDonut rows={statusRows} />
+        <Panel title="运行状态">
+          <OperationsPanel rows={activeStatusRows} providers={providersQuery.data} providersPending={providersQuery.isPending} providersError={providersQuery.isError} onOpenModels={onOpenModels} />
         </Panel>
       </div>
 
-      <div className="grid gap-4 xl:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)]">
-        <GuestGeoPanel items={overview?.guestGeo ?? []} totalGuests={overview?.totals.guests ?? 0} />
-        <ProviderPanel data={providersQuery.data} />
-      </div>
-
-      <div className="grid gap-4 xl:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)]">
-        <Panel title="任务状态矩阵">
-          <div className="grid gap-2 sm:grid-cols-3">
-            {statusRows.map((row) => (
-              <StatusTile key={row.status} status={row.status} value={row.value} />
-            ))}
-          </div>
-        </Panel>
-        <Panel title="最近失败任务">
-          <JobMiniList jobs={overview?.recentFailures ?? []} />
-        </Panel>
-      </div>
+      <Panel title="最近失败" action={<button className="admin-text-button" onClick={onOpenJobs}>查看任务 <ArrowRight size={14} /></button>}>
+        <JobMiniList jobs={overview?.recentFailures ?? []} />
+      </Panel>
     </div>
   );
 }
 
-function ProviderPanel({ data }: { data?: AdminProviderHealthResponse }) {
+function OperationsPanel({ rows, providers, providersPending, providersError, onOpenModels }: {
+  rows: Array<{ status: ImageJobStatus; value: number }>;
+  providers?: AdminProviderHealthResponse;
+  providersPending: boolean;
+  providersError: boolean;
+  onOpenModels: () => void;
+}) {
   return (
-    <Panel title="服务商健康">
-      <div className="grid gap-2">
-        {(data?.providers ?? []).map((provider) => (
-          <div key={provider.provider} className="rounded-lg border border-slate-200 bg-white p-3">
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <p className="text-sm font-black">{labelFor(provider.provider)}</p>
-                <p className="mt-1 text-xs text-slate-500">启用模型 {provider.enabledModels} 个</p>
-              </div>
-              <Badge value={provider.status} />
-            </div>
-            {provider.message && <p className="mt-2 text-xs text-red-600">{provider.message}</p>}
-          </div>
-        ))}
+    <div className="admin-operations">
+      <div className="admin-status-list">
+        {rows.map((row) => <div key={row.status}><span><i data-status={row.status} />{labelFor(row.status)}</span><strong>{row.value}</strong></div>)}
       </div>
-    </Panel>
+      <div className="admin-subsection-heading"><span>服务商配置</span><small>检查连接参数与启用状态</small></div>
+      {providersPending && <p className="admin-inline-note">正在读取配置…</p>}
+      {providersError && <p className="admin-inline-error">配置状态读取失败</p>}
+      <div className="admin-provider-list">
+        {(providers?.providers ?? []).map((provider) => (
+          <button key={provider.provider} onClick={onOpenModels}>
+            <span><strong>{labelFor(provider.provider)}</strong><small>{provider.enabledModels} 个启用模型</small></span>
+            <span className={`admin-config-status ${provider.status === 'disabled' ? 'is-neutral' : provider.configured && provider.enabledModels > 0 ? 'is-success' : 'is-warning'}`}>
+              {provider.status === 'disabled' ? '已禁用' : provider.configured && provider.enabledModels > 0 ? '已配置' : '需配置'}
+            </span>
+          </button>
+        ))}
+        {!providersPending && !providersError && providers?.providers.length === 0 && <EmptyLine text="暂无服务商配置" />}
+      </div>
+    </div>
   );
 }
 
@@ -388,20 +369,21 @@ function UsersTab() {
   const [query, setQuery] = useState('');
   const [role, setRole] = useState('');
   const [status, setStatus] = useState('');
-  const [isGuestFilter, setIsGuestFilter] = useState('');
   const [quotaFilter, setQuotaFilter] = useState('');
+  const [cursors, setCursors] = useState<string[]>([]);
   const [settingsUserId, setSettingsUserId] = useState<string | null>(null);
   const params = useMemo(() => {
     const value = new URLSearchParams({ limit: '50' });
     if (query.trim()) value.set('query', query.trim());
     if (role) value.set('role', role);
     if (status) value.set('status', status);
-    if (isGuestFilter) value.set('isGuest', isGuestFilter);
     if (quotaFilter) value.set('quotaUnlimited', quotaFilter);
+    if (cursors.length) value.set('cursor', cursors[cursors.length - 1]);
     return value;
-  }, [isGuestFilter, query, quotaFilter, role, status]);
+  }, [cursors, query, quotaFilter, role, status]);
   const usersQuery = useQuery({ queryKey: ['admin', 'users', params.toString()], queryFn: () => listAdminUsers(params) });
   const users = usersFromResponse(usersQuery.data);
+  const nextCursor = usersQuery.data && !Array.isArray(usersQuery.data) ? usersQuery.data.nextCursor : undefined;
   const settingsUser = users.find((user) => user.id === settingsUserId) ?? null;
   const saveUserMutation = useMutation({
     mutationFn: ({ id, input }: { id: string; input: AdminUserDraft }) => updateAdminUser(id, input),
@@ -433,13 +415,13 @@ function UsersTab() {
   });
 
   return (
-    <Panel title="用户管理" action={<SearchBox value={query} onChange={setQuery} placeholder="搜索邮箱、昵称或 ID" />}>
+    <Panel title="用户列表" action={<SearchBox value={query} onChange={(value) => { setQuery(value); setCursors([]); }} placeholder="搜索邮箱、昵称或 ID" label="搜索用户" />}>
       <Toolbar>
-        <Segmented value={role} onChange={setRole} options={[['', '全部'], ['guest', '游客'], ['user', '用户'], ['admin', '管理员']]} />
-        <Segmented value={status} onChange={setStatus} options={[['', '全部状态'], ['active', '正常'], ['pending', '待定'], ['disabled', '禁用']]} />
-        <Segmented value={isGuestFilter} onChange={setIsGuestFilter} options={[['', '全部身份'], ['true', '游客'], ['false', '注册']]} />
-        <Segmented value={quotaFilter} onChange={setQuotaFilter} options={[['', '全部额度'], ['true', '无限'], ['false', '普通']]} />
+        <AdminSelect label="账号类型" value={role} onChange={(value) => { setRole(value); setCursors([]); }} options={[['', '全部账号'], ['guest', '游客'], ['user', '注册用户'], ['admin', '管理员']]} />
+        <AdminSelect label="账号状态" value={status} onChange={(value) => { setStatus(value); setCursors([]); }} options={[['', '全部状态'], ['active', '正常'], ['pending', '待处理'], ['disabled', '已禁用']]} />
+        <AdminSelect label="额度类型" value={quotaFilter} onChange={(value) => { setQuotaFilter(value); setCursors([]); }} options={[['', '全部额度'], ['true', '无限额度'], ['false', '普通额度']]} />
       </Toolbar>
+      {usersQuery.isError && <p className="admin-inline-error" role="alert">用户加载失败，请刷新重试。</p>}
       <div className="admin-table-wrap">
         <table className="admin-table">
           <thead>
@@ -457,7 +439,7 @@ function UsersTab() {
             {users.map((user) => (
               <tr key={user.id}>
                 <td>
-                  <p className="font-black">{user.displayName || user.email || '游客'}</p>
+                  <p className="font-black">{user.displayName || user.email || `${user.isGuest ? '游客' : '注册用户'} ${user.id.slice(0, 8)}`}</p>
                   <p className="text-xs text-slate-500">{user.email ?? user.id}</p>
                 </td>
                 <td><Badge value={user.role} /></td>
@@ -469,43 +451,40 @@ function UsersTab() {
                 </td>
                 <td>{formatDate(user.createdAt)}</td>
                 <td>
-                  <div className="flex gap-2">
-                    <button
-                      className="admin-secondary-button min-h-9"
-                      disabled={user.status === 'disabled'}
-                      onClick={() => {
-                        if (window.confirm('确认禁用该用户？')) statusMutation.mutate({ id: user.id, status: 'disabled' });
-                      }}
-                    >
-                      禁用
-                    </button>
-                    <button
-                      className="admin-secondary-button min-h-9 text-red-700 hover:border-red-200 hover:bg-red-50"
-                      onClick={() => {
+                  <select
+                    className="admin-row-action-select"
+                    value=""
+                    aria-label={`${user.email ?? user.displayName ?? user.id} 的操作`}
+                    onChange={(event) => {
+                      const action = event.target.value;
+                      if (action === 'edit') setSettingsUserId(user.id);
+                      if (action === 'status') {
+                        const nextStatus = user.status === 'disabled' ? 'active' : 'disabled';
+                        if (window.confirm(`确认${nextStatus === 'disabled' ? '禁用' : '启用'}该用户？`)) statusMutation.mutate({ id: user.id, status: nextStatus });
+                      }
+                      if (action === 'delete') {
                         const label = user.email ?? user.displayName ?? user.id;
-                        if (window.confirm(`确认删除用户 ${label}？该操作会保留历史任务和文件记录，但账号本身将被删除。`)) {
-                          deleteMutation.mutate(user.id);
-                        }
-                      }}
-                    >
-                      <Trash2 size={14} aria-hidden />
-                      删除
-                    </button>
-                    <button
-                      className="admin-icon-button"
-                      onClick={() => setSettingsUserId(user.id)}
-                      title="用户设置"
-                      aria-label={`打开 ${user.email ?? user.displayName ?? user.id} 的用户设置`}
-                    >
-                      <Settings size={16} aria-hidden />
-                    </button>
-                  </div>
+                        if (window.confirm(`确认删除用户 ${label}？该操作会保留历史任务和文件记录，但账号本身将被删除。`)) deleteMutation.mutate(user.id);
+                      }
+                    }}
+                  >
+                    <option value="">操作</option>
+                    <option value="edit">编辑用户</option>
+                    <option value="status">{user.status === 'disabled' ? '启用用户' : '禁用用户'}</option>
+                    <option value="delete">删除用户</option>
+                  </select>
                 </td>
               </tr>
             ))}
           </tbody>
         </table>
       </div>
+      {usersQuery.isPending ? <EmptyLine text="正在加载用户…" /> : users.length === 0 && <EmptyLine text="没有符合条件的用户" />}
+      <nav className="admin-pagination" aria-label="用户分页">
+        <span>第 {cursors.length + 1} 页</span>
+        <button className="admin-icon-button" title="上一页" aria-label="上一页" disabled={!cursors.length || usersQuery.isPending} onClick={() => setCursors((value) => value.slice(0, -1))}><ChevronLeft size={17} /></button>
+        <button className="admin-icon-button" title="下一页" aria-label="下一页" disabled={!nextCursor || usersQuery.isPending} onClick={() => { if (nextCursor) setCursors((value) => [...value, nextCursor]); }}><ChevronRight size={17} /></button>
+      </nav>
       {settingsUser && (
         <UserSettingsDialog
           user={settingsUser}
@@ -537,28 +516,28 @@ function UserSettingsDialog({
   const [quotaUnlimited, setQuotaUnlimited] = useState(user.quotaUnlimited);
   const title = user.displayName || user.email || user.id;
   const canSave = Number.isInteger(Number(creditBalance)) && Number(creditBalance) >= 0;
-  const roleLocked = Boolean(user.isSuperAdmin);
+  const roleLocked = Boolean(user.isSuperAdmin || user.isGuest);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-950/40 p-3 sm:items-center sm:p-6" role="dialog" aria-modal="true" aria-labelledby="user-settings-title">
-      <button className="absolute inset-0 cursor-default" type="button" onClick={onClose} aria-label="关闭用户设置" />
-      <section className="relative max-h-[90dvh] w-full max-w-3xl overflow-hidden rounded-xl border border-slate-200 bg-white shadow-2xl">
-        <header className="flex items-start justify-between gap-4 border-b border-slate-200 p-5">
+    <div className="admin-dialog-backdrop" role="dialog" aria-modal="true" aria-labelledby="user-settings-title">
+      <button className="admin-dialog-dismiss" type="button" onClick={onClose} aria-label="关闭用户设置" />
+      <section className="admin-dialog admin-user-dialog">
+        <header className="admin-dialog-header">
           <div>
-            <div className="mb-2 inline-flex rounded-full bg-slate-100 px-2.5 py-1 text-xs font-black text-slate-600">用户设置</div>
-            <h3 id="user-settings-title" className="text-2xl font-black text-slate-950">{title}</h3>
-            <p className="mt-1 max-w-xl break-all text-sm text-slate-500">{user.email ?? user.id}</p>
+            <span>编辑用户</span>
+            <h3 id="user-settings-title">{title}</h3>
+            <p>{user.email ?? user.id}</p>
           </div>
           <button className="admin-icon-button" type="button" onClick={onClose} title="关闭" aria-label="关闭">
             <XCircle size={18} aria-hidden />
           </button>
         </header>
 
-        <div className="max-h-[calc(90dvh-8rem)] overflow-y-auto p-5">
+        <div className="admin-dialog-body">
           <div className="grid gap-4 lg:grid-cols-[1.1fr_0.9fr]">
-            <section className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+            <section className="admin-form-section">
               <div className="mb-4 flex items-center gap-3">
-                <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-teal-600 text-white">
+                <div className="admin-section-icon">
                   <Users size={20} aria-hidden />
                 </div>
                 <div>
@@ -578,11 +557,10 @@ function UserSettingsDialog({
                 </label>
                 <label className="grid gap-1">
                   <span className="text-xs font-black text-slate-500">角色</span>
-                  <select className="h-10 rounded-lg border border-slate-200 px-3 text-sm font-bold outline-none focus:border-teal-600" value={roleLocked ? 'admin' : role} disabled={roleLocked} onChange={(event) => setRole(event.target.value as Extract<AuthUser['role'], 'user' | 'admin'>)}>
-                    <option value="user">用户</option>
-                    <option value="admin">管理员</option>
+                  <select className="h-10 rounded-lg border border-slate-200 px-3 text-sm font-bold outline-none focus:border-teal-600" value={user.isGuest ? 'guest' : roleLocked ? 'admin' : role} disabled={roleLocked} onChange={(event) => setRole(event.target.value as Extract<AuthUser['role'], 'user' | 'admin'>)}>
+                    {user.isGuest ? <option value="guest">游客</option> : <><option value="user">用户</option><option value="admin">管理员</option></>}
                   </select>
-                  {roleLocked && <span className="text-xs text-slate-500">超级管理员角色不可修改</span>}
+                  {roleLocked && <span className="text-xs text-slate-500">{user.isGuest ? '游客身份只会在完成注册或微信认证后升级' : '超级管理员角色不可修改'}</span>}
                 </label>
                 <label className="grid gap-1">
                   <span className="text-xs font-black text-slate-500">状态</span>
@@ -606,9 +584,9 @@ function UserSettingsDialog({
             </section>
 
             <div className="grid gap-4">
-              <section className="rounded-xl border border-slate-200 bg-white p-4">
+              <section className="admin-form-section">
                 <div className="mb-4 flex items-center gap-3">
-                  <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-emerald-600 text-white">
+                  <div className="admin-section-icon">
                     <InfinityIcon size={20} aria-hidden />
                   </div>
                   <div>
@@ -631,9 +609,9 @@ function UserSettingsDialog({
                 </label>
               </section>
 
-              <section className="rounded-xl border border-slate-200 bg-white p-4">
+              <section className="admin-form-section">
                 <div className="mb-4 flex items-center gap-3">
-                  <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-slate-900 text-white">
+                  <div className="admin-section-icon">
                     <Lock size={20} aria-hidden />
                   </div>
                   <div>
@@ -647,7 +625,7 @@ function UserSettingsDialog({
                   onClick={() => onSave({
                     displayName: displayName.trim() || null,
                     email: email.trim() || null,
-                    role,
+                    role: user.isGuest ? undefined : role,
                     status,
                     creditBalance: Number(creditBalance),
                     quotaUnlimited
@@ -668,9 +646,9 @@ function UserSettingsDialog({
 
 function UserDetailLine({ label, value, mono = false }: { label: string; value: React.ReactNode; mono?: boolean }) {
   return (
-    <div className="grid gap-1 rounded-lg border border-slate-200 bg-white p-3">
-      <span className="text-xs font-black uppercase text-slate-500">{label}</span>
-      <span className={`break-all text-sm font-bold text-slate-900 ${mono ? 'font-mono' : ''}`}>{value}</span>
+    <div className="admin-detail-line">
+      <span>{label}</span>
+      <strong className={mono ? 'font-mono' : ''}>{value}</strong>
     </div>
   );
 }
@@ -698,9 +676,9 @@ function JobsTab() {
   const activeJob = activeIndex >= 0 ? jobs[activeIndex] : null;
 
   return (
-    <Panel title="任务监控" action={<SearchBox value={userId} onChange={value => { setUserId(value); setCursors([]); }} placeholder="按用户 ID 筛选" />}>
+    <Panel title="任务列表" action={<SearchBox value={userId} onChange={value => { setUserId(value); setCursors([]); }} placeholder="按用户 ID 筛选" label="按用户 ID 筛选任务" />}>
       <Toolbar>
-        <Segmented value={status} onChange={value => { setStatus(value); setCursors([]); }} options={[['', '全部'], ['queued', '排队'], ['running', '运行'], ['succeeded', '成功'], ['failed', '失败']]} />
+        <AdminSelect label="任务状态" value={status} onChange={value => { setStatus(value); setCursors([]); }} options={[['', '全部状态'], ['queued', '排队中'], ['running', '运行中'], ['retrying', '重试中'], ['succeeded', '已成功'], ['failed', '已失败'], ['refunded', '失败且已退回']]} />
         <button className="admin-icon-button" aria-label="刷新任务" title="刷新任务" disabled={jobsQuery.isFetching} onClick={() => void jobsQuery.refetch()}><RefreshCw size={17} /></button>
       </Toolbar>
       {jobsQuery.isError && <p role="alert">任务加载失败，请刷新重试。</p>}
@@ -708,8 +686,8 @@ function JobsTab() {
         {jobs.map((job) => <JobRow key={job.id} job={job} onOpen={() => setActiveJobId(job.id)} />)}
       </tbody></table></div>
       {jobsQuery.isPending ? <EmptyLine text="正在加载任务…" /> : jobs.length === 0 && <EmptyLine text="暂无任务" />}
-      <nav className="mt-3 flex items-center justify-end gap-3" aria-label="任务分页">
-        <span className="text-xs text-slate-500">第 {cursors.length + 1} 页</span>
+      <nav className="admin-pagination" aria-label="任务分页">
+        <span>第 {cursors.length + 1} 页</span>
         <button className="admin-icon-button" title="上一页" aria-label="上一页" disabled={!cursors.length || jobsQuery.isPending} onClick={() => setCursors(value => value.slice(0, -1))}><ChevronLeft size={17} /></button>
         <button className="admin-icon-button" title="下一页" aria-label="下一页" disabled={!nextCursor || jobsQuery.isPending} onClick={() => { if (nextCursor) setCursors(value => [...value, nextCursor]); }}><ChevronRight size={17} /></button>
       </nav>
@@ -767,7 +745,7 @@ function JobDetailDialog({
   return (
     <dialog ref={dialog} className="admin-job-inspector" aria-labelledby="job-detail-title" onCancel={event => { event.preventDefault(); if (lightboxIndex !== null) setLightboxIndex(null); else onClose(); }}>
       <section className="flex min-h-0 flex-1 flex-col overflow-hidden">
-        <header className="flex flex-col gap-3 border-b border-slate-200 p-4 md:flex-row md:items-center md:justify-between">
+        <header className="admin-job-header">
           <div className="min-w-0">
             <div className="mb-2 flex flex-wrap items-center gap-2">
               <Badge value={job.status} />
@@ -792,8 +770,9 @@ function JobDetailDialog({
           <button id="job-result-tab" role="tab" aria-selected={detailTab === 'result'} aria-controls="job-detail-content" onClick={() => setDetailTab('result')}>用户需求与结果</button>
           <button id="job-system-tab" role="tab" aria-selected={detailTab === 'system'} aria-controls="job-detail-content" onClick={() => setDetailTab('system')}>系统处理记录</button>
         </div>
-        <div id="job-detail-content" role="tabpanel" aria-labelledby={detailTab === 'result' ? 'job-result-tab' : 'job-system-tab'} className="grid min-h-0 flex-1 gap-0 overflow-y-auto lg:grid-cols-[0.9fr_1.1fr]">
-          <aside className="border-b border-slate-200 bg-slate-50 p-4 lg:border-b-0 lg:border-r">
+        <div id="job-detail-content" role="tabpanel" aria-labelledby={detailTab === 'result' ? 'job-result-tab' : 'job-system-tab'} className="admin-job-body">
+          <aside className="admin-job-sidebar">
+            <h4 className="admin-job-section-title"><FileImage size={16} aria-hidden />任务信息</h4>
             <div className="admin-job-metadata">
               <UserDetailLine label="用户 ID" value={job.userId ?? '匿名用户'} mono />
               <UserDetailLine label="模型" value={`${labelFor(job.selectedProvider)} / ${job.selectedModel}`} />
@@ -806,13 +785,13 @@ function JobDetailDialog({
               <UserDetailLine label="支付方式" value={job.paymentMode ?? '免费'} />
               <UserDetailLine label="创建 / 完成" value={`${formatDate(job.createdAt)} / ${formatDate(job.completedAt)}`} />
             </div>
-            <div className="mt-3 grid gap-3">
+            <div className="admin-job-notes">
               <JsonBlock title={detailTab === 'result' ? '用户需求' : '最终发送给模型的提示词'} value={detailTab === 'result' ? job.prompt : job.finalPrompt} />
               {detailTab === 'system' && <JsonBlock title="操作与位置评论" value={{ operation: job.previewOperation, comments: job.editComments, selection: job.quotedSelection }} />}
               {job.error && <JsonBlock title="错误信息" value={job.error} />}
             </div>
           </aside>
-          <section className="grid gap-4 p-4">
+          <section className="admin-job-media">
             {detailTab === 'system' ? <ImageGallery title="模型输入材料" empty="暂无输入材料" images={galleryImages.slice(0, inputCount)} onOpen={setLightboxIndex} /> : <>
               <ImageGallery title="生成结果" empty="暂无结果图" images={galleryImages.slice(inputCount)} onOpen={imageIndex => setLightboxIndex(inputCount + imageIndex)} />
               {!job.previewOperation && <ImageGallery title="用户参考图" empty="暂无参考图" images={galleryImages.slice(0, job.inputFiles.length)} onOpen={setLightboxIndex} />}
@@ -846,21 +825,21 @@ function ImageGallery({
   onOpen: (index: number) => void;
 }) {
   return (
-    <div>
+    <div className="admin-image-gallery">
       <div className="mb-2 flex items-center justify-between">
         <h4 className="font-black text-slate-950">{title}</h4>
         <span className="text-xs font-bold text-slate-500">{images.length} 张</span>
       </div>
       {images.length === 0 ? (
-        <EmptyLine text={empty} />
+        <div className="admin-image-empty"><FileImage size={30} aria-hidden /><span>{empty}</span></div>
       ) : (
-        <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
+        <div className="admin-image-grid">
           {images.map((image, imageIndex) => (
             <button
               key={`${image.url}:${imageIndex}`}
               type="button"
               onClick={() => onOpen(imageIndex)}
-              className="group overflow-hidden rounded-lg border border-slate-200 bg-slate-50 text-left"
+              className="admin-image-tile group"
             >
               <img src={image.url} alt={image.label} className="aspect-square w-full object-contain transition-transform group-hover:scale-105" />
               <p className="border-t border-slate-200 px-2 py-1 text-xs font-bold text-slate-500">{image.label}</p>
@@ -925,6 +904,7 @@ function SettingsTab() {
   const notifications = useNotifications();
   const settingsQuery = useQuery({ queryKey: ['admin', 'settings'], queryFn: listAdminSettings });
   const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const [newKey, setNewKey] = useState('');
   const settings = settingsQuery.data ?? [];
   const mutation = useMutation({
     mutationFn: ({ key, value }: { key: string; value: Record<string, unknown> }) => upsertAdminSetting(key, value),
@@ -934,17 +914,26 @@ function SettingsTab() {
     },
     onError: (error) => notifications.error('保存失败', error instanceof Error ? error.message : '请检查 JSON 格式')
   });
+  const addSetting = () => {
+    const key = newKey.trim();
+    if (!key) return;
+    if (settings.some((item) => item.key === key) || Object.prototype.hasOwnProperty.call(drafts, key)) {
+      notifications.error('设置项已存在');
+      return;
+    }
+    setDrafts((value) => ({ ...value, [key]: '{\n  \n}' }));
+    setNewKey('');
+  };
 
   return (
-    <Panel title="功能设置" action={<button className="admin-secondary-button" onClick={() => {
-      const key = window.prompt('设置 key，例如 quota');
-      if (key) setDrafts((value) => ({ ...value, [key]: '{\n  \n}' }));
-    }}>新增设置</button>}>
+    <Panel title="高级配置" action={<div className="admin-inline-create"><input value={newKey} onChange={(event) => setNewKey(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') addSetting(); }} placeholder="设置键名" aria-label="新设置键名" /><button className="admin-secondary-button" onClick={addSetting} disabled={!newKey.trim()}>新增设置</button></div>}>
+      <p className="admin-panel-note">仅供高级管理员维护结构化 JSON 参数。模型连接请在“模型”页面管理。</p>
+      {settingsQuery.isError && <p className="admin-inline-error" role="alert">系统设置加载失败，请刷新重试。</p>}
       <div className="grid gap-3">
         {[...settings, ...Object.keys(drafts).filter((key) => !settings.some((item) => item.key === key)).map((key) => ({ key, value: {}, updatedBy: null, createdAt: '', updatedAt: '' } satisfies AdminAppSettingRecord))].map((setting) => {
           const draft = drafts[setting.key] ?? JSON.stringify(setting.value, null, 2);
           return (
-            <article key={setting.key} className="rounded-lg border border-slate-200 bg-white p-4">
+            <article key={setting.key} className="admin-setting-item">
               <div className="flex items-center justify-between gap-3">
                 <div>
                   <h3 className="font-black">{setting.key}</h3>
@@ -963,7 +952,7 @@ function SettingsTab() {
                 </button>
               </div>
               <textarea
-                className="mt-3 min-h-44 w-full resize-y rounded-lg border border-slate-200 bg-slate-950 p-3 font-mono text-sm leading-6 text-slate-50 outline-none focus:border-teal-500"
+                className="admin-json-editor"
                 value={draft}
                 onChange={(event) => setDrafts((value) => ({ ...value, [setting.key]: event.target.value }))}
                 spellCheck={false}
@@ -971,7 +960,7 @@ function SettingsTab() {
             </article>
           );
         })}
-        {settings.length === 0 && Object.keys(drafts).length === 0 && <EmptyLine text="暂无设置，可新增 quota、jobs、safety 或 maintenance" />}
+        {settingsQuery.isPending ? <EmptyLine text="正在加载系统设置…" /> : !settingsQuery.isError && settings.length === 0 && Object.keys(drafts).length === 0 && <EmptyLine text="暂无设置，可新增 quota、jobs、safety 或 maintenance" />}
       </div>
     </Panel>
   );
@@ -979,24 +968,33 @@ function SettingsTab() {
 
 function AuditTab() {
   const [query, setQuery] = useState('');
+  const [cursors, setCursors] = useState<string[]>([]);
   const params = useMemo(() => {
     const value = new URLSearchParams({ limit: '100' });
     if (query.trim()) value.set('action', query.trim());
+    if (cursors.length) value.set('cursor', cursors[cursors.length - 1]);
     return value;
-  }, [query]);
+  }, [cursors, query]);
   const logsQuery = useQuery({
     queryKey: ['admin', 'audit', params.toString()],
     queryFn: () => listAdminAuditLogs(params),
     refetchInterval: 30000
   });
   const logs = logsQuery.data?.logs ?? [];
+  const nextCursor = logsQuery.data?.nextCursor;
 
   return (
-    <Panel title="审计日志" action={<SearchBox value={query} onChange={setQuery} placeholder="按操作类型搜索" />}>
+    <Panel title="操作记录" action={<SearchBox value={query} onChange={(value) => { setQuery(value); setCursors([]); }} placeholder="按操作类型搜索" label="搜索操作记录" />}>
+      {logsQuery.isError && <p className="admin-inline-error" role="alert">操作记录加载失败，请刷新重试。</p>}
       <div className="grid gap-2">
         {logs.map((log) => <AuditRow key={log.id} log={log} />)}
-        {logs.length === 0 && <EmptyLine text="暂无审计日志" />}
+        {logsQuery.isPending ? <EmptyLine text="正在加载操作记录…" /> : !logsQuery.isError && logs.length === 0 && <EmptyLine text="暂无操作记录" />}
       </div>
+      <nav className="admin-pagination" aria-label="操作记录分页">
+        <span>第 {cursors.length + 1} 页</span>
+        <button className="admin-icon-button" title="上一页" aria-label="上一页" disabled={!cursors.length || logsQuery.isPending} onClick={() => setCursors((value) => value.slice(0, -1))}><ChevronLeft size={17} /></button>
+        <button className="admin-icon-button" title="下一页" aria-label="下一页" disabled={!nextCursor || logsQuery.isPending} onClick={() => { if (nextCursor) setCursors((value) => [...value, nextCursor]); }}><ChevronRight size={17} /></button>
+      </nav>
     </Panel>
   );
 }
@@ -1022,23 +1020,16 @@ function AuditRow({ log }: { log: AdminAuditLogRecord }) {
 function JobMiniList({ jobs }: { jobs: ImageJobRecord[] }) {
   if (jobs.length === 0) return <EmptyLine text="暂无失败任务" />;
   return (
-    <div className="grid gap-2">
+    <div className="admin-failure-list">
       {jobs.map((job) => (
-        <div key={job.id} className="rounded-lg border border-slate-200 bg-white p-3">
-          <div className="flex items-start justify-between gap-3">
-            <p className="line-clamp-2 text-sm font-bold">{job.prompt}</p>
-            <Badge value={job.status} />
-          </div>
-          <p className="mt-1 text-xs text-slate-500">{job.error?.message ?? job.id}</p>
+        <div key={job.id}>
+          <span><AlertTriangle size={16} aria-hidden /></span>
+          <div><strong>{job.prompt || '图片任务'}</strong><small>{job.error?.message ?? job.id}</small></div>
+          <time>{formatDate(job.createdAt)}</time>
         </div>
       ))}
     </div>
   );
-}
-
-function chartHeight(value: number, max: number) {
-  if (value <= 0) return 8;
-  return Math.max(18, Math.round((value / max) * 190));
 }
 
 function percentOf(value: number, total: number) {
@@ -1046,187 +1037,56 @@ function percentOf(value: number, total: number) {
   return Math.round((value / total) * 1000) / 10;
 }
 
-function statusColor(status: ImageJobStatus) {
-  const colors: Record<ImageJobStatus, string> = {
-    queued: '#60a5fa',
-    running: '#22c55e',
-    retrying: '#f59e0b',
-    succeeded: '#10b981',
-    failed: '#f43f5e',
-    refunded: '#94a3b8'
-  };
-  return colors[status];
-}
-
 function DashboardMetric({
-  icon,
   label,
   value,
   sub,
-  trend,
-  tone = 'emerald'
+  tone = 'default'
 }: {
-  icon: React.ReactNode;
   label: string;
   value?: number | string;
   sub: string;
-  trend: string;
-  tone?: 'emerald' | 'blue' | 'cyan' | 'amber';
+  tone?: 'default' | 'accent' | 'warning' | 'danger';
 }) {
-  const tones = {
-    emerald: 'bg-emerald-50 text-emerald-700',
-    blue: 'bg-blue-50 text-blue-700',
-    cyan: 'bg-cyan-50 text-cyan-700',
-    amber: 'bg-amber-50 text-amber-700'
-  };
   return (
-    <div className="rounded-lg border border-emerald-950/10 bg-white p-4 shadow-sm">
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <p className="text-xs font-bold text-slate-500">{label}</p>
-          <p className="mt-2 truncate text-3xl font-black text-[#083b2d]">{value ?? '-'}</p>
-        </div>
-        <span className={`inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${tones[tone]}`}>{icon}</span>
-      </div>
-      <div className="mt-3 flex items-center justify-between gap-2">
-        <p className="truncate text-xs font-bold text-slate-500">{sub}</p>
-        <span className="inline-flex items-center gap-1 whitespace-nowrap text-xs font-black text-emerald-700">
-          <TrendingUp size={13} aria-hidden />
-          {trend}
-        </span>
-      </div>
+    <div className="admin-metric" data-tone={tone}>
+      <p>{label}</p>
+      <strong>{value ?? '-'}</strong>
+      <small>{sub}</small>
     </div>
   );
 }
 
 function ModelUsageChart({ models }: { models: AdminOverviewResponse['models'] }) {
-  const rows = models.slice(0, 8);
+  const rows = [...models].sort((left, right) => right.jobs - left.jobs).slice(0, 8);
   const maxJobs = Math.max(1, ...rows.map((model) => model.jobs));
   if (rows.length === 0) return <EmptyLine text="当前范围内暂无模型调用" />;
   return (
-    <div className="grid gap-4">
-      <div className="flex min-h-72 items-end gap-4 overflow-x-auto border-b border-slate-100 px-1 pb-4 pt-8">
-        {rows.map((model) => {
-          const successHeight = chartHeight(model.succeeded, maxJobs);
-          const failedHeight = chartHeight(model.failed, maxJobs);
+    <div className="admin-model-table-wrap">
+      <table className="admin-model-table" aria-label="模型调用表现">
+        <thead><tr><th>模型</th><th>调用量</th><th>成功率</th><th>失败</th></tr></thead>
+        <tbody>{rows.map((model) => {
+          const completed = model.succeeded + model.failed;
+          const successRate = completed ? `${percentOf(model.succeeded, completed)}%` : '-';
           return (
-            <div key={`${model.provider}:${model.model}`} className="flex min-w-20 flex-1 flex-col items-center gap-3">
-              <div className="flex h-52 items-end gap-2">
-                <div
-                  className="w-4 rounded-t-md bg-emerald-500 shadow-sm"
-                  style={{ height: `${successHeight}px` }}
-                  title={`${model.model} 成功 ${model.succeeded}`}
-                />
-                <div
-                  className="w-4 rounded-t-md bg-rose-400 shadow-sm"
-                  style={{ height: `${failedHeight}px` }}
-                  title={`${model.model} 失败 ${model.failed}`}
-                />
-              </div>
-              <div className="w-full text-center">
-                <p className="truncate text-xs font-black text-[#083b2d]" title={model.model}>{model.model}</p>
-                <p className="mt-1 text-[11px] font-bold text-slate-400">{labelFor(model.provider)} · {model.jobs}</p>
-              </div>
-            </div>
+            <tr key={`${model.provider}:${model.model}`}>
+              <td><span><strong title={model.model}>{model.model}</strong><small>{labelFor(model.provider)}</small></span></td>
+              <td><div className="admin-model-volume"><span aria-label={`${model.jobs} 次调用`}><i style={{ width: `${(model.jobs / maxJobs) * 100}%` }} /></span><strong>{model.jobs}</strong></div></td>
+              <td><strong>{successRate}</strong></td>
+              <td><strong className={model.failed ? 'is-error' : ''}>{model.failed}</strong></td>
+            </tr>
           );
-        })}
-      </div>
-      <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
-        {rows.slice(0, 4).map((model) => (
-          <div key={`${model.provider}:${model.model}:summary`} className="rounded-lg bg-[#f7faf8] p-3">
-            <p className="truncate text-xs font-black text-[#083b2d]">{model.model}</p>
-            <p className="mt-1 text-xs text-slate-500">{model.succeeded} 成功 / {model.failed} 失败</p>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function StatusDonut({ rows }: { rows: Array<{ status: ImageJobStatus; value: number }> }) {
-  const total = rows.reduce((sum, row) => sum + row.value, 0);
-  let cursor = 0;
-  const gradient = total > 0
-    ? rows
-        .filter((row) => row.value > 0)
-        .map((row) => {
-          const start = cursor;
-          const end = cursor + (row.value / total) * 360;
-          cursor = end;
-          return `${statusColor(row.status)} ${start}deg ${end}deg`;
-        })
-        .join(', ')
-    : '#e2e8f0 0deg 360deg';
-
-  return (
-    <div className="grid gap-5 sm:grid-cols-[220px_minmax(0,1fr)] sm:items-center">
-      <div className="relative mx-auto h-52 w-52 rounded-full" style={{ background: `conic-gradient(${gradient})` }}>
-        <div className="absolute inset-10 flex flex-col items-center justify-center rounded-full bg-white text-center shadow-inner">
-          <p className="text-xs font-bold text-slate-500">任务总数</p>
-          <p className="mt-1 text-3xl font-black text-[#083b2d]">{total}</p>
-        </div>
-      </div>
-      <div className="grid gap-2">
-        {rows.map((row) => (
-          <div key={row.status} className="flex items-center justify-between gap-3 rounded-lg border border-slate-100 bg-[#f7faf8] p-3">
-            <span className="inline-flex items-center gap-2 text-sm font-black text-[#083b2d]">
-              <i className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: statusColor(row.status) }} />
-              {labelFor(row.status)}
-            </span>
-            <span className="text-sm font-black text-slate-600">{row.value} · {percentOf(row.value, total)}%</span>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function GuestGeoPanel({ items, totalGuests }: { items: AdminOverviewResponse['guestGeo']; totalGuests: number }) {
-  const topItems = items.slice(0, 8);
-  return (
-    <Panel title="游客地域分析" action={<span className="text-xs font-bold text-slate-500">来源：游客 IP 记录</span>}>
-      <div className="grid gap-2">
-        {topItems.map((item) => {
-          const percent = percentOf(item.guests, totalGuests);
-          return (
-            <div key={`${item.country}:${item.region ?? ''}:${item.city ?? ''}`} className="rounded-lg border border-slate-100 bg-white p-3">
-              <div className="flex items-center justify-between gap-3">
-                <div className="min-w-0">
-                  <p className="truncate text-sm font-black text-[#083b2d]">{formatGeo(item.country, item.region, item.city)}</p>
-                  <p className="text-xs text-slate-500">最近访问 {formatDate(item.lastSeenAt ?? undefined)}</p>
-                </div>
-                <p className="text-sm font-black text-emerald-700">{percent}%</p>
-              </div>
-              <div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-100">
-                <div className="h-full rounded-full bg-emerald-500" style={{ width: `${Math.max(percent, item.guests > 0 ? 4 : 0)}%` }} />
-              </div>
-              <p className="mt-1 text-xs font-bold text-slate-400">{item.guests} 位游客</p>
-            </div>
-          );
-        })}
-        {topItems.length === 0 && <EmptyLine text="暂无游客地域数据" />}
-      </div>
-    </Panel>
-  );
-}
-
-function StatusTile({ status, value }: { status: ImageJobStatus; value: number }) {
-  return (
-    <div className="rounded-lg border border-slate-100 bg-white p-3">
-      <div className="flex items-center justify-between gap-2">
-        <Badge value={status} />
-        <Clock size={15} className="text-slate-400" aria-hidden />
-      </div>
-      <p className="mt-3 text-2xl font-black">{value}</p>
+        })}</tbody>
+      </table>
     </div>
   );
 }
 
 function Panel({ title, action, children }: { title: string; action?: React.ReactNode; children: React.ReactNode }) {
   return (
-    <section className="rounded-lg border border-emerald-950/10 bg-white p-4 shadow-sm">
-      <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-        <h3 className="text-lg font-black text-[#083b2d]">{title}</h3>
+    <section className="admin-panel">
+      <div className="admin-panel-header">
+        <h2>{title}</h2>
         {action}
       </div>
       {children}
@@ -1235,17 +1095,18 @@ function Panel({ title, action, children }: { title: string; action?: React.Reac
 }
 
 function Toolbar({ children }: { children: React.ReactNode }) {
-  return <div className="mb-3 flex flex-wrap items-center gap-2">{children}</div>;
+  return <div className="admin-toolbar">{children}</div>;
 }
 
 function Segmented({ value, onChange, options }: { value: string; onChange: (value: string) => void; options: Array<[string, string]> }) {
   return (
-    <div className="inline-flex rounded-lg border border-slate-200 bg-white p-1">
+    <div className="admin-segmented" role="group">
       {options.map(([optionValue, label]) => (
         <button
           key={optionValue}
-          className={`h-8 rounded-md px-3 text-sm font-bold transition-colors ${value === optionValue ? 'bg-slate-950 text-white' : 'text-slate-500 hover:bg-slate-100'}`}
+          className={value === optionValue ? 'is-active' : ''}
           onClick={() => onChange(optionValue)}
+          aria-pressed={value === optionValue}
         >
           {label}
         </button>
@@ -1254,22 +1115,40 @@ function Segmented({ value, onChange, options }: { value: string; onChange: (val
   );
 }
 
-function SearchBox({ value, onChange, placeholder }: { value: string; onChange: (value: string) => void; placeholder: string }) {
+function AdminSelect({ label, value, onChange, options }: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  options: Array<[string, string]>;
+}) {
   return (
-    <label className="relative block w-full sm:w-72">
+    <label className="admin-select">
+      <span className="sr-only">{label}</span>
+      <select value={value} onChange={(event) => onChange(event.target.value)} aria-label={label}>
+        {options.map(([optionValue, optionLabel]) => <option key={optionValue} value={optionValue}>{optionLabel}</option>)}
+      </select>
+      <ChevronDown size={15} aria-hidden />
+    </label>
+  );
+}
+
+function SearchBox({ value, onChange, placeholder, label = placeholder }: { value: string; onChange: (value: string) => void; placeholder: string; label?: string }) {
+  return (
+    <label className="admin-search-box">
       <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} aria-hidden />
       <input
         className="h-10 w-full rounded-lg border border-slate-200 bg-white pl-9 pr-3 text-sm font-semibold outline-none focus:border-teal-600"
         value={value}
         onChange={(event) => onChange(event.target.value)}
         placeholder={placeholder}
+        aria-label={label}
       />
     </label>
   );
 }
 
 function Badge({ value }: { value: string }) {
-  return <span className={`inline-flex h-7 items-center rounded-full border px-2.5 text-xs font-black ${statusTone(value)}`}>{labelFor(value)}</span>;
+  return <span className={`admin-badge ${statusTone(value)}`}>{labelFor(value)}</span>;
 }
 
 function JsonBlock({ title, value }: { title: string; value: unknown }) {
@@ -1289,12 +1168,12 @@ function EmptyLine({ text }: { text: string }) {
 
 function CenteredState({ icon, title, detail, action }: { icon: React.ReactNode; title: string; detail?: string; action?: React.ReactNode }) {
   return (
-    <main className="flex min-h-screen items-center justify-center bg-[#eef3f1] p-4">
-      <div className="w-full max-w-md rounded-lg border border-slate-200 bg-white p-6 text-center shadow-sm">
-        <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-lg bg-teal-50 text-teal-700">{icon}</div>
-        <h1 className="mt-4 text-2xl font-black">{title}</h1>
-        {detail && <p className="mt-2 text-sm leading-6 text-slate-500">{detail}</p>}
-        {action && <div className="mt-5 flex justify-center">{action}</div>}
+    <main className="admin-centered-state">
+      <div>
+        <span>{icon}</span>
+        <h1>{title}</h1>
+        {detail && <p>{detail}</p>}
+        {action && <footer>{action}</footer>}
       </div>
     </main>
   );

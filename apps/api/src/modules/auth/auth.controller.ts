@@ -51,6 +51,18 @@ export class AuthController {
     return this.auth.startWechatAuth();
   }
 
+  @Post('wechat/profile/authorize')
+  @UseGuards(AuthGuard)
+  authorizeWechatProfile(@Req() req: AuthenticatedRequest) {
+    return this.auth.authorizeWechatProfile(req);
+  }
+
+  @Post('wechat/profile/sync')
+  @UseGuards(AuthGuard)
+  syncWechatProfile(@Req() req: AuthenticatedRequest) {
+    return this.auth.syncWechatProfile(req);
+  }
+
   @Get('wechat/status')
   wechatStatus(@Query('state') state: string, @Res({ passthrough: true }) res: Response, @Req() req: AuthenticatedRequest) {
     return this.auth.getWechatStatus(state, res, req);

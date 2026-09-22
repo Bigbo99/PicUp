@@ -179,6 +179,19 @@ export class StorageService {
       if (duplicateIds.length) await tx.fileRecord.updateMany({ where: { id: { in: duplicateIds }, userId: guestId }, data: { hash: null } });
       await tx.fileRecord.updateMany({ where: { userId: guestId }, data: { userId } });
       await tx.studioSubject.updateMany({ where: { userId: guestId }, data: { userId } });
+      // Remove only empty anonymous accounts after their uploads have been transferred.
+      const payments = await tx.paymentOrder.count({ where: { userId: guestId } });
+      const credits = await tx.creditEntry.count({ where: { userId: guestId } });
+      if (!payments && !credits) {
+        await tx.user.deleteMany({ where: {
+          id: guestId, isGuest: true, creditBalance: 0,
+          email: null, passwordHash: null,
+          files: { none: {} }, subjects: { none: {} }, jobs: { none: {} },
+          auditLogs: { none: {} }, identities: { none: {} },
+          emailChallenges: { none: {} }, wechatSessions: { none: {} },
+          studioPreference: null, assetMetadata: { none: {} }, conversationMetadata: { none: {} }
+        } });
+      }
     });
   }
 
@@ -573,7 +586,7 @@ export class StorageService {
     });
     return {
       users: users.slice(0, limit).map((user) => this.toStoredUser(user)),
-      nextCursor: users.length > limit ? users[limit].id : undefined
+      nextCursor: users.length > limit ? users[limit - 1].id : undefined
     };
   }
 
@@ -886,7 +899,7 @@ export class StorageService {
         requestId: log.requestId,
         createdAt: log.createdAt.toISOString()
       })),
-      nextCursor: logs.length > limit ? logs[limit].id : undefined
+      nextCursor: logs.length > limit ? logs[limit - 1].id : undefined
     };
   }
 
@@ -925,8 +938,7 @@ export class StorageService {
       refunded,
       rangeCreated,
       modelGroups,
-      recentFailures,
-      guestGeoGroups
+      recentFailures
     ] = await Promise.all([
       this.prisma.user.count(),
       this.prisma.user.count({ where: { isGuest: true } }),
@@ -942,9 +954,9 @@ export class StorageService {
       this.prisma.imageJob.count({ where: { status: 'queued' } }),
       this.prisma.imageJob.count({ where: { status: 'running' } }),
       this.prisma.imageJob.count({ where: { status: 'retrying' } }),
-      this.prisma.imageJob.count({ where: { status: 'succeeded' } }),
-      this.prisma.imageJob.count({ where: { status: 'failed' } }),
-      this.prisma.imageJob.count({ where: { status: 'refunded' } }),
+      this.prisma.imageJob.count({ where: { status: 'succeeded', ...(since ? { createdAt: { gte: since } } : {}) } }),
+      this.prisma.imageJob.count({ where: { status: 'failed', ...(since ? { createdAt: { gte: since } } : {}) } }),
+      this.prisma.imageJob.count({ where: { status: 'refunded', ...(since ? { createdAt: { gte: since } } : {}) } }),
       this.prisma.imageJob.count({ where: since ? { createdAt: { gte: since } } : {} }),
       this.prisma.imageJob.groupBy({
         by: ['selectedProvider', 'selectedModel', 'status'],
@@ -952,24 +964,12 @@ export class StorageService {
         where: since ? { createdAt: { gte: since } } : undefined
       }),
       this.prisma.imageJob.findMany({
-        where: { status: 'failed' },
-        orderBy: { createdAt: 'desc' },
-        take: 8
-      }),
-      this.prisma.user.groupBy({
-        by: ['lastCountry', 'lastRegion', 'lastCity'],
-        _count: { _all: true },
-        _max: { lastSeenAt: true },
         where: {
-          isGuest: true,
-          ...(since ? { lastSeenAt: { gte: since } } : {}),
-          OR: [
-            { lastIp: { not: null } },
-            { lastCountry: { not: null } },
-            { lastRegion: { not: null } },
-            { lastCity: { not: null } }
-          ]
-        }
+          status: { in: ['failed', 'refunded'] },
+          ...(since ? { completedAt: { gte: since } } : {})
+        },
+        orderBy: { completedAt: 'desc' },
+        take: 8
       })
     ]);
     const byModel = new Map<string, { provider: string; model: string; jobs: number; succeeded: number; failed: number }>();
@@ -984,10 +984,10 @@ export class StorageService {
       };
       current.jobs += group._count._all;
       if (group.status === 'succeeded') current.succeeded += group._count._all;
-      if (group.status === 'failed') current.failed += group._count._all;
+      if (group.status === 'failed' || group.status === 'refunded') current.failed += group._count._all;
       byModel.set(key, current);
     }
-    const completed = succeeded + failed;
+    const completed = succeeded + failed + refunded;
     return {
       totals: {
         users,
@@ -1002,16 +1002,7 @@ export class StorageService {
         settings,
         auditLogs
       },
-      guestGeo: guestGeoGroups
-        .map((group) => ({
-          country: group.lastCountry || '未知',
-          region: group.lastRegion,
-          city: group.lastCity,
-          guests: group._count._all,
-          lastSeenAt: group._max.lastSeenAt?.toISOString() ?? null
-        }))
-        .sort((left, right) => right.guests - left.guests)
-        .slice(0, 12),
+      guestGeo: [],
       jobs: {
         queued,
         running,

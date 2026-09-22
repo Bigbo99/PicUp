@@ -46,6 +46,9 @@ const FALLBACK_MODELS_RESPONSE: ModelsResponse = {
 /** Always use relative paths; Next.js rewrites or Nginx forwards requests to the API service. */
 const API_BASE_URL = '';
 
+export const authorizeWechatProfile = () => request<{ authorization_url: string; authorization_id: string; expires_at: string }>('/api/auth/wechat/profile/authorize', { method: 'POST' });
+export const syncWechatProfile = () => request<{ status: string }>('/api/auth/wechat/profile/sync', { method: 'POST' });
+
 export type StudioPreferences = { theme: 'system' | 'light' | 'dark'; quality: '1K' | '2K' | '4K'; aspectRatio: string; provider: string; model: string };
 export const displayFile = (file: UploadedFileRecord): UploadedFileRecord => ({ ...file, url: `/api/files/${encodeURIComponent(file.id)}/content` });
 const displayJob = (job: ImageJobRecord): ImageJobRecord => ({ ...job, inputFiles: job.inputFiles.map(displayFile), outputImages: job.outputImages.map((image, index) => ({ ...image, url: `/api/image/jobs/${encodeURIComponent(job.id)}/preview/${index}` })) });
