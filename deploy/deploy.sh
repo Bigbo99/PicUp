@@ -1,149 +1,72 @@
-#!/bin/bash
-# PicUp production deploy script (pull prebuilt image, no server build)
-
+#!/usr/bin/env bash
 set -Eeuo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 cd "$PROJECT_DIR"
 
-read_env_value() {
-  local key="$1"
-  awk -F= -v key="$key" '$1 == key { sub(/^[^=]*=/, ""); value=$0 } END { print value }' .env | tr -d '\r'
-}
-
-persist_env_value() {
-  local key="$1"
-  local value="$2"
-  local temp_file
-  temp_file="$(mktemp)"
-
-  awk -v key="$key" -v value="$value" '
-    BEGIN { found=0 }
-    $0 ~ "^" key "=" {
-      if (!found) print key "=" value
-      found=1
-      next
-    }
-    { print }
-    END { if (!found) print key "=" value }
-  ' .env > "$temp_file"
-
-  cat "$temp_file" > .env
-  rm -f "$temp_file"
-}
-
 wait_for_url() {
-  local label="$1"
-  local url="$2"
-  local max_retries="${3:-30}"
-  local retry=0
-
-  until curl -fsS "$url" >/dev/null 2>&1; do
-    retry=$((retry + 1))
-    if [ "$retry" -ge "$max_retries" ]; then
-      echo "ERROR: $label health check timed out: $url"
-      return 1
-    fi
+  local label="$1" url="$2" retries="${3:-30}"
+  for ((i=1; i<=retries; i++)); do
+    if curl -fsS "$url" >/dev/null 2>&1; then echo "OK: $label healthy"; return 0; fi
     sleep 2
   done
-
-  echo "OK: $label healthy"
+  echo "ERROR: $label health check timed out: $url" >&2
+  return 1
 }
 
-show_failure_context() {
+failure_context() {
   local status=$?
   trap - ERR
-  echo ""
   echo "ERROR: deployment failed (exit $status)"
   docker compose ps -a || true
   docker compose logs --tail=120 migrate api web worker || true
   exit "$status"
 }
+trap failure_context ERR
 
-trap show_failure_context ERR
+command -v docker >/dev/null || { echo 'ERROR: Docker not found'; exit 1; }
+docker compose version >/dev/null || { echo 'ERROR: Docker Compose V2 not found'; exit 1; }
+[ -f .env ] || { echo 'ERROR: .env not found'; exit 1; }
 
-echo "=========================================="
-echo "  PicUp Deploy (Pull Image Mode)"
-echo "=========================================="
-
-echo ""
-echo "[1/8] Check environment..."
-command -v docker >/dev/null 2>&1 || { echo "ERROR: Docker not found"; exit 1; }
-docker compose version >/dev/null 2>&1 || { echo "ERROR: Docker Compose V2 not found"; exit 1; }
-[ -f .env ] || { echo "ERROR: .env not found"; exit 1; }
-
-APP_IMAGE="${APP_IMAGE:-}"
-ACR_REGISTRY="${ACR_REGISTRY:-}"
-ACR_USERNAME="${ACR_USERNAME:-}"
-ACR_PASSWORD="${ACR_PASSWORD:-}"
-
-[ -n "$APP_IMAGE" ] || { echo "ERROR: APP_IMAGE is empty"; exit 1; }
-[ -n "$ACR_REGISTRY" ] || { echo "ERROR: ACR_REGISTRY is empty"; exit 1; }
-[ -n "$ACR_USERNAME" ] || { echo "ERROR: ACR_USERNAME is empty"; exit 1; }
-[ -n "$ACR_PASSWORD" ] || { echo "ERROR: ACR_PASSWORD is empty"; exit 1; }
-export APP_IMAGE
-echo "OK: APP_IMAGE=$APP_IMAGE"
-
-echo ""
-echo "[2/8] Validate production settings..."
-NEXT_PUBLIC_API_BASE_URL="$(read_env_value NEXT_PUBLIC_API_BASE_URL)"
-APP_ENV="$(read_env_value APP_ENV)"
-[ -z "$NEXT_PUBLIC_API_BASE_URL" ] || {
-  echo "ERROR: NEXT_PUBLIC_API_BASE_URL must be empty in production reverse-proxy mode"
-  exit 1
-}
-[ "$APP_ENV" = "production" ] || echo "WARN: APP_ENV=${APP_ENV:-unset}, production is recommended"
-
-echo ""
-echo "[3/8] Prepare storage directories..."
+RELEASE_TAG="${RELEASE_TAG:-sha-$(git rev-parse --short=7 HEAD)}"
+export APP_IMAGE="${APP_IMAGE:-picup-app:${RELEASE_TAG}}"
+echo "Building local release image: $APP_IMAGE"
 mkdir -p storage/inputs storage/outputs
 
-echo ""
-echo "[4/8] Pull immutable application image..."
-echo "$ACR_PASSWORD" | docker login "$ACR_REGISTRY" --username "$ACR_USERNAME" --password-stdin >/dev/null
-docker pull "$APP_IMAGE"
+# Build only the application image. Postgres and Redis are never rebuilt.
+docker compose build api
+docker image inspect "$APP_IMAGE" >/dev/null
 
-echo ""
-echo "[5/8] Ensure infrastructure is running..."
 docker compose up -d --no-recreate postgres redis
-
-echo ""
-echo "[6/8] Apply database migrations..."
 docker compose run --rm migrate
-
-echo ""
-echo "[7/8] Update application services..."
 docker compose up -d --no-build --no-deps api
-wait_for_url "API readiness" "http://127.0.0.1:4000/api/ready"
+wait_for_url 'API readiness' 'http://127.0.0.1:4000/api/ready'
 docker compose up -d --no-build --no-deps --force-recreate worker web
-wait_for_url "Worker readiness" "http://127.0.0.1:4000/api/ready/worker"
-wait_for_url "Web" "http://127.0.0.1:3000"
-docker compose ps --status running --services | grep -qx worker || {
-  echo "ERROR: Worker is not running"
-  exit 1
-}
-echo "OK: Worker running"
+wait_for_url 'Worker readiness' 'http://127.0.0.1:4000/api/ready/worker'
+wait_for_url 'Web' 'http://127.0.0.1:3000'
+docker compose ps --status running --services | grep -qx worker
 
 PAGE_CACHE_DIR="/www/wwwroot/picup.ai-mendao.com/proxy_cache_dir"
-if [ -d "$PAGE_CACHE_DIR" ]; then
-  find "$PAGE_CACHE_DIR" -mindepth 1 -delete
-  echo "OK: cleared stale page cache: $PAGE_CACHE_DIR"
-fi
-if command -v nginx >/dev/null 2>&1; then
-  nginx -t
-  nginx -s reload
-  echo "OK: Nginx reloaded"
-fi
+if [ -d "$PAGE_CACHE_DIR" ]; then find "$PAGE_CACHE_DIR" -mindepth 1 -delete; fi
+if command -v nginx >/dev/null 2>&1; then nginx -t && nginx -s reload; fi
 
-echo ""
-echo "[8/8] Persist release and clean dangling data..."
-persist_env_value APP_IMAGE "$APP_IMAGE"
+# Keep the current release available for rollback and remove only dangling layers.
 docker image prune -f >/dev/null
-echo "OK: release persisted"
 
-echo ""
-echo "=========================================="
-echo "  Deploy Completed"
-echo "=========================================="
+# ACR is a backup destination. Its outage must not take down the release.
+if [[ -n "${ACR_REGISTRY:-}" && -n "${ACR_USERNAME:-}" && -n "${ACR_PASSWORD:-}" && -n "${ACR_IMAGE:-}" ]]; then
+  backup_image="${ACR_IMAGE}:${RELEASE_TAG}"
+  if echo "$ACR_PASSWORD" | docker login "$ACR_REGISTRY" --username "$ACR_USERNAME" --password-stdin >/dev/null && \
+     docker tag "$APP_IMAGE" "$backup_image" && \
+     timeout --signal=TERM --kill-after=15s 360s docker push "$backup_image"; then
+    echo "OK: ACR backup pushed: $backup_image"
+  else
+    echo 'WARNING: ACR backup failed or timed out; local deployment remains active.'
+  fi
+else
+  echo 'WARNING: ACR backup credentials not supplied; skipped.'
+fi
+
+echo 'Deployment completed.'
 docker compose ps
