@@ -56,7 +56,7 @@ export function Dialog({ title, children, onClose, drawer = false, fullscreen = 
     className={`studio-dialog ${inline ? 'studio-inline-page studio-navigation-page' : ''} ${!fullscreen && !hideHeading ? 'has-heading' : ''} ${drawer ? 'studio-drawer' : ''} ${fullscreen ? 'studio-lightbox' : ''} ${anchor ? 'composer-popover' : ''}`}
     onPointerDown={event => { startedOutside.current = outside(event); }}
     onClick={event => { if (startedOutside.current && outside(event)) onClose(); startedOutside.current = false; }}
-    onCancel={event => { event.preventDefault(); onClose(); }}>
+    onCancel={event => { event.preventDefault(); event.stopPropagation(); onClose(); }}>
     {!fullscreen && !hideHeading && <header className="dialog-heading"><h2>{title}</h2>
       {!inline && <button type="button" className="studio-icon" aria-label={`关闭${title}`} title="关闭" onClick={onClose}><X size={20} /></button>}
     </header>}

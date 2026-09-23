@@ -1,18 +1,22 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { RefreshCw, X } from 'lucide-react';
+import { RefreshCw } from 'lucide-react';
 import QRCode from 'qrcode';
 import { useQueryClient } from '@tanstack/react-query';
 import { authorizeWechatProfile, syncWechatProfile } from '@/lib/api';
+import { Dialog } from './dialog';
 
 export function WechatProfile({ userId, onSynced }: { userId: string; onSynced: () => void }) {
   const client = useQueryClient();
   const [grant, setGrant] = useState<Awaited<ReturnType<typeof authorizeWechatProfile>> | null>(null);
   const [qr, setQr] = useState('');
   const [busy, setBusy] = useState(false);
+  const [open, setOpen] = useState(false);
   const [message, setMessage] = useState('');
   const generation = useRef(0);
+  const close = () => { generation.current++; setOpen(false); setGrant(null); setQr(''); setBusy(false); };
+  useEffect(() => () => { generation.current++; }, []);
   const refresh = useCallback(async () => {
     const result = await syncWechatProfile();
     if (result.status === 'succeeded') {
@@ -48,7 +52,7 @@ export function WechatProfile({ userId, onSynced }: { userId: string; onSynced: 
   }, [grant, refresh]);
   async function start() {
     const current = ++generation.current;
-    setBusy(true); setMessage(''); setQr('');
+    setOpen(true); setBusy(true); setMessage(''); setQr(''); setGrant(null);
     try {
       const next = await authorizeWechatProfile();
       if (current !== generation.current) return;
@@ -56,19 +60,18 @@ export function WechatProfile({ userId, onSynced }: { userId: string; onSynced: 
       const image = await QRCode.toDataURL(next.authorization_url, { width: 240, margin: 2 });
       if (current !== generation.current) return;
       setQr(image); setGrant(next);
-    } catch (error) { setMessage(error instanceof Error ? error.message : '暂时无法发起授权'); }
-    finally { setBusy(false); }
+    } catch (error) { if (current === generation.current) setMessage(error instanceof Error ? error.message : '暂时无法发起授权'); }
+    finally { if (current === generation.current) setBusy(false); }
   }
   return <div className="wechat-profile-sync">
-    <div className="account-profile-heading"><h3>账户资料</h3><span className="wechat-sync-tool">
+    <span className="wechat-sync-tool">
       <button type="button" className="wechat-sync-trigger" aria-label={busy ? '正在获取授权' : '同步微信头像和昵称'} aria-busy={busy} disabled={busy} onClick={start}><RefreshCw size={15} /></button>
       <span className="wechat-sync-tooltip" role="tooltip">{busy ? '正在获取授权' : '同步微信头像和昵称'}</span>
-    </span></div>
-    {grant && <div className="wechat-profile-authorization" style={{ marginTop: 16, maxWidth: '100%', textAlign: 'center' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}><strong>微信资料授权</strong><button type="button" title="取消同步" aria-label="取消同步" onClick={() => { generation.current++; setGrant(null); }}><X size={18} /></button></div>
-      {qr && <img src={qr} alt="微信资料授权二维码" width={240} height={240} style={{ maxWidth: '100%', height: 'auto', margin: '12px auto' }} />}
-      <p role="status">等待微信授权</p>
-    </div>}
-    {message && <p role="status">{message}</p>}
+    </span>
+    {open && <Dialog title="同步微信头像和昵称" onClose={close}><div className="wechat-profile-authorization">
+      {busy ? <div className="wechat-profile-loading"><RefreshCw size={24} /><p role="status">正在获取二维码</p></div> : grant && qr ? <><img src={qr} alt="微信资料授权二维码" width={240} height={240} /><p role="status">请使用微信扫码授权</p></> : null}
+      {message && <p role="status">{message}</p>}
+      {!busy && !grant && (message === '微信头像和昵称已同步' ? <button type="button" className="studio-primary" onClick={close}>完成</button> : <button type="button" className="studio-secondary" onClick={start}><RefreshCw size={16} />重新获取二维码</button>)}
+    </div></Dialog>}
   </div>;
 }

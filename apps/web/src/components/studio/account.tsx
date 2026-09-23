@@ -26,10 +26,10 @@ export function Account({ me, onPayment: _onPayment, onLogout, onLogin, onRechar
   } });
   const signOut = useMutation({ mutationFn: logout, onSuccess: onLogout });
   return <div className="account-content">
-    <div className="account-identity"><span className="account-avatar"><ProfileAvatar url={me?.user.avatarUrl} /></span><div><h3>{me?.user.displayName || me?.user.email || (guest ? '访客' : `注册用户 ${me?.user.id.slice(0, 8)}`)}</h3><p>{guest ? '未登录' : me?.user.email || '微信账户'}</p>{!guest && <button className="account-credit" onClick={onRecharge}>{me.credits.balance} 积分 · 充值</button>}</div></div>
+    <div className="account-identity"><span className="account-avatar"><ProfileAvatar url={me?.user.avatarUrl} /></span><div><div className="account-name-row"><h3>{me?.user.displayName || me?.user.email || (guest ? '访客' : `注册用户 ${me?.user.id.slice(0, 8)}`)}</h3>{!guest && me.user.wechatBound && <WechatProfile userId={me.user.id} onSynced={synced} />}</div><p>{guest ? '未登录' : me?.user.email || '微信账户'}</p>{!guest && <button className="account-credit" onClick={onRecharge}>{me.credits.balance} 积分 · 充值</button>}</div></div>
     {guest ? <button className="studio-primary" onClick={onLogin}>登录 / 注册</button> : <>
       <PreferenceFields value={preferences} onChange={patch => save.mutate(patch)} pending={save.isPending} error={save.error?.message} models={models} />
-      <section className="account-section">{me.user.wechatBound ? <WechatProfile userId={me.user.id} onSynced={synced} /> : <h3>账户资料</h3>}<form className="studio-form" onSubmit={event => { event.preventDefault(); setSaved(false); profile.mutate({ displayName: name, email, ...(password ? { password } : {}) }); }}>
+      <section className="account-section"><h3>账户资料</h3><form className="studio-form" onSubmit={event => { event.preventDefault(); setSaved(false); profile.mutate({ displayName: name, email, ...(password ? { password } : {}) }); }}>
         <label>昵称<input value={name} onChange={event => setName(event.target.value)} autoComplete="nickname" /></label>
         <label>邮箱<input type="email" required value={email} onChange={event => setEmail(event.target.value)} autoComplete="email" /></label>
         <label>新密码<input type="password" minLength={8} value={password} onChange={event => setPassword(event.target.value)} autoComplete="new-password" placeholder="留空则保持不变" /></label>

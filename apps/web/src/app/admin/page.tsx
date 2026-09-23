@@ -20,14 +20,12 @@ import {
   RefreshCw,
   Save,
   Search,
-  Settings,
   ShieldCheck,
   SlidersHorizontal,
   Users,
   XCircle
 } from 'lucide-react';
 import type {
-  AdminAppSettingRecord,
   AdminAuditLogRecord,
   AdminJobsResponse,
   AdminOverviewResponse,
@@ -44,24 +42,22 @@ import {
   getAdminProviderHealth,
   listAdminAuditLogs,
   listAdminJobs,
-  listAdminSettings,
   listAdminUsers,
   updateAdminUser,
-  updateAdminUserStatus,
-  upsertAdminSetting
+  updateAdminUserStatus
 } from '@/lib/admin-api';
 import { useNotifications } from '@/components/notification-provider';
 import { AiConfigPanel } from '@/components/admin/ai-config-panel';
+import { RefreshButton } from '@/components/admin/controls';
 
-type AdminTab = 'overview' | 'users' | 'jobs' | 'models' | 'settings' | 'audit';
+type AdminTab = 'overview' | 'users' | 'jobs' | 'models' | 'audit';
 type AdminUserDraft = Parameters<typeof updateAdminUser>[1];
 
 const tabs: Array<{ id: AdminTab; label: string; description: string; icon: React.ReactNode }> = [
   { id: 'overview', label: '概览', description: '关键运行指标与需要处理的异常', icon: <BarChart3 size={17} aria-hidden /> },
   { id: 'users', label: '用户', description: '账号、权限、积分与访问状态', icon: <Users size={17} aria-hidden /> },
   { id: 'jobs', label: '任务', description: '查看生成任务、结果和失败原因', icon: <ClipboardList size={17} aria-hidden /> },
-  { id: 'models', label: '模型', description: '服务商、模型能力与调用路由', icon: <SlidersHorizontal size={17} aria-hidden /> },
-  { id: 'settings', label: '系统设置', description: '高级功能参数与运行策略', icon: <Settings size={17} aria-hidden /> },
+  { id: 'models', label: '模型服务', description: '服务商与模型', icon: <SlidersHorizontal size={17} aria-hidden /> },
   { id: 'audit', label: '操作记录', description: '管理员关键操作的变更记录', icon: <ShieldCheck size={17} aria-hidden /> }
 ];
 
@@ -245,23 +241,12 @@ export default function AdminPage() {
         </aside>
 
         <section className="admin-content">
-          <header className="admin-page-header">
-            <div>
-              <h1>{tabs.find((tab) => tab.id === activeTab)?.label}</h1>
-              <p>{tabs.find((tab) => tab.id === activeTab)?.description}</p>
-            </div>
-            <div className="admin-header-actions">
-              <button className="admin-icon-button" onClick={() => queryClient.invalidateQueries({ queryKey: ['admin'] })} title="刷新" aria-label="刷新">
-                <RefreshCw size={17} aria-hidden />
-              </button>
-            </div>
-          </header>
+          <h1 className="sr-only">{tabs.find((tab) => tab.id === activeTab)?.label}</h1>
 
           {activeTab === 'overview' && <OverviewTab onOpenJobs={() => selectTab('jobs')} onOpenModels={() => selectTab('models')} />}
           {activeTab === 'users' && <UsersTab />}
           {activeTab === 'jobs' && <JobsTab />}
           {activeTab === 'models' && <ModelsTab />}
-          {activeTab === 'settings' && <SettingsTab />}
           {activeTab === 'audit' && <AuditTab />}
         </section>
       </div>
@@ -270,6 +255,7 @@ export default function AdminPage() {
 }
 
 function OverviewTab({ onOpenJobs, onOpenModels }: { onOpenJobs: () => void; onOpenModels: () => void }) {
+  const queryClient = useQueryClient();
   const [range, setRange] = useState('24h');
   const overviewQuery = useQuery({
     queryKey: ['admin', 'overview', range],
@@ -297,16 +283,17 @@ function OverviewTab({ onOpenJobs, onOpenModels }: { onOpenJobs: () => void; onO
     return <div className="admin-loading-grid" aria-label="正在加载概览">{Array.from({ length: 7 }, (_, index) => <i key={index} />)}</div>;
   }
   if (overviewQuery.isError && !overview) {
-    return <EmptyLine text="概览数据加载失败，请使用右上角刷新按钮重试。" />;
+    return <div className="admin-toolbar"><p role="alert">概览数据加载失败</p><RefreshButton busy={overviewQuery.isFetching} onClick={() => void overviewQuery.refetch()} /></div>;
   }
   if (!overview) {
-    return <EmptyLine text="概览数据暂不可用，请使用右上角刷新按钮重试。" />;
+    return <div className="admin-toolbar"><p role="status">概览数据暂不可用</p><RefreshButton onClick={() => void queryClient.invalidateQueries({ queryKey: ['admin', 'overview'] })} /></div>;
   }
 
   return (
     <div className="admin-overview">
       <div className="admin-overview-controls">
         <span>{updatedAt ? `${updatedAt} 更新` : '自动更新'}</span>
+        <RefreshButton busy={overviewQuery.isFetching} onClick={() => void queryClient.invalidateQueries({ queryKey: ['admin'] })} />
         <Segmented value={range} onChange={setRange} options={[['24h', '24 小时'], ['7d', '7 天'], ['30d', '30 天'], ['all', '全部']]} />
       </div>
 
@@ -415,8 +402,10 @@ function UsersTab() {
   });
 
   return (
-    <Panel title="用户列表" action={<SearchBox value={query} onChange={(value) => { setQuery(value); setCursors([]); }} placeholder="搜索邮箱、昵称或 ID" label="搜索用户" />}>
+    <Panel title="用户列表" flat>
       <Toolbar>
+        <SearchBox value={query} onChange={(value) => { setQuery(value); setCursors([]); }} placeholder="搜索邮箱、昵称或 ID" label="搜索用户" />
+        <RefreshButton busy={usersQuery.isFetching} onClick={() => void usersQuery.refetch()} />
         <AdminSelect label="账号类型" value={role} onChange={(value) => { setRole(value); setCursors([]); }} options={[['', '全部账号'], ['guest', '游客'], ['user', '注册用户'], ['admin', '管理员']]} />
         <AdminSelect label="账号状态" value={status} onChange={(value) => { setStatus(value); setCursors([]); }} options={[['', '全部状态'], ['active', '正常'], ['pending', '待处理'], ['disabled', '已禁用']]} />
         <AdminSelect label="额度类型" value={quotaFilter} onChange={(value) => { setQuotaFilter(value); setCursors([]); }} options={[['', '全部额度'], ['true', '无限额度'], ['false', '普通额度']]} />
@@ -676,8 +665,9 @@ function JobsTab() {
   const activeJob = activeIndex >= 0 ? jobs[activeIndex] : null;
 
   return (
-    <Panel title="任务列表" action={<SearchBox value={userId} onChange={value => { setUserId(value); setCursors([]); }} placeholder="按用户 ID 筛选" label="按用户 ID 筛选任务" />}>
+    <Panel title="任务列表" flat>
       <Toolbar>
+        <SearchBox value={userId} onChange={value => { setUserId(value); setCursors([]); }} placeholder="按用户 ID 筛选" label="按用户 ID 筛选任务" />
         <AdminSelect label="任务状态" value={status} onChange={value => { setStatus(value); setCursors([]); }} options={[['', '全部状态'], ['queued', '排队中'], ['running', '运行中'], ['retrying', '重试中'], ['succeeded', '已成功'], ['failed', '已失败'], ['refunded', '失败且已退回']]} />
         <button className="admin-icon-button" aria-label="刷新任务" title="刷新任务" disabled={jobsQuery.isFetching} onClick={() => void jobsQuery.refetch()}><RefreshCw size={17} /></button>
       </Toolbar>
@@ -899,72 +889,6 @@ function ModelsTab() {
   return <AiConfigPanel />;
 }
 
-function SettingsTab() {
-  const queryClient = useQueryClient();
-  const notifications = useNotifications();
-  const settingsQuery = useQuery({ queryKey: ['admin', 'settings'], queryFn: listAdminSettings });
-  const [drafts, setDrafts] = useState<Record<string, string>>({});
-  const [newKey, setNewKey] = useState('');
-  const settings = settingsQuery.data ?? [];
-  const mutation = useMutation({
-    mutationFn: ({ key, value }: { key: string; value: Record<string, unknown> }) => upsertAdminSetting(key, value),
-    onSuccess: () => {
-      notifications.success('设置已保存');
-      queryClient.invalidateQueries({ queryKey: ['admin', 'settings'] });
-    },
-    onError: (error) => notifications.error('保存失败', error instanceof Error ? error.message : '请检查 JSON 格式')
-  });
-  const addSetting = () => {
-    const key = newKey.trim();
-    if (!key) return;
-    if (settings.some((item) => item.key === key) || Object.prototype.hasOwnProperty.call(drafts, key)) {
-      notifications.error('设置项已存在');
-      return;
-    }
-    setDrafts((value) => ({ ...value, [key]: '{\n  \n}' }));
-    setNewKey('');
-  };
-
-  return (
-    <Panel title="高级配置" action={<div className="admin-inline-create"><input value={newKey} onChange={(event) => setNewKey(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') addSetting(); }} placeholder="设置键名" aria-label="新设置键名" /><button className="admin-secondary-button" onClick={addSetting} disabled={!newKey.trim()}>新增设置</button></div>}>
-      <p className="admin-panel-note">仅供高级管理员维护结构化 JSON 参数。模型连接请在“模型”页面管理。</p>
-      {settingsQuery.isError && <p className="admin-inline-error" role="alert">系统设置加载失败，请刷新重试。</p>}
-      <div className="grid gap-3">
-        {[...settings, ...Object.keys(drafts).filter((key) => !settings.some((item) => item.key === key)).map((key) => ({ key, value: {}, updatedBy: null, createdAt: '', updatedAt: '' } satisfies AdminAppSettingRecord))].map((setting) => {
-          const draft = drafts[setting.key] ?? JSON.stringify(setting.value, null, 2);
-          return (
-            <article key={setting.key} className="admin-setting-item">
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <h3 className="font-black">{setting.key}</h3>
-                  <p className="text-xs text-slate-500">更新于 {formatDate(setting.updatedAt)}</p>
-                </div>
-                <button className="admin-primary-button" onClick={() => {
-                  try {
-                    const value = JSON.parse(draft) as Record<string, unknown>;
-                    if (window.confirm(`确认保存设置 ${setting.key}？`)) mutation.mutate({ key: setting.key, value });
-                  } catch {
-                    notifications.error('JSON 格式错误');
-                  }
-                }}>
-                  <Save size={16} aria-hidden />
-                  保存
-                </button>
-              </div>
-              <textarea
-                className="admin-json-editor"
-                value={draft}
-                onChange={(event) => setDrafts((value) => ({ ...value, [setting.key]: event.target.value }))}
-                spellCheck={false}
-              />
-            </article>
-          );
-        })}
-        {settingsQuery.isPending ? <EmptyLine text="正在加载系统设置…" /> : !settingsQuery.isError && settings.length === 0 && Object.keys(drafts).length === 0 && <EmptyLine text="暂无设置，可新增 quota、jobs、safety 或 maintenance" />}
-      </div>
-    </Panel>
-  );
-}
 
 function AuditTab() {
   const [query, setQuery] = useState('');
@@ -984,7 +908,11 @@ function AuditTab() {
   const nextCursor = logsQuery.data?.nextCursor;
 
   return (
-    <Panel title="操作记录" action={<SearchBox value={query} onChange={(value) => { setQuery(value); setCursors([]); }} placeholder="按操作类型搜索" label="搜索操作记录" />}>
+    <Panel title="操作记录" flat>
+      <Toolbar>
+        <SearchBox value={query} onChange={(value) => { setQuery(value); setCursors([]); }} placeholder="按操作类型搜索" label="搜索操作记录" />
+        <RefreshButton busy={logsQuery.isFetching} onClick={() => void logsQuery.refetch()} />
+      </Toolbar>
       {logsQuery.isError && <p className="admin-inline-error" role="alert">操作记录加载失败，请刷新重试。</p>}
       <div className="grid gap-2">
         {logs.map((log) => <AuditRow key={log.id} log={log} />)}
@@ -1082,10 +1010,10 @@ function ModelUsageChart({ models }: { models: AdminOverviewResponse['models'] }
   );
 }
 
-function Panel({ title, action, children }: { title: string; action?: React.ReactNode; children: React.ReactNode }) {
+function Panel({ title, action, children, flat = false }: { title: string; action?: React.ReactNode; children: React.ReactNode; flat?: boolean }) {
   return (
-    <section className="admin-panel">
-      <div className="admin-panel-header">
+    <section className={flat ? 'admin-list' : 'admin-panel'} aria-label={title}>
+      <div className={flat ? 'sr-only' : 'admin-panel-header'}>
         <h2>{title}</h2>
         {action}
       </div>

@@ -55,7 +55,8 @@ html[data-studio-theme="dark"] .studio-wordmark { filter: invert(1) hue-rotate(1
 .recharge-content { padding: 8px 24px 28px; }
 .recharge-content > p { font-size: 14px; margin: 12px 0 24px; }
 .recharge-content > p strong { color: var(--ui-gold); }
-.image-viewer { position: relative; z-index: 1; height: var(--preview-height, 100dvh); width: 100%; min-width: 0; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; overflow: hidden; background: var(--ui-surface); color: var(--ui-text); }
+/* Keep long thumbnail strips inside the viewport instead of sizing the grid column. */
+.image-viewer { position: relative; z-index: 1; height: var(--preview-height, 100dvh); width: 100%; min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr) auto; overflow: hidden; background: var(--ui-surface); color: var(--ui-text); }
 .image-viewer > header > span { flex: 1; }
 .image-viewer header { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: max(8px, env(safe-area-inset-top)) 12px 8px; }
 .image-viewer header span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
@@ -669,7 +670,12 @@ html[data-studio-theme="dark"] .studio-wordmark { filter: invert(1) hue-rotate(1
 .wechat-sync-trigger:disabled { cursor: wait; opacity: .55; }
 .wechat-sync-tooltip { position: absolute; right: 0; bottom: calc(100% + 6px); width: max-content; max-width: 220px; padding: 6px 9px; border: 1px solid var(--ui-line); border-radius: 4px; background: var(--ui-bg); color: var(--ui-text); font-size: 12px; font-weight: 400; line-height: 1.5; pointer-events: none; visibility: hidden; opacity: 0; z-index: 5; }
 .wechat-sync-tool:hover .wechat-sync-tooltip, .wechat-sync-tool:focus-within .wechat-sync-tooltip { visibility: visible; opacity: 1; }
-.wechat-profile-authorization { margin-bottom: 20px; }
+.account-name-row { display: flex; align-items: center; gap: 8px; }
+.account-name-row h3 { min-width: 0; }
+.wechat-profile-sync { flex: 0 0 auto; }
+.wechat-profile-authorization { display: flex; flex-direction: column; align-items: center; gap: 16px; padding: 12px 24px 28px; text-align: center; }
+.wechat-profile-authorization img { width: 240px; max-width: 100%; height: auto; border-radius: 8px; }
+.wechat-profile-loading { display: flex; min-height: 240px; flex-direction: column; align-items: center; justify-content: center; gap: 16px; color: var(--ui-muted); }
 .wechat-profile-sync > p { margin: 0 0 16px; font-size: 12px; color: var(--ui-muted); }
 .account-section .studio-segments { width: fit-content; }
 .account-section .studio-segments button { font-size: 12px; }
