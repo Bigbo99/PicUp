@@ -274,6 +274,19 @@ export class StorageService {
     return updated.count === 1;
   }
 
+  async updateJobExecutionRoute(job: ImageJobRecord, leaseOwner: string) {
+    const current = await this.prisma.imageJob.findFirst({ where: { id: job.id, status: 'running', leaseOwner }, select: { editOptions: true } });
+    if (!current) return false;
+    const editOptions = (current.editOptions && typeof current.editOptions === 'object' && !Array.isArray(current.editOptions))
+      ? { ...(current.editOptions as Record<string, unknown>), providerRoute: job.providerRoute }
+      : { providerRoute: job.providerRoute };
+    const updated = await this.prisma.imageJob.updateMany({
+      where: { id: job.id, status: 'running', leaseOwner },
+      data: { selectedProvider: job.selectedProvider, selectedModel: job.selectedModel, editOptions: editOptions as Prisma.InputJsonValue, updatedAt: new Date() }
+    });
+    return updated.count === 1;
+  }
+
   async completeJob(job: ImageJobRecord, leaseOwner: string) {
     const updated = await this.prisma.imageJob.updateMany({
       where: { id: job.id, status: 'running', leaseOwner, leaseExpiresAt: { gt: new Date() } },
@@ -1226,6 +1239,7 @@ export class StorageService {
       maskFileId: edit?.maskFileId,
       background: edit?.background,
       maskFile: edit?.maskFile,
+      providerRoute: edit?.providerRoute,
       id: job.id,
       userId: job.userId ?? undefined,
       mode: job.mode as ImageJobRecord['mode'],
@@ -1261,7 +1275,7 @@ export class StorageService {
 
   private toJobWriteData(job: ImageJobRecord): Prisma.ImageJobUncheckedCreateInput {
     return {
-      editOptions: { maskFileId: job.maskFileId, background: job.background, maskFile: job.maskFile, previewOperation: job.previewOperation, guideFileId: job.guideFileId, editComments: job.editComments, systemFileIds: job.systemFileIds, confirmedCredits: job.confirmedCredits, quotedSelection: job.quotedSelection } as unknown as Prisma.InputJsonValue,
+      editOptions: { maskFileId: job.maskFileId, background: job.background, maskFile: job.maskFile, previewOperation: job.previewOperation, guideFileId: job.guideFileId, editComments: job.editComments, systemFileIds: job.systemFileIds, confirmedCredits: job.confirmedCredits, quotedSelection: job.quotedSelection, providerRoute: job.providerRoute } as unknown as Prisma.InputJsonValue,
       id: job.id,
       userId: job.userId,
       mode: job.mode,

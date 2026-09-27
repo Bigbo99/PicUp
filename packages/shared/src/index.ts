@@ -95,6 +95,7 @@ export interface JobQuote {
 }
 
 export interface ImageJobRecord extends ImageJobCreateRequest {
+  providerRoute?: Array<{ provider: string; model: string; reason: 'selected' | 'fallback'; at: string }>;
   systemFileIds?: string[];
   maskFile?: UploadedFileRecord;
   id: string;

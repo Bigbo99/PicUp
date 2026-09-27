@@ -131,6 +131,7 @@ export class JobsService {
       status: 'queued',
       selectedProvider: selection.provider,
       selectedModel: selection.model,
+      providerRoute: [{ provider: selection.provider, model: selection.model, reason: 'selected', at: now }],
       finalPrompt,
       inputFiles,
       maskFile,
@@ -345,6 +346,19 @@ export class JobsService {
             leaseLost = true;
             throw new Error('任务执行权已失效，停止调用备用渠道');
           }
+          running.selectedProvider = next.id;
+          running.providerRoute = [...(running.providerRoute ?? []), {
+            provider: next.id,
+            model: running.selectedModel,
+            reason: 'fallback',
+            at: new Date().toISOString()
+          }];
+          const routeSaved = await this.storage.updateJobExecutionRoute?.(running, owner);
+          if (routeSaved === false) {
+            leaseLost = true;
+            throw new Error('任务执行权已失效，无法记录备用渠道');
+          }
+          console.warn(`[job] ${id} provider fallback route=${running.providerRoute.map(route => route.provider).join(' -> ')}`);
         }
       });
       if (running.previewOperation === 'remove' && running.maskFile) {

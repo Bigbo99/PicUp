@@ -299,6 +299,8 @@ function ProviderEditorDialog({ provider, pending, onClose, onSave }: {
   const [paths, setPaths] = useState({ ...(provider?.paths ?? providerPresets['openai-images'].paths) });
   const [defaultModel, setDefaultModel] = useState(provider?.defaultModel ?? '');
   const [aliases, setAliases] = useState((provider?.aliases ?? []).join(', '));
+  const [fallbackOnly, setFallbackOnly] = useState(provider?.fallbackOnly ?? false);
+  const [fallbackProviderIds, setFallbackProviderIds] = useState((provider?.fallbackProviderIds ?? []).join(', '));
   const [timeoutMs, setTimeoutMs] = useState(String(provider?.timeoutMs ?? 600000));
   const [concurrency, setConcurrency] = useState(String(provider?.concurrency ?? 4));
   const [rpm, setRpm] = useState(String(provider?.rpm ?? 0));
@@ -328,6 +330,8 @@ function ProviderEditorDialog({ provider, pending, onClose, onSave }: {
             paths,
             defaultModel: defaultModel.trim(),
             aliases: splitList(aliases),
+            fallbackOnly,
+            fallbackProviderIds: splitList(fallbackProviderIds),
             timeoutMs: timeout,
             concurrency: providerConcurrency,
             rpm: providerRpm
@@ -356,6 +360,7 @@ function ProviderEditorDialog({ provider, pending, onClose, onSave }: {
         <TextField label="服务商标识" value={id} onChange={setId} disabled={Boolean(provider)} placeholder="自动生成" />
         {provider && <ConfigSelect label="服务商默认模型" value={defaultModel} onChange={setDefaultModel} options={[{ value: '', label: '自动选择' }, ...provider.models.map((model) => ({ value: model.model, label: model.displayName }))]} />}
         <TextField label="兼容服务商标识" value={aliases} onChange={setAliases} placeholder="多个值用逗号分隔" />
+        <TextField label="失败后备用服务商" value={fallbackProviderIds} onChange={setFallbackProviderIds} placeholder="填写服务商标识，多个值用逗号分隔" />
         {Object.keys(providerPresets[type].paths).map((key) => {
           const field = key as keyof typeof paths;
           return <TextField key={field} label={pathLabels[field]} value={paths[field] ?? ''} onChange={(value) => setPaths((current) => ({ ...current, [field]: value }))} />;
@@ -370,6 +375,10 @@ function ProviderEditorDialog({ provider, pending, onClose, onSave }: {
           <label className="flex min-h-11 items-center gap-2 self-end rounded-lg border border-slate-200 px-3 text-sm font-bold text-slate-700">
             <input type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.target.checked)} />
             启用服务商
+          </label>
+          <label className="flex min-h-11 items-center gap-2 self-end rounded-lg border border-amber-200 bg-amber-50 px-3 text-sm font-bold text-amber-800">
+            <input type="checkbox" checked={fallbackOnly} onChange={(event) => setFallbackOnly(event.target.checked)} />
+            仅作为备用，不展示给用户
           </label>
         </div>
         {error && <p className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm font-semibold text-red-700">{error}</p>}

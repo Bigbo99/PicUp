@@ -698,7 +698,9 @@ function JobsTab() {
 
 function JobRow({ job, onOpen }: { job: ImageJobRecord; onOpen: () => void }) {
   const thumbnail = job.outputImages[0]?.url ?? job.inputFiles[0]?.url;
-  return <tr><td><button className="admin-job-summary" onClick={onOpen}>{thumbnail ? <img src={thumbnail} alt="任务缩略图" /> : <FileImage size={24} />}<span><strong>{job.prompt || '图片编辑'}</strong><small>{job.id}</small></span></button></td><td><Badge value={job.status} /></td><td>{job.selectedModel}<small className="block text-slate-500">{job.previewOperation ? '系统自动匹配' : labelFor(job.selectedProvider)}</small></td><td>{job.paymentMode === 'credits' ? job.creditsReserved : 0}</td><td>{formatDate(job.createdAt)}</td><td><button className="admin-icon-button" aria-label={`查看任务 ${job.id}`} title="查看任务" onClick={onOpen}><ArrowRight size={18} /></button></td></tr>;
+  const route = job.providerRoute ?? [];
+  const routeLabel = route.length > 1 ? `回退：${route.map(item => labelFor(item.provider)).join(' → ')}` : (job.previewOperation ? '系统自动匹配' : labelFor(job.selectedProvider));
+  return <tr><td><button className="admin-job-summary" onClick={onOpen}>{thumbnail ? <img src={thumbnail} alt="任务缩略图" /> : <FileImage size={24} />}<span><strong>{job.prompt || '图片编辑'}</strong><small>{job.id}</small></span></button></td><td><Badge value={job.status} /></td><td>{job.selectedModel}<small className="block text-slate-500">{routeLabel}</small></td><td>{job.paymentMode === 'credits' ? job.creditsReserved : 0}</td><td>{formatDate(job.createdAt)}</td><td><button className="admin-icon-button" aria-label={`查看任务 ${job.id}`} title="查看任务" onClick={onOpen}><ArrowRight size={18} /></button></td></tr>;
 }
 
 function JobDetailDialog({
@@ -766,6 +768,7 @@ function JobDetailDialog({
             <div className="admin-job-metadata">
               <UserDetailLine label="用户 ID" value={job.userId ?? '匿名用户'} mono />
               <UserDetailLine label="模型" value={`${labelFor(job.selectedProvider)} / ${job.selectedModel}`} />
+              <UserDetailLine label="渠道路由" value={(job.providerRoute?.length ?? 0) > 1 ? job.providerRoute!.map(item => `${labelFor(item.provider)}（${item.reason === 'fallback' ? '备用' : '主渠道'}）`).join(' → ') : '主渠道未发生回退'} />
               <UserDetailLine label="模式" value={job.mode === 'edit' ? '编辑图片' : '生成图片'} />
               <UserDetailLine label="识别意图" value={job.template} />
               <UserDetailLine label="比例 / 清晰度" value={`${job.aspectRatio} / ${job.quality}`} />

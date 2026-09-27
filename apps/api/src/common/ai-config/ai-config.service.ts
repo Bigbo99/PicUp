@@ -324,7 +324,9 @@ export class AiConfigService {
         upstreamModel: modelId,
         displayName: modelId,
         description: '从 OpenAI 兼容中转站同步',
-        enabled: true,
+        // Synced models stay in the admin catalog until an administrator
+        // explicitly enables the ones that should be exposed to users.
+        enabled: false,
         priority: 100 + added,
         maxInputImages: 0,
         supportedRatios: ['auto', '1:1', '16:9', '9:16'],
