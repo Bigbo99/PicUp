@@ -546,7 +546,7 @@ function UserSettingsDialog({
                 </label>
                 <label className="grid gap-1">
                   <span className="text-xs font-black text-slate-500">角色</span>
-                  <select className="h-10 rounded-lg border border-slate-200 px-3 text-sm font-bold outline-none focus:border-teal-600" value={user.isGuest ? 'guest' : roleLocked ? 'admin' : role} disabled={roleLocked} onChange={(event) => setRole(event.target.value as Extract<AuthUser['role'], 'user' | 'admin'>)}>
+                  <select className="admin-field-select" value={user.isGuest ? 'guest' : roleLocked ? 'admin' : role} disabled={roleLocked} onChange={(event) => setRole(event.target.value as Extract<AuthUser['role'], 'user' | 'admin'>)}>
                     {user.isGuest ? <option value="guest">游客</option> : <><option value="user">用户</option><option value="admin">管理员</option></>}
                   </select>
                   {roleLocked && <span className="text-xs text-slate-500">{user.isGuest ? '游客身份只会在完成注册或微信认证后升级' : '超级管理员角色不可修改'}</span>}

@@ -463,6 +463,9 @@ html[data-studio-theme="dark"] .admin-shell { --admin-warning: #e7b55f; --admin-
 .admin-detail-line > strong { overflow-wrap: anywhere; color: var(--ui-text); font-size: 12px; font-weight: 550; }
 .admin-dialog :is(input, select, textarea), .admin-config-panel :is(input, select, textarea), .admin-inline-create input { border-color: var(--ui-line); background: var(--ui-surface); color: var(--ui-text); }
 .admin-dialog :is(input, select, textarea):focus, .admin-config-panel :is(input, select, textarea):focus, .admin-inline-create input:focus { border-color: var(--ui-accent); outline: none; }
+.admin-shell .admin-field-select { width: 100%; min-height: 44px; border: 1px solid var(--ui-line); border-radius: 7px; background: var(--ui-surface); padding: 0 12px; color: var(--ui-text); font-size: 13px; font-weight: 500; transition: border-color 140ms ease, background-color 140ms ease, box-shadow 140ms ease; }
+.admin-shell .admin-field-select:hover { border-color: var(--ui-muted); background: var(--ui-soft); }
+.admin-shell .admin-field-select:focus-visible { border-color: var(--ui-accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ui-accent) 14%, transparent); }
 
 .admin-config-panel { display: grid; gap: 14px; }
 .admin-config-panel > section { min-width: 0; }

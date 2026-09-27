@@ -304,6 +304,24 @@ export function Studio() {
     patchDraft({ prompt: job.prompt, promptParts: job.promptParts, files: job.inputFiles, provider: job.provider, model: job.model,
       aspectRatio: job.aspectRatio, quality: job.quality, parentJobId: job.parentJobId }); prompt.current?.focus();
   }
+  const inlineRequestKey = useRef<{ signature: string; key: string } | null>(null);
+  async function submitInlineEdit(job: ImageJobRecord, nextPrompt: string) {
+    if (guest || !ready) throw new Error('请先登录后发送');
+    if (busy) throw new Error('当前任务处理中，请稍后发送');
+    const input: ImageJobCreateRequest = {
+      mode: job.mode, provider: job.provider, model: job.model, template: job.template,
+      prompt: nextPrompt, promptParts: nextPrompt === job.prompt ? job.promptParts : undefined,
+      imageIds: job.inputFiles.map(file => file.id), aspectRatio: job.aspectRatio, quality: job.quality,
+      parentJobId: job.parentJobId, paymentMode: 'credits'
+    };
+    const signature = JSON.stringify(input);
+    if (inlineRequestKey.current?.signature !== signature) inlineRequestKey.current = { signature, key: previewRequestId() };
+    const estimate = await quoteImageJob(input);
+    if (!estimate.available) throw new Error(estimate.reason ?? '当前配置不可用');
+    const response = await create.mutateAsync({ ...input, idempotencyKey: inlineRequestKey.current.key });
+    if (!response.jobId) throw new Error('任务未创建，请检查额度后重试');
+    inlineRequestKey.current = null;
+  }
   async function newWork() {
     if ((draft.prompt.trim() || draft.files.length) && !await notices.confirm({ title: '开始新对话？', message: '当前草稿将被清空，已生成的图片仍保留在历史中。', confirmText: '新对话' })) return;
     clear(); update({ quality: preferences.quality, aspectRatio: preferences.aspectRatio, provider: preferences.provider, model: preferences.model }); navigate({ job: null, view: null }); setFreshJobId(null); requestKey.current = null; setError(null);
@@ -346,8 +364,8 @@ export function Studio() {
         <button onClick={() => navigate({ view: 'history' })} aria-current={location.view === 'history' ? 'page' : undefined}><Images size={20} /><span>图库</span></button>
         <button className="navigation-account" aria-current={location.view === 'account' || location.view === 'login' ? 'page' : undefined} title={guest ? '登录 / 注册' : '账户与设置'} aria-label={mobile ? '用户' : guest ? '登录 / 注册' : '账户与设置'} onClick={() => navigate({ view: guest ? 'login' : 'account' })}><span className="navigation-avatar"><ProfileAvatar url={me.data?.user.avatarUrl} size={20} /><i data-signed-in={!guest} /></span><span className="navigation-identity"><strong>{guest ? '登录 / 注册' : me.data?.user.displayName || me.data?.user.email || '已登录'}</strong><small>{guest ? '未登录' : '已登录'}</small></span></button>
       </nav>
-      <Conversation job={selected.data} loading={Boolean(location.job && selected.isPending)} error={selected.error?.message} onUpload={() => input.current?.click()} onOpen={(images, index) => setLightbox({ images, index, mode: 'conversation' })} onSkillSelect={applySkillById}>
-      {(conversationImages) => <Canvas job={selected.data} editingJobId={draft.parentJobId} files={draft.files} loading={Boolean(location.job && selected.isPending && freshJobId !== location.job)} error={selected.error?.message}
+      <Conversation job={selected.data} loading={Boolean(location.job && selected.isPending)} error={selected.error?.message} onUpload={() => input.current?.click()} onOpen={(images, index) => setLightbox({ images, index, mode: 'conversation' })} onSkillSelect={applySkillById} onEditSubmit={submitInlineEdit} onContinue={(message, index) => continueJob.mutate({ job: message, index })} continuing={continueJob.isPending}>
+      {(conversationImages) => <Canvas job={selected.data} files={draft.files} loading={Boolean(location.job && selected.isPending && freshJobId !== location.job)} error={selected.error?.message}
         onUpload={() => input.current?.click()} onPreview={(images, index) => {
           const image = images[index];
           const globalIndex = image?.meta ? conversationImages.findIndex(item => item.meta === image.meta) : -1;

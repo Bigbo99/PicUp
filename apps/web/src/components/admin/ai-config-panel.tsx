@@ -343,7 +343,7 @@ function ProviderEditorDialog({ provider, pending, onClose, onSave }: {
         <div className="grid gap-3 sm:grid-cols-2">
           <label className="grid gap-1.5 text-sm font-bold text-slate-700">
             接口协议
-            <select className="h-11 rounded-lg border border-slate-200 bg-white px-3" value={type} onChange={(event) => {
+            <select className="admin-field-select" value={type} onChange={(event) => {
               const next = event.target.value as AiProviderType;
               if (baseUrl === providerPresets[type].baseUrl) setBaseUrl(providerPresets[next].baseUrl);
               setType(next);
@@ -549,7 +549,7 @@ function ConfigSelect({ label, value, options, onChange }: { label: string; valu
   return (
     <label className="grid gap-1.5 text-sm font-bold text-slate-700">
       {label}
-      <select className="h-11 min-w-0 rounded-lg border border-slate-200 bg-white px-3 text-sm" value={value} onChange={(event) => onChange(event.target.value)}>
+      <select className="admin-field-select" value={value} onChange={(event) => onChange(event.target.value)}>
         {options.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
       </select>
     </label>
