@@ -27,6 +27,7 @@ jobs:
       - run: pnpm --filter @picup/api db:generate
       - run: pnpm typecheck
       - run: pnpm test
+      - run: bash deploy/deploy.test.sh
       - run: pnpm build
 
   deploy:

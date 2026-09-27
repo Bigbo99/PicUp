@@ -5,6 +5,26 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 cd "$PROJECT_DIR"
 
+persist_app_image() {
+  local temporary
+  temporary="$(mktemp "$PROJECT_DIR/.env.release.XXXXXX")"
+  if ! awk -v value="$APP_IMAGE" '
+    BEGIN { found=0 }
+    /^[[:space:]]*(export[[:space:]]+)?APP_IMAGE[[:space:]]*=/ {
+      if (!found) print "APP_IMAGE=" value
+      found=1
+      next
+    }
+    { print }
+    END { if (!found) print "APP_IMAGE=" value }
+  ' .env > "$temporary"; then
+    rm -f -- "$temporary"
+    return 1
+  fi
+  chmod --reference=.env "$temporary"
+  mv -f -- "$temporary" .env
+}
+
 wait_for_url() {
   local label="$1" url="$2" retries="${3:-30}"
   for ((i=1; i<=retries; i++)); do
@@ -51,7 +71,11 @@ PAGE_CACHE_DIR="/www/wwwroot/picup.ai-mendao.com/proxy_cache_dir"
 if [ -d "$PAGE_CACHE_DIR" ]; then find "$PAGE_CACHE_DIR" -mindepth 1 -delete; fi
 if command -v nginx >/dev/null 2>&1; then nginx -t && nginx -s reload; fi
 
-# Keep the current release available for rollback and remove only dangling layers.
+# Subsequent Compose commands must select the release that passed health checks.
+persist_app_image
+echo "OK: release persisted: $APP_IMAGE"
+
+# Keep tagged releases available for rollback and remove only dangling layers.
 docker image prune -f >/dev/null
 
 # ACR is a backup destination. Its outage must not take down the release.

@@ -3,12 +3,12 @@
   "mockEnabled": true,
   "routing": {
     "default": {
-      "provider": "grsai",
-      "model": "nano-banana-2"
+      "provider": "daitu",
+      "model": "gpt-image-2.5-flare"
     },
     "professional": {
-      "provider": "grsai",
-      "model": "nano-banana-pro"
+      "provider": "daitu",
+      "model": "gpt-image-2.5-sunburst"
     }
   },
   "providers": [
@@ -17,7 +17,9 @@
       "type": "grsai",
       "displayName": "GrsAI",
       "enabled": true,
-      "aliases": ["gemini"],
+      "aliases": [
+        "gemini"
+      ],
       "apiKey": "",
       "baseUrl": "https://grsai.dakka.com.cn",
       "paths": {
@@ -63,7 +65,11 @@
             "9:16",
             "21:9"
           ],
-          "supportedQualities": ["1K", "2K", "4K"],
+          "supportedQualities": [
+            "1K",
+            "2K",
+            "4K"
+          ],
           "costCredits": 1
         },
         {
@@ -76,7 +82,9 @@
           "qualityModelOverrides": {
             "4K": "nano-banana-pro-vt"
           },
-          "fallbackModels": ["nano-banana-pro"],
+          "fallbackModels": [
+            "nano-banana-pro"
+          ],
           "displayName": "Nano Banana Pro",
           "description": "高质量生成和编辑图片，适合复杂细节",
           "enabled": true,
@@ -95,7 +103,11 @@
             "9:16",
             "21:9"
           ],
-          "supportedQualities": ["1K", "2K", "4K"],
+          "supportedQualities": [
+            "1K",
+            "2K",
+            "4K"
+          ],
           "costCredits": 2
         }
       ]
@@ -144,7 +156,11 @@
             "9:16",
             "21:9"
           ],
-          "supportedQualities": ["1K", "2K", "4K"],
+          "supportedQualities": [
+            "1K",
+            "2K",
+            "4K"
+          ],
           "costCredits": 1
         },
         {
@@ -168,7 +184,11 @@
             "9:16",
             "21:9"
           ],
-          "supportedQualities": ["1K", "2K", "4K"],
+          "supportedQualities": [
+            "1K",
+            "2K",
+            "4K"
+          ],
           "costCredits": 2
         }
       ]
@@ -195,7 +215,9 @@
         {
           "model": "gpt-image-2",
           "upstreamModel": "gpt-image-2",
-          "aliases": ["gpt-image2"],
+          "aliases": [
+            "gpt-image2"
+          ],
           "displayName": "GPT Image 2",
           "description": "擅长文字生成、指令遵循和精细编辑",
           "enabled": true,
@@ -214,10 +236,178 @@
             "4:5",
             "21:9"
           ],
-          "supportedQualities": ["1K", "2K", "4K"],
+          "supportedQualities": [
+            "1K",
+            "2K",
+            "4K"
+          ],
           "costCredits": 1
         }
       ]
+    },
+    {
+      "disableProxy": false,
+      "downloadProxyUrl": "",
+      "apiKey": "",
+      "proxyUrl": "",
+      "rpm": 0,
+      "timeoutMs": 600000,
+      "defaultModel": "gpt-image-2.5-flare",
+      "models": [
+        {
+          "model": "gpt-image-2.5-flare",
+          "supportedQualities": [
+            "1K",
+            "2K",
+            "4K"
+          ],
+          "upstreamModel": "gpt-image-2.5-flare",
+          "supportedRatios": [
+            "auto",
+            "1:1",
+            "16:9",
+            "9:16",
+            "4:3",
+            "3:4",
+            "3:2",
+            "2:3",
+            "5:4",
+            "4:5",
+            "21:9"
+          ],
+          "costCredits": 4,
+          "priority": 30,
+          "maxInputImages": 4,
+          "enabled": true,
+          "displayName": "GPT Image 2.5 Flare",
+          "description": "GPT Image 2.5"
+        },
+        {
+          "model": "gpt-image-2.5-sunburst",
+          "supportedQualities": [
+            "1K",
+            "2K",
+            "4K"
+          ],
+          "upstreamModel": "gpt-image-2.5-sunburst",
+          "supportedRatios": [
+            "auto",
+            "1:1",
+            "16:9",
+            "9:16",
+            "4:3",
+            "3:4",
+            "3:2",
+            "2:3",
+            "5:4",
+            "4:5",
+            "21:9"
+          ],
+          "costCredits": 5,
+          "priority": 31,
+          "maxInputImages": 4,
+          "enabled": true,
+          "displayName": "GPT Image 2.5 Sunburst",
+          "description": "GPT Image 2.5"
+        }
+      ],
+      "enabled": true,
+      "displayName": "Daitu（主渠道）",
+      "paths": {
+        "generations": "/v1/images/generations",
+        "edits": "/v1/images/edits"
+      },
+      "imageResponseFormat": "url",
+      "imageQuality": "high",
+      "baseUrl": "https://api.daitu.cc",
+      "type": "openai-images",
+      "fallbackProviderIds": [
+        "doufu"
+      ],
+      "downloadRetryAttempts": 3,
+      "id": "daitu",
+      "concurrency": 4
+    },
+    {
+      "fallbackOnly": true,
+      "downloadProxyUrl": "",
+      "apiKey": "",
+      "proxyUrl": "",
+      "rpm": 0,
+      "timeoutMs": 600000,
+      "disableProxy": false,
+      "defaultModel": "gpt-image-2.5-sunburst",
+      "models": [
+        {
+          "model": "gpt-image-2.5-flare",
+          "supportedQualities": [
+            "1K",
+            "2K",
+            "4K"
+          ],
+          "upstreamModel": "gpt-image-2.5-sunburst",
+          "supportedRatios": [
+            "auto",
+            "1:1",
+            "16:9",
+            "9:16",
+            "4:3",
+            "3:4",
+            "3:2",
+            "2:3",
+            "5:4",
+            "4:5",
+            "21:9"
+          ],
+          "costCredits": 4,
+          "priority": 130,
+          "maxInputImages": 4,
+          "enabled": true,
+          "displayName": "GPT Image 2.5 Flare（备用）",
+          "description": "GPT Image 2.5"
+        },
+        {
+          "model": "gpt-image-2.5-sunburst",
+          "supportedQualities": [
+            "1K",
+            "2K",
+            "4K"
+          ],
+          "upstreamModel": "gpt-image-2.5-sunburst",
+          "supportedRatios": [
+            "auto",
+            "1:1",
+            "16:9",
+            "9:16",
+            "4:3",
+            "3:4",
+            "3:2",
+            "2:3",
+            "5:4",
+            "4:5",
+            "21:9"
+          ],
+          "costCredits": 5,
+          "priority": 131,
+          "maxInputImages": 4,
+          "enabled": true,
+          "displayName": "GPT Image 2.5 Sunburst（备用）",
+          "description": "GPT Image 2.5"
+        }
+      ],
+      "enabled": false,
+      "displayName": "Doufu（备用渠道）",
+      "paths": {
+        "generations": "/v1/images/generations",
+        "edits": "/v1/images/edits"
+      },
+      "imageResponseFormat": "url",
+      "imageQuality": "high",
+      "baseUrl": "https://doufuapi.com",
+      "type": "openai-images",
+      "downloadRetryAttempts": 3,
+      "id": "doufu",
+      "concurrency": 4
     }
   ]
 }

@@ -74,6 +74,23 @@ export class CreateAiProviderDto {
   aliases?: string[];
 
   @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  fallbackProviderIds?: string[];
+
+  @IsOptional()
+  @IsBoolean()
+  fallbackOnly?: boolean;
+
+  @IsOptional()
+  @IsIn(['high'])
+  imageQuality?: 'high';
+
+  @IsOptional()
+  @IsIn(['url'])
+  imageResponseFormat?: 'url';
+
+  @IsOptional()
   @IsInt()
   @Min(1000)
   timeoutMs?: number;
@@ -127,6 +144,23 @@ export class UpdateAiProviderDto {
   @IsOptional()
   @IsArray()
   aliases?: string[];
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  fallbackProviderIds?: string[];
+
+  @IsOptional()
+  @IsBoolean()
+  fallbackOnly?: boolean;
+
+  @IsOptional()
+  @IsIn(['high'])
+  imageQuality?: 'high';
+
+  @IsOptional()
+  @IsIn(['url'])
+  imageResponseFormat?: 'url';
 
   @IsOptional()
   @IsInt()

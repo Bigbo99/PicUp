@@ -234,7 +234,7 @@ export function AiConfigPanel() {
 
 function RoutingControls({ config, onSaved }: { config: AdminAiConfigResponse; onSaved: () => Promise<void> }) {
   const notifications = useNotifications();
-  const options = config.providers.filter((provider) => provider.enabled).flatMap((provider) => provider.models.filter((model) => model.enabled).map((model) => ({
+  const options = config.providers.filter((provider) => provider.enabled && !provider.fallbackOnly).flatMap((provider) => provider.models.filter((model) => model.enabled).map((model) => ({
     value: JSON.stringify({ provider: provider.id, model: model.model }),
     label: `${provider.displayName} / ${model.displayName}`
   })));

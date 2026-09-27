@@ -27,5 +27,10 @@ export interface ProviderImageResult {
 }
 
 export interface ImageProvider {
-  generate(input: ProviderImageInput): Promise<ProviderImageResult>;
+  generate(input: ProviderImageInput, execution?: ProviderExecutionContext): Promise<ProviderImageResult>;
+}
+
+export interface ProviderExecutionContext {
+  /** Release the old provider's slot and acquire the next provider's budget. */
+  switchProvider(providerId: string): Promise<void>;
 }

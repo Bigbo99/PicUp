@@ -11,6 +11,11 @@ export interface AiProviderConfig {
   displayName: string;
   enabled: boolean;
   aliases?: string[];
+  /** Other OpenAI-compatible providers to try when this provider fails. */
+  fallbackProviderIds?: string[];
+  fallbackOnly?: boolean;
+  imageQuality?: 'high';
+  imageResponseFormat?: 'url';
   apiKey: string;
   baseUrl: string;
   paths: AiRequestPaths;

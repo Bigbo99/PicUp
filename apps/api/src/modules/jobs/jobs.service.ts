@@ -284,7 +284,8 @@ export class JobsService {
       renewalPromise = (async () => {
         try {
           if (!await this.storage.renewJobLease(id, owner, this.jobLeaseMs())) leaseLost = true;
-          if (lease && !await this.queue.renewProviderSlot(lease)) leaseLost = true;
+          const renewingLease = lease;
+          if (renewingLease && !await this.queue.renewProviderSlot(renewingLease) && lease === renewingLease) leaseLost = true;
         } catch (error) {
           leaseLost = true;
           console.error(`[job] ${id} lease renewal failed`, error);
@@ -321,6 +322,30 @@ export class JobsService {
         images: running.inputFiles,
         mask: running.maskFile,
         background: running.background
+      }, {
+        switchProvider: async (providerId) => {
+          const next = this.aiConfig.getProvider(providerId, true);
+          if (renewalPromise) await renewalPromise;
+          if (leaseLost || !await this.storage.renewJobLease(id, owner, this.jobLeaseMs())) {
+            leaseLost = true;
+            throw new Error('任务执行权已失效，停止切换渠道');
+          }
+          // Never hold one provider's slot while waiting for another: two
+          // providers can be configured as each other's fallback.
+          const previous = lease;
+          lease = undefined;
+          if (previous) {
+            await this.queue.releaseProviderSlot(previous).catch((error) => {
+              leaseLost = true;
+              throw error;
+            });
+          }
+          lease = await this.queue.acquireProviderSlot(next.id, next.concurrency, next.rpm, next.timeoutMs);
+          if (leaseLost || !await this.storage.renewJobLease(id, owner, this.jobLeaseMs())) {
+            leaseLost = true;
+            throw new Error('任务执行权已失效，停止调用备用渠道');
+          }
+        }
       });
       if (running.previewOperation === 'remove' && running.maskFile) {
         const rawOutputs = [...result.images];

@@ -5,7 +5,7 @@ import { ObjectStorageService } from '../../common/object-storage.service';
 import { AiConfigService } from '../../common/ai-config/ai-config.service';
 import { assertSafeExternalUrl, readLimitedResponse } from '../../common/safe-external-fetch';
 import type { AiProviderConfig } from '../../common/ai-config/ai-config.types';
-import type { ImageProvider, ProviderImageInput, ProviderImageResult } from './provider.types';
+import type { ImageProvider, ProviderExecutionContext, ProviderImageInput, ProviderImageResult } from './provider.types';
 
 const DEFAULT_TOKENRUN_TIMEOUT_MS = 10 * 60 * 1000;
 const DEFAULT_TOKENRUN_DOWNLOAD_ATTEMPTS = 3;
@@ -20,10 +20,48 @@ export class TokenRunProvider implements ImageProvider {
     @Inject(AiConfigService) private readonly aiConfig: AiConfigService
   ) {}
 
-  async generate(input: ProviderImageInput): Promise<ProviderImageResult> {
+  async generate(input: ProviderImageInput, execution?: ProviderExecutionContext): Promise<ProviderImageResult> {
     const provider = this.aiConfig.getProvider(input.provider);
+    try {
+      return await this.generateWithProvider(input, provider.id, false);
+    } catch (error) {
+      const fallbackIds = [...new Set(provider.fallbackProviderIds ?? [])];
+      const attemptedProviders = new Set([provider.id]);
+      for (const fallbackId of fallbackIds) {
+        let fallback: AiProviderConfig;
+        try {
+          fallback = this.aiConfig.getProvider(fallbackId, true);
+        } catch {
+          console.warn(`[tokenrun] fallback provider missing job=${input.jobId} provider=${fallbackId}`);
+          continue;
+        }
+        if (attemptedProviders.has(fallback.id)) continue;
+        attemptedProviders.add(fallback.id);
+        if (!execution) throw new Error('备用渠道缺少任务执行上下文', { cause: error });
+        // Coordination failures must stop this attempt, rather than starting
+        // another paid request after losing the job/slot lease.
+        await execution.switchProvider(fallback.id);
+        try {
+          console.warn(`[tokenrun] fallback job=${input.jobId} from=${provider.id} to=${fallback.id}`);
+          return await this.generateWithProvider({ ...input, provider: fallback.id }, fallback.id, true);
+        } catch (fallbackError) {
+          console.warn(`[tokenrun] fallback failed job=${input.jobId} provider=${fallbackId}`);
+        }
+      }
+      if (!fallbackIds.length) throw error;
+      throw new Error('图片主渠道及备用渠道均不可用，请稍后重试', { cause: error });
+    }
+  }
+
+  private async generateWithProvider(input: ProviderImageInput, providerId: string, includeDisabled: boolean): Promise<ProviderImageResult> {
+    const provider = this.aiConfig.getProvider(providerId, includeDisabled);
     if (provider.type !== 'openai-images') throw new Error(`Provider ${provider.id} 不是 OpenAI Images 类型`);
-    const modelConfig = this.aiConfig.getModel(provider.id, input.model).model;
+    const modelConfig = this.aiConfig.getModel(provider.id, input.model, includeDisabled).model;
+    if (!modelConfig.supportedQualities.includes(input.quality)
+      || !modelConfig.supportedRatios.includes(input.aspectRatio)
+      || input.images.length > modelConfig.maxInputImages) {
+      throw new Error('渠道不支持当前尺寸、比例或参考图数量');
+    }
     const apiKey = provider.apiKey.trim();
     if (!apiKey) throw new Error(`${provider.displayName} API Key 未配置`);
     const requestInput = { ...input, model: modelConfig.upstreamModel ?? modelConfig.model };
@@ -33,14 +71,15 @@ export class TokenRunProvider implements ImageProvider {
       ? provider.paths.edits || '/v1/images/edits'
       : provider.paths.generations || '/v1/images/generations';
     const body = input.images.length > 0
-      ? await this.buildEditRequest(requestInput)
-      : this.buildGenerationRequest(requestInput);
+      ? await this.buildEditRequest(requestInput, provider)
+      : this.buildGenerationRequest(requestInput, provider);
 
     console.log(`[tokenrun] request job=${input.jobId} model=${input.model} endpoint=${endpoint} ratio=${input.aspectRatio} quality=${input.quality}`);
     let response: Response;
     try {
       response = await fetch(/^https?:\/\//i.test(endpoint) ? endpoint : `${baseUrl}${endpoint}`, {
         method: 'POST',
+        signal: AbortSignal.timeout(provider.timeoutMs || DEFAULT_TOKENRUN_TIMEOUT_MS),
         headers: {
           Authorization: `Bearer ${apiKey}`,
           ...(body instanceof FormData ? {} : { 'Content-Type': 'application/json' })
@@ -60,22 +99,25 @@ export class TokenRunProvider implements ImageProvider {
     return this.parseResponse(input.outputKey ?? input.jobId, await response.json() as TokenRunImageResponse, provider);
   }
 
-  private buildGenerationRequest(input: ProviderImageInput) {
+  private buildGenerationRequest(input: ProviderImageInput, provider?: AiProviderConfig) {
     return {
       model: input.model,
       prompt: input.prompt,
-      size: tokenRunSizeFor(input.aspectRatio, input.quality),
-      quality: this.qualityFor(input),
+      size: this.sizeFor(input, provider),
+      quality: provider?.imageQuality ?? this.qualityFor(input),
+      ...(provider?.imageResponseFormat ? { response_format: provider.imageResponseFormat, n: 1 } : {}),
+      ...(input.background ? { background: input.background } : {}),
       output_format: 'png'
     };
   }
 
-  private async buildEditRequest(input: ProviderImageInput) {
+  private async buildEditRequest(input: ProviderImageInput, provider?: AiProviderConfig) {
     const form = new FormData();
     form.set('model', input.model);
     form.set('prompt', input.prompt);
-    form.set('size', tokenRunSizeFor(input.aspectRatio, input.quality));
-    form.set('quality', this.qualityFor(input));
+    form.set('size', this.sizeFor(input, provider));
+    form.set('quality', provider?.imageQuality ?? this.qualityFor(input));
+    if (provider?.imageResponseFormat) form.set('response_format', provider.imageResponseFormat);
     form.set('output_format', 'png');
     if (input.background) form.set('background', input.background);
     if (input.mask) {
@@ -155,6 +197,11 @@ export class TokenRunProvider implements ImageProvider {
     if (input.quality === '4K') return 'high';
     if (input.quality === '1K' || input.quality === '512') return 'low';
     return 'medium';
+  }
+
+  private sizeFor(input: ProviderImageInput, _provider?: AiProviderConfig) {
+    // Keep the relay's explicit size mapping while preserving auto-ratio requests.
+    return tokenRunSizeFor(input.aspectRatio, input.quality);
   }
 
   private mimeTypeFromBase64(value: string) {

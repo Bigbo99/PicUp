@@ -180,6 +180,10 @@ export interface AdminAiProviderConfig {
   paths: AiRequestPaths;
   defaultModel: string;
   aliases?: string[];
+  fallbackProviderIds?: string[];
+  fallbackOnly?: boolean;
+  imageQuality?: 'high';
+  imageResponseFormat?: 'url';
   timeoutMs: number;
   /** Maximum number of generations allowed to run for this provider at once. */
   concurrency?: number;
@@ -217,6 +221,10 @@ export interface AdminAiProviderInput {
   paths: AiRequestPaths;
   defaultModel: string;
   aliases?: string[];
+  fallbackProviderIds?: string[];
+  fallbackOnly?: boolean;
+  imageQuality?: 'high';
+  imageResponseFormat?: 'url';
   timeoutMs?: number;
   concurrency?: number;
   rpm?: number;

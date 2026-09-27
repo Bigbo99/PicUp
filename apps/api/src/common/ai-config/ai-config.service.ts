@@ -69,7 +69,7 @@ export class AiConfigService {
 
   getModelsResponse(): ModelsResponse {
     const config = this.getConfig();
-    const models = config.providers.flatMap((provider) => provider.models.map<ModelConfig>((model) => ({
+    const models = config.providers.filter(provider => !provider.fallbackOnly).flatMap((provider) => provider.models.map<ModelConfig>((model) => ({
       id: `${provider.id}:${model.model}`,
       provider: provider.id,
       providerDisplayName: provider.displayName,
@@ -102,7 +102,7 @@ export class AiConfigService {
       const needsMask = Boolean(input.maskFileId);
       const needsTransparency = input.previewOperation === 'background';
       const count = input.imageIds.length + (input.guideFileId ? 1 : 0);
-      const candidates = config.providers.filter(provider => provider.enabled && (config.mockEnabled || provider.apiKey.trim())).flatMap(provider => provider.models
+      const candidates = config.providers.filter(provider => provider.enabled && !provider.fallbackOnly && (config.mockEnabled || provider.apiKey.trim())).flatMap(provider => provider.models
         .filter(model => model.enabled && model.maxInputImages >= count && model.supportedRatios.includes(input.aspectRatio)
           && model.supportedQualities.includes(input.quality)
           && (!(needsMask || needsTransparency) || (provider.type === 'openai-images' && /^gpt-image-/i.test(model.upstreamModel ?? model.model))))
@@ -117,7 +117,7 @@ export class AiConfigService {
     const automaticTarget = usesProfessionalRoute ? config.routing.professional : config.routing.default;
     const requestedProvider = input.provider === 'auto' ? automaticTarget.provider : input.provider;
     const provider = this.findProvider(config, requestedProvider);
-    if (!provider || !provider.enabled) throw new BadRequestException('当前 AI Provider 不可用');
+    if (!provider || !provider.enabled || provider.fallbackOnly) throw new BadRequestException('当前 AI Provider 不可用');
 
     const requestedModel = input.provider === 'auto'
       ? automaticTarget.model
@@ -147,6 +147,10 @@ export class AiConfigService {
         paths: structuredClone(provider.paths),
         defaultModel: provider.defaultModel,
         aliases: provider.aliases ? [...provider.aliases] : undefined,
+        fallbackProviderIds: provider.fallbackProviderIds ? [...provider.fallbackProviderIds] : undefined,
+        fallbackOnly: provider.fallbackOnly,
+        imageQuality: provider.imageQuality,
+        imageResponseFormat: provider.imageResponseFormat,
         timeoutMs: provider.timeoutMs,
         concurrency: provider.concurrency ?? 4,
         rpm: provider.rpm ?? 0,
@@ -195,6 +199,10 @@ export class AiConfigService {
       displayName: input.displayName,
       enabled: input.enabled,
       aliases: input.aliases,
+      fallbackProviderIds: input.fallbackProviderIds,
+      fallbackOnly: input.fallbackOnly,
+      imageQuality: input.imageQuality,
+      imageResponseFormat: input.imageResponseFormat,
       apiKey: input.apiKey?.trim() ?? '',
       baseUrl: input.baseUrl,
       paths: input.paths,
@@ -225,6 +233,10 @@ export class AiConfigService {
     if (input.displayName !== undefined) provider.displayName = input.displayName;
     if (input.enabled !== undefined) provider.enabled = input.enabled;
     if (input.aliases !== undefined) provider.aliases = input.aliases;
+    if (input.fallbackProviderIds !== undefined) provider.fallbackProviderIds = input.fallbackProviderIds;
+    if (input.fallbackOnly !== undefined) provider.fallbackOnly = input.fallbackOnly;
+    if (input.imageQuality !== undefined) provider.imageQuality = input.imageQuality;
+    if (input.imageResponseFormat !== undefined) provider.imageResponseFormat = input.imageResponseFormat;
     if (input.apiKey?.trim()) provider.apiKey = input.apiKey.trim();
     if (input.clearApiKey) provider.apiKey = '';
     if (input.baseUrl !== undefined) provider.baseUrl = input.baseUrl;
@@ -443,6 +455,7 @@ export class AiConfigService {
     const provider = this.findProvider(config, target.provider);
     const model = provider ? this.findModel(provider, target.model) : undefined;
     if (!provider?.enabled) throw new BadRequestException(`${name} 路由 Provider 已禁用：${target.provider}`);
+    if (provider.fallbackOnly) throw new BadRequestException(`${name} 路由不能使用仅备用 Provider：${target.provider}`);
     if (!model?.enabled) throw new BadRequestException(`${name} 路由模型已禁用：${target.provider}/${target.model}`);
   }
 

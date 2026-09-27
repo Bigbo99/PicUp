@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
-import { createHash, createHmac } from 'node:crypto';
-import { mkdir, readFile, readdir, stat, unlink, writeFile } from 'node:fs/promises';
+import { createHash, createHmac, randomUUID } from 'node:crypto';
+import { mkdir, readFile, readdir, rename, stat, unlink, utimes, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { Agent, ProxyAgent, type Dispatcher } from 'undici';
 import { ensureStorage, publicMediaUrl } from './storage-paths';
@@ -13,15 +13,24 @@ const retryableStatusCodes = new Set([408, 429, 500, 502, 503, 504]);
 @Injectable()
 export class ObjectStorageService {
   private readonly qiniuDispatchers = new Map<string, Dispatcher>();
-  private readonly diskCacheTtlMs = 7 * 24 * 60 * 60 * 1000;
-  private lastCacheCleanupAt = 0;
+  private readonly pendingReads = new Map<string, Promise<Buffer>>();
+  private readonly objectOperations = new Map<string, Promise<unknown>>();
   private cacheCleanupPromise: Promise<void> | null = null;
+  private cacheCleanupRequested = false;
 
   async save(kind: MediaKind, filename: string, body: Buffer, mimeType: string) {
     if (this.isQiniuEnabled()) {
       const key = this.keyFor(kind, filename);
-      await this.requestQiniu('PUT', key, body, mimeType);
-      return this.publicUrlForKey(key);
+      const url = this.publicUrlForKey(key);
+      this.pendingReads.delete(url);
+      return this.withObjectOperation(url, async () => {
+        await this.requestQiniu('PUT', key, body, mimeType);
+        // Seed the shared disk cache while the worker still has the bytes.
+        // The API can then serve the first preview without another Qiniu GET.
+        await this.invalidateDiskCache(url);
+        await this.writeDiskCache(url, body);
+        return url;
+      });
     }
 
     const paths = await ensureStorage();
@@ -31,20 +40,42 @@ export class ObjectStorageService {
   }
 
   async readByUrl(url: string) {
-    const diskCache = await this.readDiskCache(url);
-    if (diskCache) return diskCache;
-    let body: Buffer;
     if (this.isQiniuEnabled() && !this.isLegacyLocalUrl(url)) {
       const key = this.keyFromUrl(url);
-      body = await this.requestQiniu('GET', key);
-    } else {
-      const { kind, filename } = this.localPartsFromUrl(url);
-      const paths = await ensureStorage();
-      const dir = kind === 'inputs' ? paths.inputs : paths.outputs;
-      body = await readFile(resolve(dir, filename));
+      const cacheUrl = this.publicUrlForKey(key);
+      const pending = this.pendingReads.get(cacheUrl);
+      if (pending) return pending;
+      const read = this.withObjectOperation(cacheUrl, async () => {
+        const cached = await this.readDiskCache(cacheUrl);
+        if (cached) return cached;
+        const body = await this.requestQiniu('GET', key);
+        await this.writeDiskCache(cacheUrl, body);
+        return body;
+      });
+      this.pendingReads.set(cacheUrl, read);
+      try {
+        return await read;
+      } finally {
+        if (this.pendingReads.get(cacheUrl) === read) this.pendingReads.delete(cacheUrl);
+      }
     }
-    await this.writeDiskCache(url, body);
-    return body;
+
+    const { kind, filename } = this.localPartsFromUrl(url);
+    const paths = await ensureStorage();
+    return readFile(resolve(kind === 'inputs' ? paths.inputs : paths.outputs, filename));
+  }
+
+  // A GET started before a PUT/DELETE must not repopulate stale cache bytes
+  // after that mutation. Only operations on the same object wait for each other.
+  private withObjectOperation<T>(url: string, operation: () => Promise<T>): Promise<T> {
+    const previous = this.objectOperations.get(url) ?? Promise.resolve();
+    const current = previous.catch(() => undefined).then(operation);
+    this.objectOperations.set(url, current);
+    const clear = () => {
+      if (this.objectOperations.get(url) === current) this.objectOperations.delete(url);
+    };
+    void current.then(clear, clear);
+    return current;
   }
 
   private async cachePath(url: string) {
@@ -53,61 +84,82 @@ export class ObjectStorageService {
   }
 
   private async readDiskCache(url: string) {
-    if (!this.isQiniuEnabled() || this.isLegacyLocalUrl(url)) return null;
+    if (!this.cacheEnabled()) return null;
     try {
       const path = await this.cachePath(url);
       const info = await stat(path);
-      if (Date.now() - info.mtimeMs > this.diskCacheTtlMs) {
+      if (Date.now() - info.mtimeMs > this.cacheTtlMs() || info.size > this.cacheLimit('OBJECT_CACHE_MAX_BYTES', 1024 * 1024 * 1024)) {
         await unlink(path).catch(() => undefined);
         return null;
       }
-      return await readFile(path);
+      const body = await readFile(path);
+      // mtime records last use, shared across API and worker processes.
+      const now = new Date();
+      await utimes(path, now, now).catch(() => undefined);
+      return body;
     } catch {
       return null;
     }
   }
 
   private async writeDiskCache(url: string, body: Buffer) {
-    if (!this.isQiniuEnabled() || this.isLegacyLocalUrl(url)) return;
+    if (!this.cacheEnabled() || body.length > this.cacheLimit('OBJECT_CACHE_MAX_BYTES', 1024 * 1024 * 1024)) return;
     try {
       const path = await this.cachePath(url);
       await mkdir(resolve(path, '..'), { recursive: true });
-      await writeFile(path, body);
-      void this.cleanupDiskCache();
+      const temporary = `${path}.${randomUUID()}.tmp`;
+      try {
+        await writeFile(temporary, body, { flag: 'wx', mode: 0o600 });
+        await rename(temporary, path);
+      } finally {
+        await unlink(temporary).catch(() => undefined);
+      }
+      await this.cleanupDiskCache();
     } catch (error) {
       console.warn('[storage] unable to write disk cache', error);
     }
   }
 
   private async cleanupDiskCache() {
-    const now = Date.now();
-    if (this.cacheCleanupPromise || now - this.lastCacheCleanupAt < 5 * 60_000) return this.cacheCleanupPromise ?? undefined;
-    this.lastCacheCleanupAt = now;
+    this.cacheCleanupRequested = true;
+    if (this.cacheCleanupPromise) return this.cacheCleanupPromise;
     this.cacheCleanupPromise = (async () => {
       try {
         const paths = await ensureStorage();
         const dir = resolve(paths.root, 'cache', 'objects');
-        const names = await readdir(dir).catch(() => [] as string[]);
-        const files = await Promise.all(names.map(async (name) => {
-          const path = resolve(dir, name);
-          try {
-            const info = await stat(path);
-            return { path, size: info.size, mtimeMs: info.mtimeMs };
-          } catch { return null; }
-        }));
-        const active = files.filter((file): file is { path: string; size: number; mtimeMs: number } => Boolean(file));
-        const maxFiles = this.cacheLimit('OBJECT_CACHE_MAX_FILES', 1000);
-        const maxBytes = this.cacheLimit('OBJECT_CACHE_MAX_BYTES', 1024 * 1024 * 1024);
-        active.sort((a, b) => a.mtimeMs - b.mtimeMs);
-        let total = active.reduce((sum, file) => sum + file.size, 0);
-        while (active.length > maxFiles || total > maxBytes) {
-          const file = active.shift();
-          if (!file) break;
-          total -= file.size;
-          await unlink(file.path).catch(() => undefined);
-        }
-        const expiry = Date.now() - this.diskCacheTtlMs;
-        await Promise.all(active.filter((file) => file.mtimeMs < expiry).map((file) => unlink(file.path).catch(() => undefined)));
+        do {
+          this.cacheCleanupRequested = false;
+          const now = Date.now();
+          const names = await readdir(dir);
+          const files = await Promise.all(names.map(async (name) => {
+            const path = resolve(dir, name);
+            try {
+              const info = await stat(path);
+              if (!/^[a-f0-9]{64}$/.test(name)) {
+                if (/^[a-f0-9]{64}\.[a-f0-9-]+\.tmp$/.test(name) && now - info.mtimeMs > 60 * 60_000) {
+                  await unlink(path).catch(() => undefined);
+                }
+                return null;
+              }
+              return { path, size: info.size, mtimeMs: info.mtimeMs };
+            } catch { return null; }
+          }));
+          const active = files.filter((file): file is { path: string; size: number; mtimeMs: number } => Boolean(file));
+          const maxFiles = this.cacheLimit('OBJECT_CACHE_MAX_FILES', 1000);
+          const maxBytes = this.cacheLimit('OBJECT_CACHE_MAX_BYTES', 1024 * 1024 * 1024);
+          active.sort((a, b) => a.mtimeMs - b.mtimeMs);
+          let total = active.reduce((sum, file) => sum + file.size, 0);
+          let count = active.length;
+          for (const file of active) {
+            if (count <= maxFiles && total <= maxBytes && now - file.mtimeMs <= this.cacheTtlMs()) break;
+            // Another process may have read/replaced the file since the scan.
+            const current = await stat(file.path).catch(() => null);
+            if (current && current.mtimeMs !== file.mtimeMs) continue;
+            await unlink(file.path).catch(() => undefined);
+            total -= file.size;
+            count--;
+          }
+        } while (this.cacheCleanupRequested);
       } finally {
         this.cacheCleanupPromise = null;
       }
@@ -116,17 +168,32 @@ export class ObjectStorageService {
   }
 
   private cacheLimit(name: string, fallback: number) {
-    const value = Number(process.env[name]);
-    return Number.isFinite(value) && value > 0 ? Math.floor(value) : fallback;
+    const configured = process.env[name]?.trim();
+    const value = configured ? Number(configured) : NaN;
+    return Number.isFinite(value) && value >= 0 ? Math.floor(value) : fallback;
+  }
+
+  private cacheTtlMs() {
+    return this.cacheLimit('OBJECT_CACHE_TTL_SECONDS', 7 * 24 * 60 * 60) * 1000;
+  }
+
+  private cacheEnabled() {
+    return this.cacheLimit('OBJECT_CACHE_MAX_FILES', 1000) > 0
+      && this.cacheLimit('OBJECT_CACHE_MAX_BYTES', 1024 * 1024 * 1024) > 0
+      && this.cacheTtlMs() > 0;
   }
 
   async deleteByUrl(url: string) {
-    await this.invalidateDiskCache(url);
     if (this.isQiniuEnabled() && !this.isLegacyLocalUrl(url)) {
       const key = this.keyFromUrl(url);
-      await this.requestQiniu('DELETE', key).catch((error) => {
-        if (error instanceof Error && error.message.includes(' 404 ')) return;
-        throw error;
+      const cacheUrl = this.publicUrlForKey(key);
+      this.pendingReads.delete(cacheUrl);
+      await this.withObjectOperation(cacheUrl, async () => {
+        await this.requestQiniu('DELETE', key).catch((error) => {
+          if (error instanceof Error && error.message.includes(' 404 ')) return;
+          throw error;
+        });
+        await this.invalidateDiskCache(cacheUrl);
       });
       return;
     }
