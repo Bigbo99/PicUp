@@ -18,6 +18,7 @@ import type {
   AdminAiConfigResponse,
   AdminAiModelInput,
   AdminAiProviderInput,
+  AdminAiModelSyncResult,
   AiProviderType,
   AiRoutingTarget,
   ImageJobCreateRequest,
@@ -25,8 +26,9 @@ import type {
   ModelsResponse
 } from '@picup/shared';
 import type { AiConfigDocument, AiProviderConfig } from './ai-config.types';
+import { assertSafeExternalUrl, readLimitedResponse } from '../safe-external-fetch';
 
-const providerTypes = new Set<AiProviderType>(['grsai', 'gemini-official', 'openai-images']);
+const providerTypes = new Set<AiProviderType>(['grsai', 'gemini-official', 'openai-images', 'openai-compatible']);
 const idPattern = /^[a-z0-9][a-z0-9._-]*$/;
 const professionalTemplates = new Set(['replace_text', 'poster_text', 'product']);
 
@@ -279,6 +281,63 @@ export class AiConfigService {
     return structuredClone(input);
   }
 
+  async syncModels(providerId: string): Promise<AdminAiModelSyncResult> {
+    const config = this.getConfig();
+    const provider = this.requireProvider(config, providerId);
+    if (provider.type !== 'openai-compatible' && provider.type !== 'openai-images') {
+      throw new BadRequestException('只有 OpenAI 兼容类型支持同步模型');
+    }
+    if (!provider.apiKey.trim()) throw new BadRequestException('请先配置 API Key');
+    const base = provider.baseUrl.trim().replace(/\/+$/, '');
+    const modelsUrl = /\/v1$/i.test(base) ? `${base}/models` : `${base}/v1/models`;
+    let response: Response;
+    try {
+      response = await fetch(await assertSafeExternalUrl(modelsUrl), {
+        headers: { Authorization: `Bearer ${provider.apiKey.trim()}`, Accept: 'application/json' },
+        signal: AbortSignal.timeout(Math.min(Math.max(provider.timeoutMs || 15_000, 1_000), 30_000))
+      });
+    } catch (error) {
+      throw new BadRequestException(`模型列表请求失败：${error instanceof Error ? error.message : '网络错误'}`);
+    }
+    if (!response.ok) {
+      await response.body?.cancel().catch(() => undefined);
+      throw new BadRequestException(`模型列表请求失败：HTTP ${response.status}`);
+    }
+    let payload: { data?: Array<{ id?: unknown; owned_by?: unknown }> };
+    try {
+      payload = JSON.parse((await readLimitedResponse(response, 2 * 1024 * 1024)).toString('utf8')) as typeof payload;
+    } catch {
+      throw new BadRequestException('模型列表响应格式不正确');
+    }
+    const remoteIds = [...new Set((payload.data ?? []).map(item => typeof item.id === 'string' ? item.id.trim() : '').filter(Boolean))];
+    if (!remoteIds.length) throw new BadRequestException('中转站返回的模型列表为空或格式不正确');
+    const existing = new Map(provider.models.map(model => [model.model, model]));
+    let added = 0;
+    let existingCount = 0;
+    const skipped = remoteIds.length - remoteIds.filter(id => idPattern.test(id)).length;
+    for (const modelId of remoteIds) {
+      if (!idPattern.test(modelId)) continue;
+      const current = existing.get(modelId);
+      if (current) { existingCount += 1; continue; }
+      provider.models.push({
+        model: modelId,
+        upstreamModel: modelId,
+        displayName: modelId,
+        description: '从 OpenAI 兼容中转站同步',
+        enabled: true,
+        priority: 100 + added,
+        maxInputImages: 0,
+        supportedRatios: ['auto', '1:1', '16:9', '9:16'],
+        supportedQualities: ['1K', '2K'],
+        costCredits: 1
+      });
+      added += 1;
+    }
+    if (!provider.defaultModel && provider.models[0]) provider.defaultModel = provider.models[0].model;
+    this.save(config);
+    return { providerId: provider.id, fetched: remoteIds.length, added, existing: existingCount, skipped, models: structuredClone(provider.models) };
+  }
+
   updateModel(providerId: string, modelId: string, input: Partial<AdminAiModelInput>) {
     const config = this.getConfig();
     const provider = this.requireProvider(config, providerId);
@@ -415,7 +474,7 @@ export class AiConfigService {
       if (provider.type === 'gemini-official' && !provider.paths.generate) {
         throw new BadRequestException(`${provider.id} 需要 generate 请求路径`);
       }
-      if (provider.type === 'openai-images' && (!provider.paths.generations || !provider.paths.edits)) {
+      if ((provider.type === 'openai-images' || provider.type === 'openai-compatible') && (!provider.paths.generations || !provider.paths.edits)) {
         throw new BadRequestException(`${provider.id} 需要 generations 和 edits 请求路径`);
       }
       providerIds.add(provider.id);

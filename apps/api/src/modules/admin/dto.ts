@@ -47,7 +47,7 @@ export class CreateAiProviderDto {
   @IsString()
   id!: string;
 
-  @IsIn(['grsai', 'gemini-official', 'openai-images'])
+  @IsIn(['grsai', 'gemini-official', 'openai-images', 'openai-compatible'])
   type!: AiProviderType;
 
   @IsString()
@@ -110,7 +110,7 @@ export class CreateAiProviderDto {
 
 export class UpdateAiProviderDto {
   @IsOptional()
-  @IsIn(['grsai', 'gemini-official', 'openai-images'])
+  @IsIn(['grsai', 'gemini-official', 'openai-images', 'openai-compatible'])
   type?: AiProviderType;
 
   @IsOptional()

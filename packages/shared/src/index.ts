@@ -1,7 +1,7 @@
 export type ImageJobMode = 'generate' | 'edit';
 // Provider ids are runtime-configured. "auto" remains the only reserved id.
 export type ImageProviderName = string;
-export type AiProviderType = 'grsai' | 'gemini-official' | 'openai-images';
+export type AiProviderType = 'grsai' | 'gemini-official' | 'openai-images' | 'openai-compatible';
 export type ImageJobStatus = 'queued' | 'running' | 'retrying' | 'succeeded' | 'failed' | 'refunded';
 export type ImageQuality = '512' | '1K' | '2K' | '4K';
 export type UserRole = 'guest' | 'user' | 'admin';
@@ -235,6 +235,15 @@ export interface AdminAiProviderInput {
   proxyUrl?: string;
   downloadProxyUrl?: string;
   disableProxy?: boolean;
+}
+
+export interface AdminAiModelSyncResult {
+  providerId: string;
+  fetched: number;
+  added: number;
+  existing: number;
+  skipped: number;
+  models: AdminAiModelConfig[];
 }
 
 export type AdminAiModelInput = AdminAiModelConfig;

@@ -30,7 +30,7 @@ export class ProviderRegistry {
     console.log(`[provider] using id=${provider.id} type=${provider.type}`);
     if (provider.type === 'grsai') return this.grsai;
     if (provider.type === 'gemini-official') return this.gemini;
-    if (provider.type === 'openai-images') return this.tokenrun;
+    if (provider.type === 'openai-images' || provider.type === 'openai-compatible') return this.tokenrun;
     throw new Error(`Unsupported AI provider type: ${provider.type}`);
   }
 }

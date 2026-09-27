@@ -18,6 +18,7 @@ import {
   deleteAdminAiModel,
   deleteAdminAiProvider,
   getAdminAiConfig,
+  syncAdminAiModels,
   updateAdminAiMock,
   updateAdminAiModel,
   updateAdminAiProvider,
@@ -89,6 +90,15 @@ export function AiConfigPanel() {
     onError: (error) => notifications.error('模型更新失败', error instanceof Error ? error.message : '请稍后重试')
   });
 
+  const syncMutation = useMutation({
+    mutationFn: syncAdminAiModels,
+    onSuccess: async (result) => {
+      await refresh();
+      notifications.success('模型同步完成', `获取 ${result.fetched} 个，新增 ${result.added} 个，已有 ${result.existing} 个`);
+    },
+    onError: (error) => notifications.error('模型同步失败', error instanceof Error ? error.message : '请检查地址和密钥')
+  });
+
   const mockMutation = useMutation({
     mutationFn: updateAdminAiMock,
     onSuccess: refresh,
@@ -156,6 +166,7 @@ export function AiConfigPanel() {
                   <button type="button" className="admin-icon-button" title="编辑连接" aria-label={`编辑 ${provider.displayName} 连接`} onClick={() => setProviderEditor({ provider })}><Pencil size={16} /></button>
                   <RowActions label={`${provider.displayName} 更多操作`} disabled={actionPending} actions={[
                     { label: '添加模型', onSelect: () => setModelEditor({ providerId: provider.id }) },
+                    ...(['openai-compatible', 'openai-images'].includes(provider.type) ? [{ label: '同步模型', onSelect: () => syncMutation.mutate(provider.id) }] : []),
                     { label: '清除密钥', disabled: !provider.apiKeyConfigured, onSelect: () => void confirmAction(`清除 ${provider.displayName} 的密钥？`, '清除后无法调用该服务商的模型。', () => updateAdminAiProvider(provider.id, { clearApiKey: true })) },
                     { label: '删除服务商', onSelect: () => void confirmAction(`删除 ${provider.displayName}？`, '服务商及其模型将被移除。默认模型正在使用的服务商不能删除。', () => deleteAdminAiProvider(provider.id)) }
                   ]} />

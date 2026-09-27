@@ -6,6 +6,11 @@ export const providerPresets: Record<AiProviderType, { label: string; baseUrl: s
     baseUrl: 'https://api.openai.com',
     paths: { generations: '/v1/images/generations', edits: '/v1/images/edits' }
   },
+  'openai-compatible': {
+    label: 'OpenAI 兼容中转站（Sub2API / New API）',
+    baseUrl: 'https://api.example.com',
+    paths: { generations: '/v1/images/generations', edits: '/v1/images/edits' }
+  },
   'gemini-official': {
     label: 'Gemini',
     baseUrl: 'https://generativelanguage.googleapis.com',

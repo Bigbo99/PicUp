@@ -55,7 +55,7 @@ export class TokenRunProvider implements ImageProvider {
 
   private async generateWithProvider(input: ProviderImageInput, providerId: string, includeDisabled: boolean): Promise<ProviderImageResult> {
     const provider = this.aiConfig.getProvider(providerId, includeDisabled);
-    if (provider.type !== 'openai-images') throw new Error(`Provider ${provider.id} 不是 OpenAI Images 类型`);
+    if (provider.type !== 'openai-images' && provider.type !== 'openai-compatible') throw new Error(`Provider ${provider.id} 不是 OpenAI 兼容类型`);
     const modelConfig = this.aiConfig.getModel(provider.id, input.model, includeDisabled).model;
     if (!modelConfig.supportedQualities.includes(input.quality)
       || !modelConfig.supportedRatios.includes(input.aspectRatio)

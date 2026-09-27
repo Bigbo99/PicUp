@@ -247,6 +247,11 @@ export class AdminController {
     return this.aiConfig.updateProvider(providerId, body);
   }
 
+  @Post('ai-config/providers/:providerId/sync-models')
+  syncAiModels(@Param('providerId') providerId: string) {
+    return this.aiConfig.syncModels(providerId);
+  }
+
   @Delete('ai-config/providers/:providerId')
   deleteAiProvider(@Param('providerId') providerId: string) {
     return this.aiConfig.deleteProvider(providerId);

@@ -124,6 +124,10 @@ export function updateAdminAiProvider(providerId: string, patch: Partial<AdminAi
   });
 }
 
+export function syncAdminAiModels(providerId: string) {
+  return adminRequest<{ providerId: string; fetched: number; added: number; existing: number; skipped: number }>(`/api/admin/ai-config/providers/${encodeURIComponent(providerId)}/sync-models`, { method: 'POST' });
+}
+
 export function deleteAdminAiProvider(providerId: string) {
   return adminRequest<{ ok: boolean; providerId: string }>(`/api/admin/ai-config/providers/${encodeURIComponent(providerId)}`, {
     method: 'DELETE'
