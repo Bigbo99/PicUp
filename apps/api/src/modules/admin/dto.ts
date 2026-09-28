@@ -1,5 +1,14 @@
-import { IsArray, IsBoolean, IsEmail, IsIn, IsInt, IsObject, IsOptional, IsString, Max, Min } from 'class-validator';
+import { ArrayMaxSize, ArrayMinSize, ArrayUnique, IsArray, IsBoolean, IsEmail, IsIn, IsInt, IsObject, IsOptional, IsString, Max, Min } from 'class-validator';
 import type { AiProviderType, AiRequestPaths, AiRoutingTarget, ImageQuality } from '@picup/shared';
+
+export class InstallAiModelsDto {
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(50)
+  @ArrayUnique()
+  @IsString({ each: true })
+  models!: string[];
+}
 
 export class UpdateModelConfigDto {
   @IsOptional()

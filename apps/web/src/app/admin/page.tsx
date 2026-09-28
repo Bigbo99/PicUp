@@ -187,7 +187,7 @@ export default function AdminPage() {
         <AdminSidebar items={tabs} active={activeTab} onSelect={selectTab} user={user} onLogout={() => logoutMutation.mutate()} />
 
         <section className="admin-content">
-          <h1 className="sr-only">{tabs.find((tab) => tab.id === activeTab)?.label}</h1>
+          <header className="admin-page-header"><div><p>管理后台</p><h1>{tabs.find((tab) => tab.id === activeTab)?.label}</h1></div></header>
 
           {activeTab === 'overview' && <OverviewTab onOpenJobs={() => selectTab('jobs')} onOpenModels={() => selectTab('models')} />}
           {activeTab === 'users' && <UsersTab />}

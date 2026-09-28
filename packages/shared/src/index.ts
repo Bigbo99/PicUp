@@ -570,3 +570,4 @@ export const resolutionOptions: Array<{ label: string; value: ImageQuality; desc
 
 export * from './model-catalog';
 export * from './image-intent';
+export * from './image-model-presets';

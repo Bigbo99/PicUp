@@ -14,6 +14,7 @@ import { AiConfigService } from '../../common/ai-config/ai-config.service';
 import type { AuthenticatedRequest } from '../auth/auth.types';
 import {
   CreateAiModelDto,
+  InstallAiModelsDto,
   CreateAiProviderDto,
   UpdateAiMockDto,
   UpdateAiModelDto,
@@ -250,6 +251,16 @@ export class AdminController {
   @Post('ai-config/providers/:providerId/sync-models')
   syncAiModels(@Param('providerId') providerId: string) {
     return this.aiConfig.syncModels(providerId);
+  }
+
+  @Get('ai-config/providers/:providerId/available-models')
+  availableAiModels(@Param('providerId') providerId: string) {
+    return this.aiConfig.availableModels(providerId);
+  }
+
+  @Post('ai-config/providers/:providerId/install-models')
+  installAiModels(@Param('providerId') providerId: string, @Body() body: InstallAiModelsDto) {
+    return this.aiConfig.installModels(providerId, body.models);
   }
 
   @Delete('ai-config/providers/:providerId')

@@ -110,6 +110,16 @@ export function getAdminAiConfig() {
   return adminRequest<AdminAiConfigResponse>('/api/admin/ai-config');
 }
 
+export function getAvailableAiModels(providerId: string) {
+  return adminRequest<import('@picup/shared').AvailableImageModels>(`/api/admin/ai-config/providers/${encodeURIComponent(providerId)}/available-models`);
+}
+
+export function installAdminAiModels(providerId: string, models: string[]) {
+  return adminRequest<{ installed: number }>(`/api/admin/ai-config/providers/${encodeURIComponent(providerId)}/install-models`, {
+    method: 'POST', body: JSON.stringify({ models })
+  });
+}
+
 export function createAdminAiProvider(input: AdminAiProviderInput) {
   return adminRequest<AdminAiProviderConfig>('/api/admin/ai-config/providers', {
     method: 'POST',

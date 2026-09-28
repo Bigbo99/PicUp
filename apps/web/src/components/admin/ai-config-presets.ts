@@ -1,4 +1,4 @@
-import type { AiProviderType, AiRequestPaths } from '@picup/shared';
+import { IMAGE_MODEL_PRESETS, aspectRatioOptions, type AiProviderType, type AiRequestPaths, type ImageQuality } from '@picup/shared';
 
 export const providerPresets: Record<AiProviderType, { label: string; baseUrl: string; paths: AiRequestPaths }> = {
   'openai-images': {
@@ -26,3 +26,21 @@ export const providerPresets: Record<AiProviderType, { label: string; baseUrl: s
 export const pathLabels: Record<keyof AiRequestPaths, string> = {
   generate: '生成路径', result: '结果查询路径', generations: '文生图路径', edits: '图片编辑路径'
 };
+
+export interface ModelPreset {
+  label: string;
+  supportedRatios: string[];
+  supportedQualities: ImageQuality[];
+  maxInputImages: number;
+}
+
+export const modelPresets: Record<string, ModelPreset> = Object.fromEntries(
+  IMAGE_MODEL_PRESETS.map(preset => [preset.model, {
+    label: preset.displayName,
+    supportedRatios: preset.ratios,
+    supportedQualities: preset.resolutions,
+    maxInputImages: preset.referenceLimit
+  }])
+);
+
+export const ratioOptions = aspectRatioOptions.map(option => option.value);

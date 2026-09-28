@@ -26,6 +26,7 @@ import type {
   ModelsResponse
 } from '@picup/shared';
 import type { AiConfigDocument, AiProviderConfig } from './ai-config.types';
+import { IMAGE_MODEL_PRESETS, imageModelDefaults, imageModelPreset, type AvailableImageModels } from '@picup/shared';
 import { assertSafeExternalUrl, readLimitedResponse } from '../safe-external-fetch';
 
 const providerTypes = new Set<AiProviderType>(['grsai', 'gemini-official', 'openai-images', 'openai-compatible']);
@@ -302,62 +303,26 @@ export class AiConfigService {
   }
 
   async syncModels(providerId: string): Promise<AdminAiModelSyncResult> {
+    const before = this.requireProvider(this.getConfig(), providerId);
+    if (!['openai-images', 'openai-compatible'].includes(before.type)) throw new BadRequestException('只有 OpenAI 兼容类型支持同步模型');
+    const available = await this.availableModels(providerId);
     const config = this.getConfig();
     const provider = this.requireProvider(config, providerId);
-    if (provider.type !== 'openai-compatible' && provider.type !== 'openai-images') {
-      throw new BadRequestException('只有 OpenAI 兼容类型支持同步模型');
-    }
-    if (!provider.apiKey.trim()) throw new BadRequestException('请先配置 API Key');
-    const base = provider.baseUrl.trim().replace(/\/+$/, '');
-    const modelsUrl = /\/v1$/i.test(base) ? `${base}/models` : `${base}/v1/models`;
-    let response: Response;
-    try {
-      response = await fetch(await assertSafeExternalUrl(modelsUrl), {
-        headers: { Authorization: `Bearer ${provider.apiKey.trim()}`, Accept: 'application/json' },
-        signal: AbortSignal.timeout(Math.min(Math.max(provider.timeoutMs || 15_000, 1_000), 30_000))
-      });
-    } catch (error) {
-      throw new BadRequestException(`模型列表请求失败：${error instanceof Error ? error.message : '网络错误'}`);
-    }
-    if (!response.ok) {
-      await response.body?.cancel().catch(() => undefined);
-      throw new BadRequestException(`模型列表请求失败：HTTP ${response.status}`);
-    }
-    let payload: { data?: Array<{ id?: unknown; owned_by?: unknown }> };
-    try {
-      payload = JSON.parse((await readLimitedResponse(response, 2 * 1024 * 1024)).toString('utf8')) as typeof payload;
-    } catch {
-      throw new BadRequestException('模型列表响应格式不正确');
-    }
-    const remoteIds = [...new Set((payload.data ?? []).map(item => typeof item.id === 'string' ? item.id.trim() : '').filter(Boolean))];
-    if (!remoteIds.length) throw new BadRequestException('中转站返回的模型列表为空或格式不正确');
-    const existing = new Map(provider.models.map(model => [model.model, model]));
+    if (JSON.stringify(before) !== JSON.stringify(provider)) throw new ConflictException('渠道配置已变化，请重新同步');
     let added = 0;
-    let existingCount = 0;
-    const skipped = remoteIds.length - remoteIds.filter(id => idPattern.test(id)).length;
-    for (const modelId of remoteIds) {
-      if (!idPattern.test(modelId)) continue;
-      const current = existing.get(modelId);
-      if (current) { existingCount += 1; continue; }
-      provider.models.push({
-        model: modelId,
-        upstreamModel: modelId,
-        displayName: modelId,
-        description: '从 OpenAI 兼容中转站同步',
-        // Synced models stay in the admin catalog until an administrator
-        // explicitly enables the ones that should be exposed to users.
-        enabled: false,
-        priority: 100 + added,
-        maxInputImages: 0,
-        supportedRatios: ['auto', '1:1', '16:9', '9:16'],
-        supportedQualities: ['1K', '2K'],
-        costCredits: 1
-      });
+    for (const item of available.models) {
+      if (item.installed || !item.listed || !item.defaults) continue;
+      provider.models.push({ ...structuredClone(item.defaults), enabled: false });
       added += 1;
     }
-    if (!provider.defaultModel && provider.models[0]) provider.defaultModel = provider.models[0].model;
-    this.save(config);
-    return { providerId: provider.id, fetched: remoteIds.length, added, existing: existingCount, skipped, models: structuredClone(provider.models) };
+    if (added) {
+      if (!provider.defaultModel) provider.defaultModel = provider.models[0].model;
+      this.save(config);
+    }
+    return { providerId, fetched: available.models.filter(item => item.listed).length + available.omitted,
+      added, existing: available.models.filter(item => item.installed && item.listed).length,
+      skipped: available.omitted + available.models.filter(item => item.listed && !item.defaults && !item.installed).length,
+      models: structuredClone(provider.models) };
   }
 
   updateModel(providerId: string, modelId: string, input: Partial<AdminAiModelInput>) {
@@ -365,9 +330,78 @@ export class AiConfigService {
     const provider = this.requireProvider(config, providerId);
     const model = this.requireModel(provider, modelId);
     if (input.model && input.model !== model.model) throw new BadRequestException('模型 id 不支持修改');
-    Object.assign(model, structuredClone(input), { model: model.model });
+    const patch = Object.fromEntries(Object.entries(input).filter(([, value]) => value !== undefined));
+    Object.assign(model, structuredClone(patch), { model: model.model });
     this.save(config);
     return structuredClone(model);
+  }
+
+  async availableModels(providerId: string): Promise<AvailableImageModels> {
+    const provider = this.requireProvider(this.getConfig(), providerId);
+    const remote = ['openai-images', 'openai-compatible'].includes(provider.type);
+    const ids = remote ? await this.fetchImageModelIds(provider)
+      : IMAGE_MODEL_PRESETS.filter(preset => preset.protocols.includes(provider.type)).map(preset => preset.model);
+    const candidates = [...new Set([...ids, ...provider.models.map(model => model.model)])];
+    const models = candidates.filter(id => imageModelPreset(provider.type, id) || provider.models.some(model => model.model === id) || /image|banana/i.test(id)).map(model => {
+      const preset = imageModelPreset(provider.type, model);
+      const existing = provider.models.find(item => item.model === model);
+      const defaults = preset ? imageModelDefaults(preset, model) : undefined;
+      // Existing restrictions may encode relay-specific limits; never broaden them on import.
+      if (defaults && existing) {
+        defaults.supportedRatios = defaults.supportedRatios.filter(value => existing.supportedRatios.includes(value));
+        defaults.supportedQualities = defaults.supportedQualities.filter(value => existing.supportedQualities.includes(value));
+        defaults.maxInputImages = Math.min(defaults.maxInputImages, existing.maxInputImages);
+      }
+      return { model, preset, defaults, installed: Boolean(existing), listed: remote && ids.includes(model) };
+    });
+    return { providerId, checkedAt: new Date().toISOString(), source: remote ? 'remote' : 'configured', models,
+      omitted: candidates.length - models.length,
+      message: remote ? '渠道已返回模型列表；具体尺寸、编辑能力尚未实测。现有渠道限制会保留。' : '依据接口文档提供预设；当前密钥的模型权限与出图能力尚未实测。' };
+  }
+
+  async installModels(providerId: string, modelIds: string[]) {
+    if (!Array.isArray(modelIds) || !modelIds.length || modelIds.length > 50 || new Set(modelIds).size !== modelIds.length) {
+      throw new BadRequestException('请选择 1-50 个不重复的模型');
+    }
+    const before = this.requireProvider(this.getConfig(), providerId);
+    const available = await this.availableModels(providerId);
+    const config = this.getConfig();
+    const provider = this.requireProvider(config, providerId);
+    if (JSON.stringify(before) !== JSON.stringify(provider)) throw new ConflictException('渠道配置已变化，请刷新后重新选择');
+    for (const id of modelIds) {
+      const item = available.models.find(model => model.model === id);
+      if (!item?.defaults || (available.source === 'remote' && !item.listed)) throw new BadRequestException(`模型暂无可用预设：${id}`);
+      if (!item.defaults.supportedRatios.length || !item.defaults.supportedQualities.length) throw new BadRequestException(`模型现有限制与官方参数不兼容：${id}`);
+      const existing = provider.models.find(model => model.model === id);
+      if (existing) {
+        Object.assign(existing, { supportedRatios: item.defaults.supportedRatios,
+          supportedQualities: item.defaults.supportedQualities, maxInputImages: item.defaults.maxInputImages });
+      } else provider.models.push(structuredClone(item.defaults));
+    }
+    if (!provider.defaultModel) provider.defaultModel = modelIds[0];
+    this.save(config);
+    return { installed: modelIds.length };
+  }
+
+  private async fetchImageModelIds(provider: AiProviderConfig): Promise<string[]> {
+    if (!provider.apiKey.trim()) throw new BadRequestException('请先配置 API Key');
+    const base = provider.baseUrl.trim().replace(/\/+$/, '');
+    const url = /\/v1$/i.test(base) ? `${base}/models` : `${base}/v1/models`;
+    let response: Response;
+    try {
+      response = await fetch(await assertSafeExternalUrl(url), { headers: { Authorization: `Bearer ${provider.apiKey.trim()}`, Accept: 'application/json' },
+        redirect: 'error', signal: AbortSignal.timeout(30_000) });
+    } catch { throw new BadRequestException('模型列表请求失败，请检查渠道地址和网络'); }
+    if (!response.ok) {
+      await response.body?.cancel().catch(() => undefined);
+      throw new BadRequestException(`模型列表请求失败：HTTP ${response.status}`);
+    }
+    try {
+      const payload = JSON.parse((await readLimitedResponse(response, 2 * 1024 * 1024)).toString('utf8'));
+      if (!Array.isArray(payload?.data)) throw new Error('Invalid model list');
+      return [...new Set<string>(payload.data.flatMap((item: { id?: unknown } | null) =>
+        typeof item?.id === 'string' && idPattern.test(item.id) ? [item.id] : []))];
+    } catch { throw new BadRequestException('模型列表响应格式不正确'); }
   }
 
   deleteModel(providerId: string, modelId: string) {
