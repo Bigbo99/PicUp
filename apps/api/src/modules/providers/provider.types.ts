@@ -11,6 +11,8 @@ export interface ProviderImageInput {
   model: string;
   aspectRatio: string;
   quality: ImageQuality;
+  width?: number;
+  height?: number;
   images: UploadedFileRecord[];
   mask?: UploadedFileRecord;
   background?: 'transparent';

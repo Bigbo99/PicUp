@@ -13,7 +13,6 @@ import {
   ChevronLeft,
   ChevronRight,
   FileImage,
-  Home,
   Infinity as InfinityIcon,
   Loader2,
   Lock,
@@ -49,16 +48,17 @@ import {
 import { useNotifications } from '@/components/notification-provider';
 import { AiConfigPanel } from '@/components/admin/ai-config-panel';
 import { RefreshButton } from '@/components/admin/controls';
+import { AdminSidebar, type AdminNavItem } from '@/components/admin/sidebar';
 
 type AdminTab = 'overview' | 'users' | 'jobs' | 'models' | 'audit';
 type AdminUserDraft = Parameters<typeof updateAdminUser>[1];
 
-const tabs: Array<{ id: AdminTab; label: string; description: string; icon: React.ReactNode }> = [
-  { id: 'overview', label: '概览', description: '关键运行指标与需要处理的异常', icon: <BarChart3 size={17} aria-hidden /> },
-  { id: 'users', label: '用户', description: '账号、权限、积分与访问状态', icon: <Users size={17} aria-hidden /> },
-  { id: 'jobs', label: '任务', description: '查看生成任务、结果和失败原因', icon: <ClipboardList size={17} aria-hidden /> },
-  { id: 'models', label: '模型服务', description: '服务商与模型', icon: <SlidersHorizontal size={17} aria-hidden /> },
-  { id: 'audit', label: '操作记录', description: '管理员关键操作的变更记录', icon: <ShieldCheck size={17} aria-hidden /> }
+const tabs: Array<AdminNavItem<AdminTab>> = [
+  { id: 'overview', label: '概览', group: '运营', icon: <BarChart3 size={18} aria-hidden /> },
+  { id: 'users', label: '用户', group: '运营', icon: <Users size={18} aria-hidden /> },
+  { id: 'jobs', label: '任务', group: '运营', icon: <ClipboardList size={18} aria-hidden /> },
+  { id: 'models', label: '模型服务', group: '系统', icon: <SlidersHorizontal size={18} aria-hidden /> },
+  { id: 'audit', label: '操作记录', group: '系统', icon: <ShieldCheck size={18} aria-hidden /> }
 ];
 
 function usersFromResponse(response?: AdminUsersResponse) {
@@ -130,7 +130,6 @@ function labelFor(value: string) {
 export default function AdminPage() {
   const queryClient = useQueryClient();
   const [activeTab, setActiveTab] = useState<AdminTab>('overview');
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const meQuery = useQuery({ queryKey: ['me'], queryFn: getMe });
   const logoutMutation = useMutation({
     mutationFn: logout,
@@ -185,60 +184,7 @@ export default function AdminPage() {
   return (
     <main className="admin-shell">
       <div className="admin-layout">
-        <aside className={`admin-sidebar ${sidebarCollapsed ? 'admin-sidebar-collapsed' : ''}`}>
-          <div className="admin-brand-row">
-            <Link className="admin-brand" href="/" aria-label="返回 PicUp 工作台">
-              <img src="/brand/picup-icon.png" width="36" height="36" alt="" />
-              <span className={sidebarCollapsed ? 'lg:hidden' : ''}><strong>PicUp</strong><small>管理后台</small></span>
-            </Link>
-            <div className="flex items-center gap-2 lg:hidden">
-              <span className="admin-role-label">
-                {user.isSuperAdmin ? '超级管理员' : '管理员'}
-              </span>
-              <Link className="admin-icon-button" href="/" title="返回工作台" aria-label="返回工作台">
-                <Home size={18} aria-hidden />
-              </Link>
-            </div>
-          </div>
-
-          <nav className="admin-navigation" aria-label="后台导航">
-            {tabs.map((tab) => (
-              <button
-                key={tab.id}
-                className={activeTab === tab.id ? 'is-active' : ''}
-                onClick={() => selectTab(tab.id)}
-                aria-current={activeTab === tab.id ? 'page' : undefined}
-                aria-label={sidebarCollapsed ? tab.label : undefined}
-                title={tab.label}
-              >
-                <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center">{tab.icon}</span>
-                <span className={sidebarCollapsed ? 'lg:hidden' : ''}>{tab.label}</span>
-              </button>
-            ))}
-          </nav>
-
-          <div className="admin-sidebar-footer">
-            <button
-              className="admin-icon-button admin-collapse-button"
-              onClick={() => setSidebarCollapsed((collapsed) => !collapsed)}
-              title={sidebarCollapsed ? '展开侧边栏' : '折叠侧边栏'}
-              aria-label={sidebarCollapsed ? '展开侧边栏' : '折叠侧边栏'}
-            >
-              {sidebarCollapsed ? <ChevronRight size={17} aria-hidden /> : <ChevronLeft size={17} aria-hidden />}
-            </button>
-            <div className="admin-account-row" title={user.displayName || user.email || user.id}>
-              <span>{(user.displayName || user.email || user.id).slice(0, 1).toUpperCase()}</span>
-              <div className={sidebarCollapsed ? 'lg:hidden' : ''}>
-                <strong>{user.displayName || user.email || '管理员'}</strong>
-                <small>{user.isSuperAdmin ? '超级管理员' : '管理员'}</small>
-              </div>
-            </div>
-            <div className={`admin-sidebar-actions ${sidebarCollapsed ? 'lg:grid' : ''}`}>
-              <Link className="admin-icon-button" href="/" title="返回工作台" aria-label="返回工作台"><Home size={17} aria-hidden /></Link>
-              <button className="admin-icon-button" onClick={() => logoutMutation.mutate()} title="退出登录" aria-label="退出登录"><ArrowLeft size={17} aria-hidden /></button>
-            </div>
-          </div>
-        </aside>
+        <AdminSidebar items={tabs} active={activeTab} onSelect={selectTab} user={user} onLogout={() => logoutMutation.mutate()} />
 
         <section className="admin-content">
           <h1 className="sr-only">{tabs.find((tab) => tab.id === activeTab)?.label}</h1>

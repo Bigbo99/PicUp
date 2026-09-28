@@ -68,7 +68,7 @@ it('requests transparency for cutout removal and persists only the protected res
   const queue = { enqueueJob: async () => {}, acquireProviderSlot: async () => undefined, ackJob: async () => {} };
   const provider = { generate: async (input: { background?: string; prompt: string }) => {
     assert.equal(input.background, 'transparent');
-    assert.match(input.prompt, /background=transparent/);
+    assert.match(input.prompt, /输出 PNG，保留真实透明度/);
     return { images: [{ url: 'raw-output', mimeType: 'image/png' }], textOutputs: [] };
   } };
   const service = new JobsService({} as never, storage as never, queue as never, models as never,

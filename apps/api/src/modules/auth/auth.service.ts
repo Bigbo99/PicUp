@@ -62,6 +62,7 @@ const unlimitedQuota = 999999999;
 // endpoints every few seconds, so throttle the write instead of touching the
 // same hot row on every request.
 const visitTouchIntervalMs = 5 * 60 * 1000;
+const readOnlyMethods = new Set(['GET', 'HEAD', 'OPTIONS']);
 const ip9Endpoint = 'https://ip9.com.cn/get';
 const wechatPendingPrefix = 'pending:';
 export const creditRechargePlans = [
@@ -451,6 +452,14 @@ export class AuthService {
           return req.authUser;
         }
       }
+    }
+
+    // Anonymous reads get a throwaway guest: GET handlers only query by user id, so nothing
+    // needs to exist in the database. A guest row is created on the first write instead, which
+    // keeps page views, crawlers and post-logout visits from filling the users table.
+    if (readOnlyMethods.has(req.method)) {
+      req.authUser = this.toPublicUser(this.storage.createStoredUser({ id: randomUUID(), email: null, role: 'guest', isGuest: true }));
+      return req.authUser;
     }
 
     const guest = this.storage.createStoredUser({

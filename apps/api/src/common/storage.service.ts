@@ -288,12 +288,41 @@ export class StorageService {
   }
 
   async completeJob(job: ImageJobRecord, leaseOwner: string) {
+    return this.serializable(async (tx) => {
+      const current = await tx.imageJob.findUnique({ where: { id: job.id } });
+      if (!current || current.status !== 'running' || current.leaseOwner !== leaseOwner
+        || !current.leaseExpiresAt || current.leaseExpiresAt <= new Date()) return null;
+      const count = current.count;
+      if (count > 1 && (job.outputImages.length < 1 || job.outputImages.length > count)) {
+        throw new Error('批量结果数量无效');
+      }
+      const missing = Math.max(0, count - job.outputImages.length);
+      const refund = count > 1 && current.paymentMode === 'credits' && current.userId
+        ? Math.floor(current.creditsReserved * missing / count) : 0;
+      const updated = await tx.imageJob.updateMany({
+        where: { id: job.id, status: 'running', leaseOwner, leaseExpiresAt: { gt: new Date() } },
+        data: this.toJobWriteData({ ...job, count, creditsReserved: current.creditsReserved, creditsRefunded: refund })
+      });
+      if (updated.count !== 1) return null;
+      // Publish the successful images and compensate missing ones in one transaction.
+      if (refund > 0 && current.userId) {
+        await tx.user.update({ where: { id: current.userId }, data: { creditBalance: { increment: refund } } });
+        await tx.creditEntry.create({ data: {
+          key: `job:${current.id}:refund`, userId: current.userId, kind: 'refund', delta: refund
+        } });
+      }
+      const saved = await tx.imageJob.findUniqueOrThrow({ where: { id: job.id } });
+      return this.toImageJob(saved);
+    });
+  }
+
+  async updateJobProgress(job: ImageJobRecord, leaseOwner: string) {
+    const data = this.toJobWriteData(job);
     const updated = await this.prisma.imageJob.updateMany({
       where: { id: job.id, status: 'running', leaseOwner, leaseExpiresAt: { gt: new Date() } },
-      data: this.toJobWriteData(job)
+      data: { outputImages: data.outputImages, textOutputs: data.textOutputs, editOptions: data.editOptions, updatedAt: new Date() }
     });
-    if (updated.count !== 1) return null;
-    return this.getJob(job.id);
+    return updated.count === 1;
   }
 
   private async serializable<T>(action: (tx: Prisma.TransactionClient) => Promise<T>): Promise<T> {
@@ -325,6 +354,12 @@ export class StorageService {
       if (job.userId && job.idempotencyKey) {
         const existing = await tx.imageJob.findFirst({ where: { userId: job.userId, idempotencyKey: job.idempotencyKey } });
         if (existing) return { job: this.toImageJob(existing), created: false };
+      }
+
+      const count = job.count ?? 1;
+      if (!Number.isInteger(count) || count < 1 || count > 4) throw new Error('生成数量必须为 1 至 4 张');
+      if (count > 1 && job.paymentMode !== 'credits' && !(job.paymentMode === 'free' && freeUnlimited)) {
+        throw new Error('批量生成请使用积分支付');
       }
 
       if (job.paymentMode === 'credits' && job.userId && job.creditsReserved > 0) {
@@ -417,15 +452,21 @@ export class StorageService {
   }
 
   private async settleFailedJob(tx: Prisma.TransactionClient, current: ImageJob, message = '模型服务暂时不可用') {
+    const completed = this.jsonArray<ImageJobRecord['outputImages'][number]>(current.outputImages).length;
+    const partial = current.count > 1 && completed > 0;
+    const refund = partial ? Math.floor(current.creditsReserved * Math.max(0, current.count - completed) / current.count) : current.creditsReserved;
     const compensatesBalance = current.paymentMode === 'credits'
       && Boolean(current.userId)
-      && current.creditsReserved > 0;
+      && refund > 0;
+    const edit = (current.editOptions ?? {}) as Partial<ImageJobRecord>;
     const saved = await tx.imageJob.update({
       where: { id: current.id },
       data: {
-        status: compensatesBalance ? 'refunded' : 'failed',
-        error: {
-          code: current.attempt >= this.maxJobAttempts() ? 'MAX_ATTEMPTS_EXCEEDED' : 'PROVIDER_UNAVAILABLE',
+        status: partial ? 'succeeded' : compensatesBalance ? 'refunded' : 'failed',
+        creditsRefunded: compensatesBalance ? refund : 0,
+        editOptions: { ...edit, outputProgress: edit.outputProgress?.map(slot => slot.status === 'succeeded' ? slot : { status: 'failed' }) } as unknown as Prisma.InputJsonValue,
+        error: partial && completed === current.count ? Prisma.DbNull : {
+          code: partial ? 'BATCH_PARTIAL_FAILURE' : current.attempt >= this.maxJobAttempts() ? 'MAX_ATTEMPTS_EXCEEDED' : 'PROVIDER_UNAVAILABLE',
           message
         },
         leaseOwner: null,
@@ -438,13 +479,13 @@ export class StorageService {
     if (current.userId && compensatesBalance) {
       await tx.user.update({
         where: { id: current.userId },
-        data: { creditBalance: { increment: current.creditsReserved } }
+        data: { creditBalance: { increment: refund } }
       });
       await tx.creditEntry.create({ data: {
         key: `job:${current.id}:refund`,
         userId: current.userId,
         kind: 'refund',
-        delta: current.creditsReserved
+        delta: refund
       } });
     }
     return saved;
@@ -1240,6 +1281,9 @@ export class StorageService {
       background: edit?.background,
       maskFile: edit?.maskFile,
       providerRoute: edit?.providerRoute,
+      outputProgress: edit?.outputProgress,
+      width: edit?.width,
+      height: edit?.height,
       id: job.id,
       userId: job.userId ?? undefined,
       mode: job.mode as ImageJobRecord['mode'],
@@ -1251,6 +1295,7 @@ export class StorageService {
       imageIds: this.jsonArray<string>(job.imageIds),
       aspectRatio: job.aspectRatio,
       quality: job.quality as ImageQuality,
+      count: job.count,
       status: job.status as ImageJobStatus,
       selectedProvider: job.selectedProvider as Exclude<ImageProviderName, 'auto'>,
       selectedModel: job.selectedModel,
@@ -1260,6 +1305,7 @@ export class StorageService {
       textOutputs: this.jsonArray<string>(job.textOutputs),
       error: job.error as ImageJobRecord['error'],
       creditsReserved: job.creditsReserved,
+      creditsRefunded: job.creditsRefunded,
       paymentMode: job.paymentMode as ImageJobRecord['paymentMode'],
       paymentOrderId: job.paymentOrderId,
       idempotencyKey: job.idempotencyKey ?? undefined,
@@ -1275,7 +1321,7 @@ export class StorageService {
 
   private toJobWriteData(job: ImageJobRecord): Prisma.ImageJobUncheckedCreateInput {
     return {
-      editOptions: { maskFileId: job.maskFileId, background: job.background, maskFile: job.maskFile, previewOperation: job.previewOperation, guideFileId: job.guideFileId, editComments: job.editComments, systemFileIds: job.systemFileIds, confirmedCredits: job.confirmedCredits, quotedSelection: job.quotedSelection, providerRoute: job.providerRoute } as unknown as Prisma.InputJsonValue,
+      editOptions: { maskFileId: job.maskFileId, background: job.background, maskFile: job.maskFile, previewOperation: job.previewOperation, guideFileId: job.guideFileId, editComments: job.editComments, systemFileIds: job.systemFileIds, confirmedCredits: job.confirmedCredits, quotedSelection: job.quotedSelection, providerRoute: job.providerRoute, outputProgress: job.outputProgress, width: job.width, height: job.height } as unknown as Prisma.InputJsonValue,
       id: job.id,
       userId: job.userId,
       mode: job.mode,
@@ -1287,6 +1333,7 @@ export class StorageService {
       imageIds: job.imageIds,
       aspectRatio: job.aspectRatio,
       quality: job.quality,
+      count: job.count ?? 1,
       status: job.status,
       selectedProvider: job.selectedProvider,
       selectedModel: job.selectedModel,
@@ -1296,6 +1343,7 @@ export class StorageService {
       textOutputs: job.textOutputs as unknown as Prisma.InputJsonValue,
       error: job.error as unknown as Prisma.InputJsonValue,
       creditsReserved: job.creditsReserved,
+      creditsRefunded: job.creditsRefunded ?? 0,
       paymentMode: job.paymentMode ?? 'free',
       paymentOrderId: job.paymentOrderId ?? null,
       idempotencyKey: job.idempotencyKey ?? null,

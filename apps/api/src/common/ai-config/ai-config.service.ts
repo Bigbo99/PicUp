@@ -101,16 +101,12 @@ export class AiConfigService {
   resolveSelection(input: ImageJobCreateRequest) {
     const config = this.getConfig();
     if (input.previewOperation) {
-      const needsMask = Boolean(input.maskFileId);
-      const needsTransparency = input.previewOperation === 'background';
-      const count = input.imageIds.length + (input.guideFileId ? 1 : 0);
-      const candidates = config.providers.filter(provider => provider.enabled && !provider.fallbackOnly && (config.mockEnabled || provider.apiKey.trim())).flatMap(provider => provider.models
-        .filter(model => model.enabled && model.maxInputImages >= count && model.supportedRatios.includes(input.aspectRatio)
-          && model.supportedQualities.includes(input.quality)
-          && (!(needsMask || needsTransparency) || (provider.type === 'openai-images' && /^gpt-image-/i.test(model.upstreamModel ?? model.model))))
-        .map(model => ({ provider, model })));
-      candidates.sort((a, b) => (a.model.priority ?? 100) - (b.model.priority ?? 100) || a.model.costCredits - b.model.costCredits || `${a.provider.id}:${a.model.model}`.localeCompare(`${b.provider.id}:${b.model.model}`));
-      if (!candidates.length) throw new BadRequestException('当前没有可执行此操作的模型，请稍后重试');
+      const checked = this.previewCandidates(input);
+      const candidates = checked.filter(item => !item.reasons.length);
+      if (!candidates.length) {
+        console.warn(`[ai-config] 预览操作 ${input.previewOperation} 没有可用模型：${checked.map(item => `${item.provider.id}:${item.model.model}（${item.reasons.join('、')}）`).join('；') || '未配置任何模型'}`);
+        throw new BadRequestException('当前没有可执行此操作的模型，请稍后重试');
+      }
       return candidates[0];
     }
     const usesProfessionalRoute = input.quality === '4K'
@@ -130,6 +126,30 @@ export class AiConfigService {
     if (!model || !model.enabled) throw new BadRequestException('当前模型不可用');
 
     return { provider, model };
+  }
+
+  // Preview edits bypass routing and pick the best model that can do the job. Every model is
+  // returned with the reasons it cannot, so selection and diagnostics share one set of rules.
+  previewCandidates(input: Pick<ImageJobCreateRequest, 'previewOperation' | 'maskFileId' | 'guideFileId' | 'imageIds' | 'aspectRatio' | 'quality'>) {
+    const config = this.getConfig();
+    const needsMask = Boolean(input.maskFileId);
+    const needsTransparency = input.previewOperation === 'background';
+    const count = input.imageIds.length + (input.guideFileId ? 1 : 0);
+    const checked = config.providers.flatMap(provider => provider.models.map(model => {
+      const reasons: string[] = [];
+      if (!provider.enabled) reasons.push('服务商已停用');
+      if (provider.fallbackOnly) reasons.push('服务商仅作备用');
+      if (!config.mockEnabled && !provider.apiKey.trim()) reasons.push('服务商未配置 API Key');
+      if (!model.enabled) reasons.push('模型已停用');
+      if (model.maxInputImages < count) reasons.push(`最多 ${model.maxInputImages} 张输入图，需要 ${count} 张`);
+      if (!model.supportedRatios.includes(input.aspectRatio)) reasons.push(`不支持比例 ${input.aspectRatio}`);
+      if (!model.supportedQualities.includes(input.quality)) reasons.push(`不支持清晰度 ${input.quality}`);
+      if ((needsMask || needsTransparency) && !(provider.type === 'openai-images' && /^gpt-image-/i.test(model.upstreamModel ?? model.model))) {
+        reasons.push(needsMask ? '不支持蒙版编辑（需 openai-images 类型的 gpt-image 模型）' : '不支持透明背景（需 openai-images 类型的 gpt-image 模型）');
+      }
+      return { provider, model, reasons };
+    }));
+    return checked.sort((a, b) => (a.model.priority ?? 100) - (b.model.priority ?? 100) || a.model.costCredits - b.model.costCredits || `${a.provider.id}:${a.model.model}`.localeCompare(`${b.provider.id}:${b.model.model}`));
   }
 
   adminConfig(): AdminAiConfigResponse {

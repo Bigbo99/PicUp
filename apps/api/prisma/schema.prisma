@@ -167,6 +167,7 @@ model ImageJob {
   imageIds         Json           @map("image_ids")
   aspectRatio      String         @map("aspect_ratio") @db.VarChar(24)
   quality          String         @db.VarChar(24)
+  count            Int            @default(1)
   status           ImageJobStatus @default(queued)
   selectedProvider String         @map("selected_provider") @db.VarChar(32)
   selectedModel    String         @map("selected_model") @db.VarChar(120)
@@ -176,6 +177,7 @@ model ImageJob {
   textOutputs      Json           @default("[]") @map("text_outputs")
   error            Json?
   creditsReserved  Int            @default(1) @map("credits_reserved")
+  creditsRefunded  Int            @default(0) @map("credits_refunded")
   paymentMode      String         @default("free") @map("payment_mode") @db.VarChar(32)
   paymentOrderId   String?        @map("payment_order_id") @db.Uuid
   idempotencyKey   String?        @map("idempotency_key") @db.VarChar(128)

@@ -8,7 +8,7 @@ import type {
   PaymentOrderResponse,
   AuthUser
 } from '@picup/shared';
-import { detectImageIntent } from '@picup/shared';
+import { customImageSize, detectImageIntent, supportsCustomImageSize } from '@picup/shared';
 import { StorageService } from '../../common/storage.service';
 import { RedisQueueService } from '../../common/queue/redis-queue.service';
 import { ModelsService } from '../models/models.service';
@@ -16,12 +16,13 @@ import { ProviderRegistry } from '../providers/provider.registry';
 import { buildFinalPrompt } from './prompt-builder';
 import { compilePromptParts, subjectReferences } from './prompt-parts';
 import { compositeRemoval, hasTransparency, validateEditMask } from './edit-mask';
-import { preparePreview, previewInstructions } from './preview-edit';
+import { preparePreview } from './preview-edit';
 import { PrismaService } from '../../common/database/prisma.service';
 import { ObjectStorageService } from '../../common/object-storage.service';
 import { PaymentsService } from '../payments/payments.service';
 import { AiConfigService } from '../../common/ai-config/ai-config.service';
 import type { ProviderSlotLease } from '../../common/queue/redis-queue.service';
+import type { ProviderImageResult } from '../providers/provider.types';
 
 type ReservedPayment =
   | { mode: 'free' | 'credits' | 'single'; orderId: string | null }
@@ -48,7 +49,7 @@ export class JobsService {
   ) {}
 
   async create(input: ImageJobCreateRequest, user: AuthUser): Promise<ImageJobCreateResponse> {
-    input = preparePreview(input);
+    input = preparePreview(this.validateCount(input));
     if (!input.prompt?.trim()) throw new BadRequestException('请输入 P 图需求');
     if (input.mode === 'edit' && input.imageIds.length === 0) {
       throw new BadRequestException('图片编辑需要先上传图片');
@@ -102,7 +103,7 @@ export class JobsService {
     const resolvedInput: ImageJobCreateRequest = {
       ...input,
       template: input.template === 'auto'
-        ? detectImageIntent(input.prompt, input.imageIds.length > 0).template
+        ? detectImageIntent(input.prompt, input.imageIds.length > 0)
         : input.template
     };
     const selection = await this.selectProvider(resolvedInput);
@@ -122,7 +123,7 @@ export class JobsService {
         paymentOrder: payment.order
       };
     }
-    const finalPrompt = buildFinalPrompt(resolvedInput.template, [input.previewOperation ? previewInstructions(resolvedInput) : compiled.prompt, ...new Set(subjectNotes)].join('\n'));
+    const finalPrompt = buildFinalPrompt({ input: resolvedInput, prompt: compiled.prompt, subjectNotes });
     const now = new Date().toISOString();
     const job: ImageJobRecord = {
       ...resolvedInput,
@@ -195,12 +196,14 @@ export class JobsService {
   }
 
   async quote(input: ImageJobCreateRequest, user: AuthUser): Promise<JobQuote> {
-    input = preparePreview(input);
+    input = preparePreview(this.validateCount(input));
     const resolved = { ...input, template: input.template === 'auto'
-      ? detectImageIntent(input.prompt, input.imageIds.length > 0).template : input.template };
+      ? detectImageIntent(input.prompt, input.imageIds.length > 0) : input.template };
     const selection = await this.selectProvider(resolved);
     try {
-      const payment = await this.reservePayment(user, { ...resolved, paymentMode: input.paymentMode === 'credits' ? 'credits' : undefined }, selection.costCredits);
+      const payment = await this.reservePayment(user, { ...resolved,
+        paymentMode: (input.count ?? 1) > 1 ? input.paymentMode : input.paymentMode === 'credits' ? 'credits' : undefined
+      }, selection.costCredits);
       return { paymentMode: payment.mode === 'credits' ? 'credits' : 'free',
         credits: payment.mode === 'credits' ? selection.costCredits : 0, available: true, selection: `${selection.provider}:${selection.model}` };
     } catch (error) {
@@ -275,7 +278,7 @@ export class JobsService {
     if (leaseOwner && owner !== leaseOwner) return running;
     console.log(`[job] ${running.id} running provider=${running.selectedProvider} model=${running.selectedModel}`);
 
-    let lease: ProviderSlotLease | undefined;
+    const leases = new Set<ProviderSlotLease>();
     let leaseLost = false;
     let renewing = false;
     let renewalPromise: Promise<void> | null = null;
@@ -285,8 +288,9 @@ export class JobsService {
       renewalPromise = (async () => {
         try {
           if (!await this.storage.renewJobLease(id, owner, this.jobLeaseMs())) leaseLost = true;
-          const renewingLease = lease;
-          if (renewingLease && !await this.queue.renewProviderSlot(renewingLease) && lease === renewingLease) leaseLost = true;
+          for (const renewingLease of [...leases]) {
+            if (!await this.queue.renewProviderSlot(renewingLease) && leases.has(renewingLease)) leaseLost = true;
+          }
         } catch (error) {
           leaseLost = true;
           console.error(`[job] ${id} lease renewal failed`, error);
@@ -295,101 +299,166 @@ export class JobsService {
       await renewalPromise;
     }, 10_000);
     heartbeat.unref();
-    try {
-      const providerConfig = this.aiConfig.getProvider(running.selectedProvider);
-      lease = await this.queue.acquireProviderSlot(
-        providerConfig.id,
-        providerConfig.concurrency,
-        providerConfig.rpm,
-        providerConfig.timeoutMs
-      );
-      if (leaseLost || !await this.storage.renewJobLease(id, owner, this.jobLeaseMs())) {
-        const requeued = await this.storage.requeueJobs([id], owner);
-        if (requeued) await this.queue.requeueJob(id);
-        return await this.storage.getJob(id);
+    const result: ProviderImageResult = { images: [...running.outputImages], textOutputs: [...running.textOutputs] };
+    // Serialize snapshots so a slower database write cannot overwrite a newer output.
+    let updates: Promise<void> = Promise.resolve();
+    const update = (action: () => Promise<void>) => {
+      const pending = updates.then(action);
+      updates = pending.catch(() => { leaseLost = true; });
+      return pending;
+    };
+    const saveProgress = async () => {
+      if ((running.count ?? 1) <= 1) return;
+      running.outputImages = [...result.images];
+      running.textOutputs = [...result.textOutputs];
+      if (!await this.storage.updateJobProgress(running, owner)) {
+        throw new Error('任务执行权已失效，无法保存图片进度');
       }
-      const provider = this.providers.get(running.selectedProvider);
-      const result = await provider.generate({
-        jobId: running.id,
-        outputKey: `${running.id}-${running.attempt ?? 0}`,
-        provider: running.selectedProvider,
-        mode: running.mode,
-        template: running.template,
-        automaticModelSelection: running.provider === 'auto' || running.model === 'auto',
-        prompt: running.finalPrompt,
-        model: running.selectedModel,
-        aspectRatio: running.aspectRatio,
-        quality: running.quality,
-        images: running.inputFiles,
-        mask: running.maskFile,
-        background: running.background
-      }, {
-        switchProvider: async (providerId) => {
-          const next = this.aiConfig.getProvider(providerId, true);
-          if (renewalPromise) await renewalPromise;
-          if (leaseLost || !await this.storage.renewJobLease(id, owner, this.jobLeaseMs())) {
-            leaseLost = true;
-            throw new Error('任务执行权已失效，停止切换渠道');
-          }
-          // Never hold one provider's slot while waiting for another: two
-          // providers can be configured as each other's fallback.
+    };
+    const deleteOutputs = async (images: ProviderImageResult['images'], kept: ProviderImageResult['images'] = []) => {
+      const keptUrls = new Set(kept.map(image => image.url));
+      await Promise.allSettled(images.filter(image => !keptUrls.has(image.url)).map(image => this.objectStorage.deleteByUrl(image.url)));
+    };
+    const requireLease = async () => {
+      if (renewalPromise) await renewalPromise;
+      try {
+        if (leaseLost || !await this.storage.renewJobLease(id, owner, this.jobLeaseMs())) {
+          leaseLost = true;
+          throw new Error('任务执行权已失效，停止生成');
+        }
+      } catch (error) {
+        leaseLost = true;
+        throw error;
+      }
+    };
+    try {
+      const count = this.validateCount(running).count!;
+      const initialProvider = running.selectedProvider;
+      const failures: unknown[] = [];
+      running.outputProgress = Array.from({ length: count }, (_, index) => {
+        const prior = running.outputProgress?.[index];
+        if (prior?.status === 'succeeded' && prior.outputIndex !== undefined && result.images[prior.outputIndex]) return prior;
+        if (!running.outputProgress?.length && result.images[index]) return { status: 'succeeded', outputIndex: index };
+        return { status: 'queued' };
+      });
+      await update(saveProgress);
+      const tasks = await Promise.allSettled(Array.from({ length: count }, async (_, imageIndex) => {
+        if (running.outputProgress![imageIndex].status === 'succeeded') return;
+        let lease: ProviderSlotLease | undefined;
+        const release = async () => {
           const previous = lease;
           lease = undefined;
           if (previous) {
-            await this.queue.releaseProviderSlot(previous).catch((error) => {
-              leaseLost = true;
-              throw error;
-            });
+            leases.delete(previous);
+            await this.queue.releaseProviderSlot(previous);
           }
-          lease = await this.queue.acquireProviderSlot(next.id, next.concurrency, next.rpm, next.timeoutMs);
-          if (leaseLost || !await this.storage.renewJobLease(id, owner, this.jobLeaseMs())) {
-            leaseLost = true;
-            throw new Error('任务执行权已失效，停止调用备用渠道');
-          }
-          running.selectedProvider = next.id;
-          running.providerRoute = [...(running.providerRoute ?? []), {
-            provider: next.id,
-            model: running.selectedModel,
-            reason: 'fallback',
-            at: new Date().toISOString()
-          }];
-          const routeSaved = await this.storage.updateJobExecutionRoute?.(running, owner);
-          if (routeSaved === false) {
-            leaseLost = true;
-            throw new Error('任务执行权已失效，无法记录备用渠道');
-          }
-          console.warn(`[job] ${id} provider fallback route=${running.providerRoute.map(route => route.provider).join(' -> ')}`);
-        }
-      });
-      if (running.previewOperation === 'remove' && running.maskFile) {
-        const rawOutputs = [...result.images];
-        const protectedOutputs: typeof result.images = [];
+        };
+        let pendingImages: ProviderImageResult['images'] = [];
         try {
-          const [source, mask] = await Promise.all([
-            this.objectStorage.readByUrl(running.inputFiles[0].url),
-            this.objectStorage.readByUrl(running.maskFile.url)
-          ]);
-          for (const [index, output] of rawOutputs.entries()) {
-            const image = await compositeRemoval(source, mask, await this.objectStorage.readByUrl(output.url));
-            const url = await this.objectStorage.save('outputs', `${running.id}-${running.attempt ?? 0}-protected-${index}.png`, image.body, 'image/png');
-            protectedOutputs.push({ url, mimeType: 'image/png', width: image.width, height: image.height });
+          await requireLease();
+          // Each output is a separate upstream request, including its RPM budget.
+          const providerConfig = this.aiConfig.getProvider(initialProvider);
+          lease = await this.queue.acquireProviderSlot(providerConfig.id, providerConfig.concurrency, providerConfig.rpm, providerConfig.timeoutMs);
+          if (lease) leases.add(lease);
+          await requireLease();
+          await update(async () => {
+            running.outputProgress![imageIndex] = { status: 'running' };
+            await saveProgress();
+          });
+          const provider = this.providers.get(initialProvider);
+          const single = await provider.generate({
+            jobId: running.id,
+            outputKey: `${running.id}-${running.attempt ?? 0}-${imageIndex}`,
+            provider: initialProvider,
+            mode: running.mode,
+            template: running.template,
+            automaticModelSelection: running.provider === 'auto' || running.model === 'auto',
+            prompt: running.finalPrompt,
+            model: running.selectedModel,
+            aspectRatio: running.aspectRatio,
+            quality: running.quality,
+            width: running.width,
+            height: running.height,
+            images: running.inputFiles,
+            mask: running.maskFile,
+            background: running.background
+          }, {
+            switchProvider: async (providerId) => {
+              const next = this.aiConfig.getProvider(providerId, true);
+              await requireLease();
+              // Release before waiting because providers can name each other as fallbacks.
+              await release();
+              lease = await this.queue.acquireProviderSlot(next.id, next.concurrency, next.rpm, next.timeoutMs);
+              if (lease) leases.add(lease);
+              await requireLease();
+              await update(async () => {
+                running.selectedProvider = next.id;
+                running.providerRoute = [...(running.providerRoute ?? []), {
+                  provider: next.id, model: running.selectedModel, reason: 'fallback', at: new Date().toISOString()
+                }];
+                if (await this.storage.updateJobExecutionRoute?.(running, owner) === false) {
+                  throw new Error('任务执行权已失效，无法记录备用渠道');
+                }
+              });
+              console.warn(`[job] ${id} provider fallback=${next.id} output=${imageIndex + 1}`);
+            }
+          });
+          pendingImages = single.images;
+          single.images = single.images.slice(0, 1);
+          await deleteOutputs(pendingImages, single.images);
+          pendingImages = single.images;
+          if (!single.images.length) throw new Error('模型未返回图片，请稍后重试');
+          if (running.previewOperation === 'remove' && running.maskFile) {
+            const rawOutputs = [...single.images];
+            const protectedOutputs: typeof single.images = [];
+            try {
+              const [source, mask] = await Promise.all([
+                this.objectStorage.readByUrl(running.inputFiles[0].url),
+                this.objectStorage.readByUrl(running.maskFile.url)
+              ]);
+              for (const [index, output] of rawOutputs.entries()) {
+                const image = await compositeRemoval(source, mask, await this.objectStorage.readByUrl(output.url));
+                const url = await this.objectStorage.save('outputs', `${running.id}-${running.attempt ?? 0}-${imageIndex}-protected-${index}.png`, image.body, 'image/png');
+                protectedOutputs.push({ url, mimeType: 'image/png', width: image.width, height: image.height });
+              }
+              single.images = protectedOutputs;
+              pendingImages = protectedOutputs;
+            } catch (error) {
+              await deleteOutputs(protectedOutputs);
+              throw error;
+            } finally {
+              await deleteOutputs(rawOutputs);
+            }
           }
-          result.images = protectedOutputs;
+          await requireLease();
+          // A progress write may commit even if its response is lost; reconcile in the outer catch.
+          pendingImages = [];
+          await update(async () => {
+            running.outputProgress![imageIndex] = { status: 'succeeded', outputIndex: result.images.length };
+            result.images.push(...single.images);
+            result.textOutputs.push(...single.textOutputs);
+            await saveProgress();
+          });
         } catch (error) {
-          await Promise.allSettled(protectedOutputs.map(image => this.objectStorage.deleteByUrl(image.url)));
-          throw error;
+          await deleteOutputs(pendingImages);
+          if (leaseLost) throw error;
+          failures.push(error);
+          await update(async () => {
+            running.outputProgress![imageIndex] = { status: 'failed' };
+            await saveProgress();
+          });
+          console.error(`[job] ${id} output ${imageIndex + 1}/${count} failed`, error);
         } finally {
-          await Promise.allSettled(rawOutputs.map(image => this.objectStorage.deleteByUrl(image.url)));
+          if (renewalPromise) await renewalPromise;
+          await release().catch(error => {
+            console.error(`[job] ${id} provider slot release failed`, error);
+          });
         }
-      }
-      if (renewalPromise) await renewalPromise;
-      const leaseStillOwned = !leaseLost && await this.storage.renewJobLease(id, owner, this.jobLeaseMs());
-      if (!leaseStillOwned) {
-        await Promise.allSettled(result.images.map((image) => this.objectStorage.deleteByUrl(image.url)));
-        const requeued = await this.storage.requeueJobs([id], owner);
-        if (requeued) await this.queue.requeueJob(id);
-        return await this.storage.getJob(id);
-      }
+      }));
+      const rejected = tasks.find(task => task.status === 'rejected');
+      if (rejected?.status === 'rejected') throw rejected.reason;
+      if (!result.images.length) throw failures[0] ?? new Error('模型未返回图片，请稍后重试');
+      await requireLease();
       const completed: ImageJobRecord = {
         ...running,
         status: 'succeeded',
@@ -397,24 +466,32 @@ export class JobsService {
         leaseExpiresAt: null,
         outputImages: result.images,
         textOutputs: result.textOutputs,
+        error: failures.length ? {
+          code: 'BATCH_PARTIAL_FAILURE',
+          message: `已生成 ${result.images.length}/${count} 张图片，其余图片生成失败。`
+        } : null,
         updatedAt: new Date().toISOString(),
         completedAt: new Date().toISOString()
       };
       const saved = await this.storage.completeJob(completed, owner);
       if (saved && ['succeeded', 'failed', 'refunded'].includes(saved.status)) await this.ackTerminalJob(completed.id);
       if (!saved) {
-        await Promise.allSettled(result.images.map((image) => this.objectStorage.deleteByUrl(image.url)));
-        return await this.storage.getJob(id);
+        const latest = await this.storage.getJob(id);
+        await deleteOutputs(result.images, latest?.outputImages);
+        return latest;
       }
+      await deleteOutputs(result.images, saved.outputImages);
       console.log(`[job] ${completed.id} succeeded outputs=${completed.outputImages.length}`);
       return saved;
     } catch (error) {
       const latest = await this.storage.getJob(running.id);
       if (latest?.status === 'succeeded') {
+        await deleteOutputs(result.images, latest.outputImages);
         await this.ackTerminalJob(latest.id);
         return latest;
       }
-      if (leaseLost) {
+      await deleteOutputs(result.images, latest?.outputImages);
+      if (leaseLost || (latest?.status === 'running' && latest.outputImages.length > 0)) {
         const requeued = await this.storage.requeueJobs([id], owner).catch(() => false);
         if (requeued) await this.queue.requeueJob(id).catch(() => undefined);
         return await this.storage.getJob(id);
@@ -439,7 +516,7 @@ export class JobsService {
     } finally {
       clearInterval(heartbeat);
       if (renewalPromise) await renewalPromise;
-      if (lease) {
+      for (const lease of leases) {
         await this.queue.releaseProviderSlot(lease).catch((error) => {
           console.error(`[job] ${running.id} provider slot release failed`, error);
         });
@@ -471,6 +548,22 @@ export class JobsService {
     return Number.isFinite(configured) && configured >= 60_000 ? configured : 20 * 60 * 1000;
   }
 
+  private validateCount(input: ImageJobCreateRequest): ImageJobCreateRequest {
+    if (input.width !== undefined || input.height !== undefined) {
+      if (input.previewOperation) throw new BadRequestException('预览编辑请使用比例设置');
+      try { input = { ...input, ...customImageSize(input.width!, input.height!) }; }
+      catch (error) { throw new BadRequestException(error instanceof Error ? error.message : '图片尺寸无效'); }
+    }
+    const count = input.count === undefined ? 1 : input.count;
+    if (!Number.isInteger(count) || count < 1 || count > 4) {
+      throw new BadRequestException('生成数量必须为 1 至 4 张');
+    }
+    if (input.previewOperation && count !== 1) {
+      throw new BadRequestException('预览编辑每次只能生成 1 张');
+    }
+    return { ...input, count };
+  }
+
   private async selectProvider(input: ImageJobCreateRequest) {
     const selection = this.models.resolveSelection(input);
     if (input.maskFileId || input.background) {
@@ -482,7 +575,10 @@ export class JobsService {
     if (input.imageIds.length + (input.guideFileId ? 1 : 0) > selection.model.maxInputImages) {
       throw new BadRequestException(`当前模型最多支持 ${selection.model.maxInputImages} 张参考图`);
     }
-    if (!selection.model.supportedRatios.includes(input.aspectRatio)) {
+    if (input.width !== undefined && !supportsCustomImageSize(selection.provider.type, selection.model.model)) {
+      throw new BadRequestException('当前模型不支持自定义像素尺寸，请选择 GPT Image 2 或 2.5');
+    }
+    if (input.width === undefined && !selection.model.supportedRatios.includes(input.aspectRatio)) {
       throw new BadRequestException(`当前模型不支持 ${input.aspectRatio} 图片比例`);
     }
     if (!selection.model.supportedQualities.includes(input.quality)) {
@@ -491,7 +587,7 @@ export class JobsService {
     return {
       provider: selection.provider.id,
       model: selection.model.model,
-      costCredits: input.previewOperation === 'background' ? 1 : selection.model.costCredits
+      costCredits: (input.previewOperation === 'background' ? 1 : selection.model.costCredits) * (input.count ?? 1)
     };
   }
 
@@ -502,6 +598,16 @@ export class JobsService {
 
     if (user.role === 'admin' || user.quotaUnlimited) {
       return { mode: 'free' as const, orderId: null };
+    }
+
+    if ((input.count ?? 1) > 1) {
+      if (input.paymentMode === 'single' || input.paymentOrderId) {
+        throw new BadRequestException('多图生成请使用积分支付');
+      }
+      if (!await this.storage.hasEnoughCredits(user.id, costCredits)) {
+        throw new BadRequestException('多图生成积分不足，请充值或改为生成 1 张');
+      }
+      return { mode: 'credits', orderId: null };
     }
 
     if (input.paymentMode === 'credits') {

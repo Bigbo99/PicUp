@@ -5,12 +5,11 @@ import { useQuery } from '@tanstack/react-query';
 import { ArrowDown, Pencil, Wand2, X, ArrowUp } from 'lucide-react';
 import type { ImageJobRecord } from '@picup/shared';
 import { getImageJob } from '@/lib/api';
-import { JobStatus } from './canvas';
+import { JobResultDetails, JobStatus } from './canvas';
 import type { PreviewImage } from './image-lightbox';
 import { userMessage } from '@/lib/user-message';
 import { studioSkills } from './skills';
 import { MessagePrompt } from './message-prompt';
-import { ImageParameters } from './image-parameters';
 import { MessageAttachments } from './message-attachments';
 
 export function Conversation({ job, loading, error, children, onUpload: _onUpload, onOpen, onSkillSelect, onEditSubmit, onContinue, continuing }: {
@@ -102,13 +101,16 @@ export function Conversation({ job, loading, error, children, onUpload: _onUploa
       alt: `${message.prompt || '本轮任务'}的参考图 ${index + 1}`,
       meta: `${message.id}:input:${file.id}`
     })),
-    ...message.outputImages.map((output, index) => ({
-      url: output.url,
-      label: `结果 ${index + 1}`,
-      alt: message.prompt || `结果 ${index + 1}`,
-      meta: `${message.id}:output:${index}`,
-      downloadUrl: `/api/image/jobs/${message.id}/download/${index}`
-    }))
+    ...message.outputImages.map((output, index) => {
+      const slotIndex = message.outputProgress?.findIndex(slot => slot.outputIndex === index) ?? -1;
+      return {
+        url: output.url,
+        label: `结果 ${slotIndex >= 0 ? slotIndex + 1 : index + 1}`,
+        alt: message.prompt || `结果 ${index + 1}`,
+        meta: `${message.id}:output:${index}`,
+        downloadUrl: `/api/image/jobs/${message.id}/download/${index}`
+      };
+    })
   ]);
   const content = typeof children === 'function' ? children(conversationImages) : children;
   return <section ref={scroll} className="chat-conversation" data-editing={Boolean(editingId)} aria-label="创作对话" onScroll={event => {
@@ -131,8 +133,9 @@ export function Conversation({ job, loading, error, children, onUpload: _onUploa
         <div className="chat-prior-images">{message.outputImages.map((output, index) => {
           const meta = `${message.id}:output:${index}`;
           const globalIndex = conversationImages.findIndex(image => image.meta === meta);
-          return <div className="chat-prior-image" key={meta}><button onClick={() => onOpen(conversationImages, globalIndex >= 0 ? globalIndex : 0)} title="预览此版本"><img src={output.url} alt={message.prompt} /><ImageParameters job={message} /></button><button type="button" className="chat-prior-image-edit" onClick={() => onContinue(message, index)} disabled={continuing} aria-label={`继续编辑结果 ${index + 1}`} title="继续编辑"><Pencil size={14} /></button></div>;
+          return <div className="chat-prior-image" key={meta}><button onClick={() => onOpen(conversationImages, globalIndex >= 0 ? globalIndex : 0)} title="预览此版本"><img src={output.url} alt={message.prompt} /></button><button type="button" className="chat-prior-image-edit" onClick={() => onContinue(message, index)} disabled={continuing} aria-label={`继续编辑结果 ${index + 1}`} title="继续编辑"><Pencil size={14} /></button></div>;
         })}</div>
+        <JobResultDetails job={message} />
         {message.textOutputs.length > 0 && <div className="chat-text-outputs">{message.textOutputs.map((text, index) => <p key={`${message.id}-text-${index}`}>{text}</p>)}</div>}
         {!message.outputImages.length && message.error && <p className="studio-error">{userMessage(message.error.message)}</p>}
       </article>)}

@@ -4,8 +4,8 @@ import Link from 'next/link';
 import dynamic from 'next/dynamic';
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { AtSign, ArrowUp, Box, ChevronDown, History as HistoryIcon, Images, Loader2, Paintbrush, Pencil, Plus, Scan, RectangleVertical, Trash2, Wand2 } from 'lucide-react';
-import { aspectRatioOptions, resolutionOptions, promptPartsText, type ImageJobCreateRequest, type ImageJobRecord, type PaymentOrderResponse } from '@picup/shared';
+import { AtSign, ArrowUp, Box, ChevronDown, History as HistoryIcon, Images, Loader2, Paintbrush, Pencil, Plus, RectangleVertical, Trash2, Wand2 } from 'lucide-react';
+import { aspectRatioOptions, promptPartsText, supportsCustomImageSize, type ImageJobCreateRequest, type ImageJobRecord, type PaymentOrderResponse } from '@picup/shared';
 import { createImageJob, getImageJob, getMe, getModels, getPaymentOrder, quoteImageJob, referenceJobOutput, updateStudioAsset, uploadImage, uploadSystemImage } from '@/lib/api';
 import { useNotifications } from '@/components/notification-provider';
 import { Canvas, isWorking } from './canvas';
@@ -22,6 +22,8 @@ import { studioSkills, type StudioSkill } from './skills';
 import { fieldValidationMessage } from '@/lib/user-message';
 import { MentionEditor, type MentionEditorHandle } from './mention-editor';
 import { samePreviewFiles, previewRequestId } from './preview-request';
+import { selectedUserModel, userModelGuidance, userModels } from './user-models';
+import { GenerationSettings } from './generation-settings';
 
 type LocationState = { job: string | null; view: string | null; order: string | null };
 
@@ -51,12 +53,12 @@ export function Studio() {
   useEffect(() => {
     if (!ready || !preferencesLoaded || !me.data || defaultsApplied.current === me.data.user.id) return;
     defaultsApplied.current = me.data.user.id;
-    if (!draft.prompt && !draft.files.length && !draft.parentJobId) update({ quality: preferences.quality, aspectRatio: preferences.aspectRatio, provider: preferences.provider, model: preferences.model });
-  }, [ready, preferencesLoaded, me.data, draft.prompt, draft.files.length, draft.parentJobId, preferences.quality, preferences.aspectRatio, preferences.provider, preferences.model, update]);
+    if (!draft.prompt && !draft.files.length && !draft.parentJobId && draft.width === undefined) update({ quality: preferences.quality, aspectRatio: preferences.aspectRatio, provider: preferences.provider, model: preferences.model });
+  }, [ready, preferencesLoaded, me.data, draft.prompt, draft.files.length, draft.parentJobId, draft.width, preferences.quality, preferences.aspectRatio, preferences.provider, preferences.model, update]);
   useEffect(() => {
     const sync = (event: Event) => {
       const detail = (event as CustomEvent<Partial<typeof preferences>>).detail;
-      if (!draft.prompt && !draft.files.length && !draft.parentJobId) update(detail);
+      if (!draft.prompt && !draft.files.length && !draft.parentJobId) update({ ...detail, width: undefined, height: undefined });
     };
     window.addEventListener('picup:preferences-updated', sync); return () => window.removeEventListener('picup:preferences-updated', sync);
   }, [draft.prompt, draft.files.length, draft.parentJobId, update]);
@@ -129,15 +131,10 @@ export function Studio() {
     void client.invalidateQueries({ queryKey: ['assets'] });
     void client.invalidateQueries({ queryKey: ['conversations'] });
   }, [terminal, client]);
-  const modelOptions = models.data?.models.filter(model => model.enabled) ?? [];
-  const professional = draft.quality === '4K' || draft.files.length >= 4;
-  const route = professional ? models.data?.routing?.professional : models.data?.routing?.default;
-  const selectedModel = draft.provider === 'auto'
-    ? modelOptions.find(model => model.provider === route?.provider && model.model === route.model) ?? modelOptions[0]
-    : modelOptions.find(model => model.provider === draft.provider && model.model === draft.model);
+  const modelOptions = userModels(models.data);
+  const automaticTarget = draft.quality === '4K' || draft.files.length >= 4 ? models.data?.routing?.professional : models.data?.routing?.default;
+  const selectedModel = selectedUserModel(modelOptions, draft.provider, draft.model, automaticTarget);
   const limit = selectedModel?.maxInputImages ?? 6;
-  const ratioOptions = aspectRatioOptions.filter(option => !selectedModel || selectedModel.supportedRatios.includes(option.value));
-  const qualityOptions = resolutionOptions.filter(option => !selectedModel || selectedModel.supportedQualities.includes(option.value));
   const patchDraft = useCallback((patch: Partial<StudioDraft>) => {
     update({ ...patch, ...('prompt' in patch && !('promptParts' in patch) ? { promptParts: undefined } : {}), idempotencyKey: undefined }); setError(null);
   }, [update]);
@@ -158,10 +155,12 @@ export function Studio() {
   useEffect(() => {
     if (!ready || !selectedModel) return;
     const patch: Partial<StudioDraft> = {};
-    if (!selectedModel.supportedRatios.includes(draft.aspectRatio)) patch.aspectRatio = selectedModel.supportedRatios[0] ?? 'auto';
+    const custom = draft.width !== undefined && supportsCustomImageSize(selectedModel.providerType, selectedModel.model);
+    if (draft.width !== undefined && !custom) { patch.width = undefined; patch.height = undefined; }
+    if (!custom && !selectedModel.supportedRatios.includes(draft.aspectRatio)) patch.aspectRatio = selectedModel.supportedRatios[0] ?? 'auto';
     if (!selectedModel.supportedQualities.includes(draft.quality)) patch.quality = selectedModel.supportedQualities[0] ?? '1K';
     if (Object.keys(patch).length) patchDraft(patch);
-  }, [selectedModel, draft.aspectRatio, draft.quality, ready, patchDraft]);
+  }, [selectedModel, draft.aspectRatio, draft.quality, draft.width, ready, patchDraft]);
   // Keep new submissions in the visible conversation until the user clicks "新对话".
   // Failed jobs cannot be parents, so fall back to their existing valid parent.
   const conversationParentJobId = selected.data
@@ -172,8 +171,8 @@ export function Studio() {
     : draft.parentJobId ?? conversationParentJobId;
   const request = useMemo<ImageJobCreateRequest>(() => ({
     mode: draft.files.length ? 'edit' : 'generate', provider: selectedModel?.provider ?? draft.provider, model: selectedModel?.model ?? draft.model, template: 'auto', prompt: draft.prompt,
-    promptParts: draft.promptParts, imageIds: draft.files.map(file => file.id), aspectRatio: draft.aspectRatio, quality: draft.quality, parentJobId: activeParentJobId, paymentMode: 'credits'
-  }), [draft.files, draft.provider, draft.model, draft.prompt, draft.promptParts, draft.aspectRatio, draft.quality, activeParentJobId, selectedModel?.provider, selectedModel?.model]);
+    promptParts: draft.promptParts, imageIds: draft.files.map(file => file.id), aspectRatio: draft.aspectRatio, quality: draft.quality, width: draft.width, height: draft.height, count: draft.count, parentJobId: activeParentJobId, paymentMode: 'credits'
+  }), [draft.files, draft.provider, draft.model, draft.prompt, draft.promptParts, draft.aspectRatio, draft.quality, draft.width, draft.height, draft.count, activeParentJobId, selectedModel?.provider, selectedModel?.model]);
   const quotedRequest = useMemo(() => ({ ...request, prompt: '积分预估', promptParts: undefined, parentJobId: undefined }), [request]);
   const guest = !me.data || me.data.user.isGuest;
   const quote = useQuery({ queryKey: ['quote', me.data?.user.id, quotedRequest], queryFn: () => quoteImageJob(quotedRequest),
@@ -209,7 +208,7 @@ export function Studio() {
   }, onError: error => setError(error.message) });
   const continueJob = useMutation({ mutationFn: ({ job, index }: { job: ImageJobRecord; index: number; automatic?: boolean }) => referenceJobOutput(job.id, index),
     onSuccess: (file, { job, automatic }) => {
-      patchDraft({ files: [file], prompt: automatic ? draft.prompt : '', parentJobId: job.id, provider: job.provider, model: job.model, aspectRatio: job.aspectRatio, quality: job.quality });
+      patchDraft({ files: [file], prompt: automatic ? draft.prompt : '', parentJobId: job.id, provider: job.provider, model: job.model, aspectRatio: job.aspectRatio, quality: job.quality, width: job.width, height: job.height, count: 1 });
       if (!automatic) { navigate({ job: job.id, view: null }); prompt.current?.focus(); }
     }, onError: error => setError(error.message) });
   useEffect(() => {
@@ -264,7 +263,7 @@ export function Studio() {
       previewFiles.current = { source: image.url, files, ids, maskId, guideId };
     }
     const imageIds = previewFiles.current.ids;
-    const input: ImageJobCreateRequest = { provider: 'auto', model: 'auto', quality: '1K', paymentMode: 'credits', mode: 'edit', template: 'freeform', prompt: edit.prompt, previewOperation: edit.operation, editComments: edit.comments, imageIds, guideFileId: previewFiles.current.guideId, maskFileId: previewFiles.current.maskId, parentJobId: output ? decodeURIComponent(output[1]) : undefined, aspectRatio: edit.aspectRatio ?? 'auto' };
+    const input: ImageJobCreateRequest = { provider: 'auto', model: 'auto', quality: '1K', count: 1, paymentMode: 'credits', mode: 'edit', template: 'freeform', prompt: edit.prompt, previewOperation: edit.operation, editComments: edit.comments, imageIds, guideFileId: previewFiles.current.guideId, maskFileId: previewFiles.current.maskId, parentJobId: output ? decodeURIComponent(output[1]) : undefined, aspectRatio: edit.aspectRatio ?? 'auto' };
     const signature = JSON.stringify(input);
     if (busy && previewRequestKey.current?.signature !== signature) throw new Error('当前任务处理中，请稍后提交新的编辑');
     if (previewRequestKey.current?.signature !== signature) {
@@ -302,7 +301,7 @@ export function Studio() {
   }
   function reuseParameters(job: ImageJobRecord) {
     patchDraft({ prompt: job.prompt, promptParts: job.promptParts, files: job.inputFiles, provider: job.provider, model: job.model,
-      aspectRatio: job.aspectRatio, quality: job.quality, parentJobId: job.parentJobId }); prompt.current?.focus();
+      aspectRatio: job.aspectRatio, quality: job.quality, width: job.width, height: job.height, count: job.count ?? 1, parentJobId: job.parentJobId }); prompt.current?.focus();
   }
   const inlineRequestKey = useRef<{ signature: string; key: string } | null>(null);
   async function submitInlineEdit(job: ImageJobRecord, nextPrompt: string) {
@@ -311,7 +310,7 @@ export function Studio() {
     const input: ImageJobCreateRequest = {
       mode: job.mode, provider: job.provider, model: job.model, template: job.template,
       prompt: nextPrompt, promptParts: nextPrompt === job.prompt ? job.promptParts : undefined,
-      imageIds: job.inputFiles.map(file => file.id), aspectRatio: job.aspectRatio, quality: job.quality,
+      imageIds: job.inputFiles.map(file => file.id), aspectRatio: job.aspectRatio, quality: job.quality, width: job.width, height: job.height, count: job.count ?? 1,
       parentJobId: job.parentJobId, paymentMode: 'credits'
     };
     const signature = JSON.stringify(input);
@@ -338,7 +337,7 @@ export function Studio() {
     void client.invalidateQueries({ queryKey: ['me'] }); void client.invalidateQueries({ queryKey: ['activity'] }); void client.invalidateQueries({ queryKey: ['quote'] });
   }, [client, navigate, draft.pendingPayment, location.order, create]);
   const paymentOrder = payment?.id === location.order ? payment : restoredPayment.data;
-  const quoteLabel = models.data?.source === 'fallback' ? '模型暂不可用' : quote.isError ? '积分查询失败' : `${quote.data?.credits ?? selectedModel?.costCredits ?? 0} 积分`;
+  const quoteLabel = models.data?.source === 'fallback' ? '模型暂不可用' : quote.isError ? '积分查询失败' : `${quote.data?.credits ?? (selectedModel?.costCredits ?? 0) * draft.count} 积分`;
 
   return <main ref={shell} className="studio-app chat-app" data-gallery-page={location.view === 'history'} data-navigation-page={navigationPage} data-empty={!location.job} onInvalid={event => {
     const field = event.target;
@@ -410,8 +409,8 @@ export function Studio() {
           {draft.pendingPayment && <button className="studio-text-button" onClick={() => navigate({ view: 'payment', order: draft.pendingPayment!.orderId })}>继续支付中的任务</button>}
       <div className="composer-bottom-row"><div className="composer-selectors"><button className="composer-selector" aria-label="打开画板" title="画板" onClick={() => navigate({ view: 'board' })}><Paintbrush size={18} /><span>画板</span></button>
             <button className="composer-selector composer-mention-trigger" aria-label="引用图片或主体" title="引用图片或主体" aria-haspopup="listbox" disabled={!ready || create.isPending} onPointerDown={event => event.preventDefault()} onClick={event => prompt.current?.openMentions(event.currentTarget)}><AtSign size={19} /></button>
-            <button ref={modelTrigger} className="composer-selector model-selector" title={draft.provider === 'auto' ? '模型：自动推荐' : selectedModel?.displayName || '选择模型'} aria-label="选择模型" aria-haspopup="dialog" aria-expanded={location.view === 'models'} onClick={() => navigate({ view: 'models' })}><Box size={18} /><span>{draft.provider === 'auto' ? '自动推荐' : selectedModel?.displayName || '选择模型'}</span><ChevronDown size={14} /></button>
-            <button ref={sizeTrigger} className="composer-selector size-selector" title={`比例与清晰度：${draft.aspectRatio} · ${draft.quality}`} aria-label="比例与清晰度" aria-haspopup="dialog" aria-expanded={location.view === 'settings'} onClick={() => navigate({ view: 'settings' })}><RectangleVertical size={17} /><span>{draft.aspectRatio === 'auto' ? '智能' : draft.aspectRatio} · {draft.quality}</span><ChevronDown size={14} /></button>
+            <button ref={modelTrigger} className="composer-selector model-selector" title={selectedModel?.displayName || '选择模型'} aria-label="选择模型" aria-haspopup="dialog" aria-expanded={location.view === 'models'} onClick={() => navigate({ view: 'models' })}><Box size={18} /><span>{draft.provider === 'auto' ? '自动推荐' : selectedModel?.displayName || '选择模型'}</span><ChevronDown size={14} /></button>
+            <button ref={sizeTrigger} className="composer-selector size-selector" title={`生成设置：${draft.width ? `${draft.width} × ${draft.height}` : draft.aspectRatio} · ${draft.quality} · ${draft.count} 张`} aria-label="比例与清晰度" aria-haspopup="dialog" aria-expanded={location.view === 'settings'} onClick={() => navigate({ view: 'settings' })}><RectangleVertical size={17} /><span>{draft.width ? `${draft.width} × ${draft.height}` : draft.aspectRatio === 'auto' ? '智能' : draft.aspectRatio} · {draft.quality} · {draft.count} 张</span><ChevronDown size={14} /></button>
           </div><div className="composer-submit">
             {guest ? <button className="studio-primary" onClick={() => navigate({ view: 'login' })}>登录后生成</button> : <button className="studio-primary chat-send" title="发送并生成图片" aria-label={create.isPending ? '提交中' : currentWorking ? '生成中' : '生成'} onClick={submit} disabled={!canSubmit}>
               <span className="send-cost" aria-live="polite">{quoteLabel}</span>
@@ -439,14 +438,13 @@ export function Studio() {
       void client.invalidateQueries({ queryKey: ['assets'] });
     }} /></Dialog>}
     {location.view === 'models' && <Dialog title="选择模型" anchor={modelTrigger.current} onClose={closeDialog}><div className="composer-model-list">
-      <button className="composer-model-option" aria-pressed={draft.provider === 'auto'} onClick={() => { patchDraft({ provider: 'auto', model: 'auto' }); closeDialog(); }}><span className="model-symbol"><Wand2 size={22} /></span><span><strong>自动推荐</strong><small>{selectedModel?.displayName || '自动选择可用模型'}</small></span></button>
-      {modelOptions.map(model => <button className="composer-model-option" key={`${model.provider}:${model.model}`} aria-pressed={draft.provider === model.provider && draft.model === model.model} onClick={() => { patchDraft({ provider: model.provider, model: model.model }); closeDialog(); }}><span className="model-symbol"><Box size={22} /></span><span><strong>{model.displayName}</strong><small>{model.description}</small></span></button>)}
+      <button className="composer-model-option" aria-label="自动推荐" disabled={!modelOptions.length} aria-pressed={draft.provider === 'auto'} onClick={() => { patchDraft({ provider: 'auto', model: 'auto' }); closeDialog(); }}><span className="model-symbol"><Wand2 size={22} /></span><span><strong>自动推荐</strong><small>{userModelGuidance('auto')}</small></span></button>
+      {modelOptions.map(model => <button className="composer-model-option" aria-label={model.displayName} key={`${model.provider}:${model.model}`} aria-pressed={draft.provider !== 'auto' && selectedModel?.provider === model.provider && selectedModel?.model === model.model} onClick={() => { patchDraft({ provider: model.provider, model: model.model }); closeDialog(); }}><span className="model-symbol"><Box size={22} /></span><span><strong>{model.displayName}</strong><small>{userModelGuidance(model.model)}</small></span></button>)}
+      {!modelOptions.length && <p className="studio-error" role="status">暂无可用模型</p>}
     </div></Dialog>}
-    {location.view === 'settings' && <Dialog title="生成设置" anchor={sizeTrigger.current} onClose={closeDialog}><div className="composer-size-options">
-      <fieldset><legend>图片比例</legend><div className="ratio-options">{ratioOptions.map(option => <button key={option.value} aria-pressed={draft.aspectRatio === option.value} onClick={() => patchDraft({ aspectRatio: option.value })}>{option.value === 'auto' ? <Scan size={20} /> : <span className="ratio-symbol" style={{ aspectRatio: option.value.replace(':', '/'), width: option.value.split(':').map(Number)[0] >= option.value.split(':').map(Number)[1] ? 23 : undefined, height: option.value.split(':').map(Number)[0] < option.value.split(':').map(Number)[1] ? 23 : undefined }} />}<span>{option.value === 'auto' ? '智能' : option.value}</span></button>)}</div></fieldset>
-      <fieldset><legend>清晰度</legend><div className="quality-options">{qualityOptions.map(option => <button key={option.value} aria-pressed={draft.quality === option.value} onClick={() => patchDraft({ quality: option.value as StudioDraft['quality'] })}>{option.label}</button>)}</div></fieldset>
-      <div className="size-options-footer"><span className="quote-label">{quoteLabel}</span><button className="studio-primary" onClick={closeDialog}>完成</button></div>
-    </div></Dialog>}
+    {location.view === 'settings' && <Dialog title="生成设置" anchor={sizeTrigger.current} popoverWidth={560} className="generation-settings" hideHeading onClose={closeDialog}>
+      <GenerationSettings value={draft} model={selectedModel} onChange={patch => patchDraft({ ...patch, ...(patch.width && selectedModel ? { provider: selectedModel.provider, model: selectedModel.model } : {}) })} onClose={closeDialog} quoteLabel={quoteLabel} />
+    </Dialog>}
     {location.view === 'conversations' && <Dialog title="对话历史" drawer onClose={closeDialog}><Conversations onDeleted={rootJobId => { if (location.job === rootJobId) navigate({ job: null, view: null }); }} onOpen={async id => {
       if (draft.prompt.trim() && !await notices.confirm({ title: '切换对话？', message: '当前未发送的草稿将被替换。', confirmText: '切换' })) return;
       try {

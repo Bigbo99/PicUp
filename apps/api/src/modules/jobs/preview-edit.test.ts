@@ -2,7 +2,8 @@ import 'reflect-metadata';
 import assert from 'node:assert/strict';
 import { it } from 'node:test';
 import { AiConfigService } from '../../common/ai-config/ai-config.service';
-import { preparePreview, previewInstructions, publicJob } from './preview-edit';
+import { preparePreview, publicJob } from './preview-edit';
+import { buildFinalPrompt } from './prompt-builder';
 import { JobsService } from './jobs.service';
 import { StorageService } from '../../common/storage.service';
 import { PrismaService } from '../../common/database/prisma.service';
@@ -36,16 +37,16 @@ it('separates user instructions from system guidance and position comments', () 
   const input = preparePreview({ ...base, previewOperation: 'resize', aspectRatio: '16:9', guideFileId: 'guide', editComments: [{ x: 40, y: 50, text: '白色文字' }] });
   assert.equal(input.prompt, '改成绿色');
   assert.equal(input.model, 'auto');
-  const final = previewInstructions(input);
-  assert.match(final, /16:9/); assert.match(final, /第二张仅为标记指引/); assert.match(final, /40.0%/);
+  const final = buildFinalPrompt({ input, prompt: input.prompt });
+  assert.match(final, /16:9/); assert.match(final, /图片 2 仅为标记指引/); assert.match(final, /40.0%/);
   assert.equal(preparePreview({ ...base, prompt: '', previewOperation: 'background' }).prompt, '去除背景');
 });
 it('constrains removal to its mask and distinguishes transparent and opaque backgrounds', () => {
-  const final = previewInstructions({ ...base, previewOperation: 'remove', maskFileId: 'mask', background: 'transparent' });
+  const final = buildFinalPrompt({ input: { ...base, previewOperation: 'remove', maskFileId: 'mask', background: 'transparent' }, prompt: base.prompt });
   assert.match(final, /alpha=0/);
   assert.match(final, /选区外完全不变/);
-  assert.match(final, /不透明的白底仍是白底/);
-  assert.match(final, /background=transparent/);
+  assert.match(final, /不透明白底仍是白底/);
+  assert.match(final, /保留真实透明度/);
   assert.match(final, /保持原画布尺寸/);
 });
 it('removes all internal assets, instructions and diagnostic echoes from user responses', () => {
@@ -79,7 +80,7 @@ it('requires current quote confirmation, persists admin evidence and hides it fr
     const result = await jobs.create(input, owner);
     assert.equal((await jobs.create(input, owner)).jobId, result.jobId);
     const saved = (await storage.getJob(result.jobId!, user.id))!;
-    assert.equal(saved.prompt, '改成绿色'); assert.match(saved.finalPrompt, /第二张仅为标记指引/);
+    assert.equal(saved.prompt, '改成绿色'); assert.match(saved.finalPrompt, /图片 2 仅为标记指引/);
     assert.equal(saved.guideFileId, guide.id); assert.equal(saved.confirmedCredits, 4);
     assert.equal(saved.inputFiles.length, 2); assert.equal(publicJob(saved).inputFiles.length, 0);
     assert.equal((await db.user.findUniqueOrThrow({ where: { id: user.id } })).creditBalance, 16);

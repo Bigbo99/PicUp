@@ -2,6 +2,7 @@ import 'reflect-metadata';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { it, type TestContext } from 'node:test';
+import { FormData } from 'undici';
 import type { ImageJobRecord } from '@picup/shared';
 import { AiConfigService } from '../../common/ai-config/ai-config.service';
 import type { AiProviderConfig } from '../../common/ai-config/ai-config.types';
@@ -29,7 +30,8 @@ function setup(t: TestContext) {
   const ai = new AiConfigService();
   ai.getConfig = () => ({ version: 1, mockEnabled: false, providers: [primary, backup],
     routing: { default: { provider: primary.id, model: 'image' }, professional: { provider: primary.id, model: 'image' } } });
-  const objects = { save: async (_kind: string, name: string) => `/outputs/${name}`, deleteByUrl: async () => {} };
+  const objects = { save: async (_kind: string, name: string) => `/outputs/${name}`, deleteByUrl: async () => {},
+    readByUrl: async () => Buffer.from('image'), filenameFromUrl: () => 'reference.png' };
   const provider = new TokenRunProvider(objects as never, ai);
   const records = new Map<string, ImageJobRecord>();
   const held = new Map<string, ProviderSlotLease[]>();
@@ -162,4 +164,26 @@ it('refuses uncoordinated direct failover without a worker execution context', a
     images: [], prompt: 'mock', mode: 'generate', template: 'freeform', automaticModelSelection: false };
   await assert.rejects(h.provider.generate(input), /任务执行上下文/);
   assert.equal(requests, 1);
+});
+
+it('sends exact custom sizes in both generation JSON and image-edit multipart requests', async t => {
+  const h = setup(t);
+  for (const config of [h.primary, h.backup]) {
+    config.models[0].model = 'gpt-image-2.5-sunburst';
+    config.models[0].supportedQualities = ['1K', '2K', '4K'];
+  }
+  const bodies: Array<string | FormData> = [];
+  t.mock.method(globalThis, 'fetch', async (_url: string, init: RequestInit) => {
+    bodies.push(init.body as string | FormData);
+    return imageResponse();
+  });
+  const input: ProviderImageInput = { jobId: 'custom', provider: 'primary', model: 'gpt-image-2.5-sunburst', quality: '2K',
+    width: 1600, height: 1024, aspectRatio: '25:16', images: [], prompt: 'mock', mode: 'generate', template: 'freeform', automaticModelSelection: false };
+  await h.provider.generate(input);
+  assert.equal(JSON.parse(bodies[0] as string).size, '1600x1024');
+  await h.provider.generate({ ...input, mode: 'edit', images: [{ id: 'reference', url: 'reference.png', mimeType: 'image/png', size: 5, createdAt: '' }] });
+  assert.ok(bodies[1] instanceof FormData);
+  assert.equal((bodies[1] as FormData).get('size'), '1600x1024');
+  await assert.rejects(h.provider.generate({ ...input, width: 1000 }));
+  assert.equal(bodies.length, 2);
 });

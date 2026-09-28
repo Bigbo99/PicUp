@@ -14,6 +14,8 @@
     "start:worker": "node dist/workers/image-worker.js",
     "smtp:test": "tsx src/tools/test-smtp.ts",
     "admin:promote": "tsx src/tools/promote-admin.ts",
+    "guests:prune": "tsx src/tools/prune-guests.ts",
+    "models:preview": "tsx src/tools/preview-models.ts",
     "db:generate": "prisma generate --schema prisma/schema.prisma",
     "db:migrate": "prisma migrate dev --schema prisma/schema.prisma",
     "db:deploy": "prisma migrate deploy --schema prisma/schema.prisma",

@@ -1,5 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { tokenRunSizeFor } from '@picup/shared';
+import { customImageSize, supportsCustomImageSize, tokenRunSizeFor } from '@picup/shared';
 import { Agent, FormData, ProxyAgent, type Dispatcher } from 'undici';
 import { ObjectStorageService } from '../../common/object-storage.service';
 import { AiConfigService } from '../../common/ai-config/ai-config.service';
@@ -57,8 +57,12 @@ export class TokenRunProvider implements ImageProvider {
     const provider = this.aiConfig.getProvider(providerId, includeDisabled);
     if (provider.type !== 'openai-images' && provider.type !== 'openai-compatible') throw new Error(`Provider ${provider.id} 不是 OpenAI 兼容类型`);
     const modelConfig = this.aiConfig.getModel(provider.id, input.model, includeDisabled).model;
+    if (input.width !== undefined || input.height !== undefined) {
+      customImageSize(input.width!, input.height!);
+      if (!supportsCustomImageSize(provider.type, modelConfig.model)) throw new Error('渠道不支持自定义像素尺寸');
+    }
     if (!modelConfig.supportedQualities.includes(input.quality)
-      || !modelConfig.supportedRatios.includes(input.aspectRatio)
+      || (input.width === undefined && !modelConfig.supportedRatios.includes(input.aspectRatio))
       || input.images.length > modelConfig.maxInputImages) {
       throw new Error('渠道不支持当前尺寸、比例或参考图数量');
     }
@@ -200,6 +204,10 @@ export class TokenRunProvider implements ImageProvider {
   }
 
   private sizeFor(input: ProviderImageInput, _provider?: AiProviderConfig) {
+    if (input.width !== undefined || input.height !== undefined) {
+      const size = customImageSize(input.width!, input.height!);
+      return `${size.width}x${size.height}`;
+    }
     // Keep the relay's explicit size mapping while preserving auto-ratio requests.
     return tokenRunSizeFor(input.aspectRatio, input.quality);
   }

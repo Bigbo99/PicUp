@@ -75,6 +75,18 @@ export class CreateImageJobDto {
   @IsIn(['512', '1K', '2K', '4K'])
   quality!: ImageQuality;
 
+  @IsOptional() @IsInt() @Min(16) @Max(3840)
+  width?: number;
+
+  @IsOptional() @IsInt() @Min(16) @Max(3840)
+  height?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(4)
+  count?: number;
+
   @IsOptional()
   @IsString()
   @Length(16, 128)

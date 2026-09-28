@@ -3,8 +3,8 @@
 import { useEffect, useRef, type ReactNode } from 'react';
 import { X } from 'lucide-react';
 
-export function Dialog({ title, children, onClose, drawer = false, fullscreen = false, anchor, hideHeading = false, inline = false }: {
-  title: string; children: ReactNode; onClose: () => void; drawer?: boolean; fullscreen?: boolean; anchor?: HTMLElement | null; hideHeading?: boolean; inline?: boolean;
+export function Dialog({ title, children, onClose, drawer = false, fullscreen = false, anchor, hideHeading = false, inline = false, popoverWidth = 440, className = '' }: {
+  title: string; children: ReactNode; onClose: () => void; drawer?: boolean; fullscreen?: boolean; anchor?: HTMLElement | null; hideHeading?: boolean; inline?: boolean; popoverWidth?: number; className?: string;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
   const startedOutside = useRef(false);
@@ -26,9 +26,10 @@ export function Dialog({ title, children, onClose, drawer = false, fullscreen = 
       }
       if (!anchor) return;
       const bounds = anchor.getBoundingClientRect();
-      const width = Math.min(440, window.innerWidth - 32);
+      const width = Math.min(popoverWidth, window.innerWidth - 32);
       const bottom = Math.min(window.innerHeight - 112, Math.max(16, window.innerHeight - bounds.top + 8));
       dialog.style.setProperty('--popover-left', `${Math.max(16, Math.min(bounds.left, window.innerWidth - width - 16))}px`);
+      dialog.style.setProperty('--popover-width', `${width}px`);
       dialog.style.setProperty('--popover-bottom', `${bottom}px`);
       dialog.style.setProperty('--popover-height', `${window.innerHeight - bottom - 16}px`);
     };
@@ -51,9 +52,9 @@ export function Dialog({ title, children, onClose, drawer = false, fullscreen = 
         if (previous?.isConnected) previous.focus({ preventScroll: true });
       }
     };
-  }, [anchor, fullscreen, inline]);
+  }, [anchor, fullscreen, inline, popoverWidth]);
   return <dialog ref={ref} aria-label={title} role={inline ? 'region' : undefined}
-    className={`studio-dialog ${inline ? 'studio-inline-page studio-navigation-page' : ''} ${!fullscreen && !hideHeading ? 'has-heading' : ''} ${drawer ? 'studio-drawer' : ''} ${fullscreen ? 'studio-lightbox' : ''} ${anchor ? 'composer-popover' : ''}`}
+    className={`studio-dialog ${inline ? 'studio-inline-page studio-navigation-page' : ''} ${!fullscreen && !hideHeading ? 'has-heading' : ''} ${drawer ? 'studio-drawer' : ''} ${fullscreen ? 'studio-lightbox' : ''} ${anchor ? 'composer-popover' : ''} ${className}`}
     onPointerDown={event => { startedOutside.current = outside(event); }}
     onClick={event => { if (startedOutside.current && outside(event)) onClose(); startedOutside.current = false; }}
     onCancel={event => { event.preventDefault(); event.stopPropagation(); onClose(); }}>

@@ -5,12 +5,13 @@ import type { ImageJobCreateRequest, ImageQuality, UploadedFileRecord, PromptPar
 import { displayFile } from '@/lib/api';
 
 export type StudioDraft = {
-  prompt: string; provider: string; model: string; aspectRatio: string; quality: ImageQuality;
+  prompt: string; provider: string; model: string; aspectRatio: string; quality: ImageQuality; count: number;
   promptParts?: PromptPart[];
+  width?: number; height?: number;
   files: UploadedFileRecord[]; parentJobId?: string; idempotencyKey?: string; awaitingJobId?: string;
   pendingPayment?: { orderId: string; input: ImageJobCreateRequest };
 };
-export const emptyDraft: StudioDraft = { prompt: '', promptParts: undefined, provider: 'auto', model: 'auto', aspectRatio: 'auto', quality: '1K', files: [] };
+export const emptyDraft: StudioDraft = { prompt: '', promptParts: undefined, provider: 'auto', model: 'auto', aspectRatio: 'auto', quality: '1K', count: 1, width: undefined, height: undefined, files: [] };
 
 export function useStudioDraft(userId?: string) {
   const [draft, update] = useReducer((state: StudioDraft, patch: Partial<StudioDraft>) => ({ ...state, ...patch }), emptyDraft);
@@ -20,7 +21,7 @@ export function useStudioDraft(userId?: string) {
     if (!key) return;
     try {
       const saved = JSON.parse(sessionStorage.getItem(key) ?? 'null') as StudioDraft | null;
-      update(saved && typeof saved.prompt === 'string' && Array.isArray(saved.files) ? { ...emptyDraft, ...saved, files: saved.files.map(displayFile) } : emptyDraft);
+      update(saved && typeof saved.prompt === 'string' && Array.isArray(saved.files) ? { ...emptyDraft, ...saved, count: Number.isInteger(saved.count) && saved.count >= 1 && saved.count <= 4 ? saved.count : 1, files: saved.files.map(displayFile) } : emptyDraft);
     } catch { update(emptyDraft); }
     setLoadedKey(key);
   }, [key]);

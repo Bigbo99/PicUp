@@ -71,6 +71,10 @@ export interface ImageJobCreateRequest {
   imageIds: string[];
   aspectRatio: string;
   quality: ImageQuality;
+  width?: number;
+  height?: number;
+  /** Number of output images requested; omitted by older clients for one image. */
+  count?: number;
   paymentMode?: 'credits' | 'single' | 'free';
   paymentOrderId?: string | null;
   idempotencyKey?: string;
@@ -95,6 +99,7 @@ export interface JobQuote {
 }
 
 export interface ImageJobRecord extends ImageJobCreateRequest {
+  outputProgress?: Array<{ status: 'queued' | 'running' | 'succeeded' | 'failed'; outputIndex?: number }>;
   providerRoute?: Array<{ provider: string; model: string; reason: 'selected' | 'fallback'; at: string }>;
   systemFileIds?: string[];
   maskFile?: UploadedFileRecord;
@@ -112,6 +117,7 @@ export interface ImageJobRecord extends ImageJobCreateRequest {
     message: string;
   };
   creditsReserved: number;
+  creditsRefunded?: number;
   paymentMode?: 'credits' | 'single' | 'free';
   paymentOrderId?: string | null;
   idempotencyKey?: string;
@@ -490,6 +496,25 @@ const TOKENRUN_MIN_PIXELS = 655_360;
 const TOKENRUN_MAX_PIXELS = 8_294_400;
 const TOKENRUN_MAX_EDGE = 3840;
 
+export function supportsCustomImageSize(providerType?: string, model = '') {
+  return ['openai-images', 'openai-compatible'].includes(providerType ?? '')
+    && (/^gpt-image-2(?:$|[.-])/i.test(model) || ['flare', 'sunburst'].includes(model.toLowerCase()));
+}
+
+export function customImageSize(width: number, height: number) {
+  if (!Number.isInteger(width) || !Number.isInteger(height) || width < 16 || height < 16
+    || width > TOKENRUN_MAX_EDGE || height > TOKENRUN_MAX_EDGE || width % 16 || height % 16) {
+    throw new Error('宽高需为 16 的整数倍，且不超过 3840 像素');
+  }
+  if (Math.max(width, height) / Math.min(width, height) > 3) throw new Error('最长边不能超过最短边的 3 倍');
+  if (width * height < TOKENRUN_MIN_PIXELS || width * height > TOKENRUN_MAX_PIXELS) {
+    throw new Error('总像素需在 655,360 至 8,294,400 之间');
+  }
+  const divisor = greatestCommonDivisor(width, height);
+  const quality: ImageQuality = Math.max(width, height) <= 1536 ? '1K' : Math.max(width, height) <= 2048 ? '2K' : '4K';
+  return { width, height, aspectRatio: `${width / divisor}:${height / divisor}`, quality };
+}
+
 export function tokenRunSizeFor(aspectRatio: string, quality: ImageQuality) {
   if (aspectRatio === 'auto') return 'auto';
 
@@ -545,16 +570,3 @@ export const resolutionOptions: Array<{ label: string; value: ImageQuality; desc
 
 export * from './model-catalog';
 export * from './image-intent';
-
-export const templateOptions: Array<{ label: string; value: ImageTemplate; description: string }> = [
-  { label: '自动识别', value: 'auto', description: '根据编辑指令自动判断处理方式' },
-  { label: '改字', value: 'replace_text', description: '修改图片内文字并保持版式' },
-  { label: '去除物体', value: 'remove_object', description: '移除杂物或不需要的元素' },
-  { label: '添加元素', value: 'add_object', description: '加入商品、装饰或人物元素' },
-  { label: '换背景', value: 'replace_background', description: '替换场景、颜色或环境' },
-  { label: '商品图', value: 'product', description: '优化主图、白底图和电商图' },
-  { label: '风格化', value: 'style', description: '转换为写实、插画或卡通风格' },
-  { label: '海报文字', value: 'poster_text', description: '重排标题、卖点和海报文案' },
-  { label: '清晰增强', value: 'enhance', description: '提升画质、细节和质感' },
-  { label: '自由编辑', value: 'freeform', description: '按自然语言自由处理' }
-];
