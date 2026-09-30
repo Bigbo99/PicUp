@@ -6,6 +6,7 @@ import { AuthGuard } from '../auth/auth.guard';
 import { AuthService } from '../auth/auth.service';
 import type { AuthenticatedRequest } from '../auth/auth.types';
 import { publicJob } from './preview-edit';
+import sharp from 'sharp';
 
 @Controller('api/image/jobs')
 @UseGuards(AuthGuard)
@@ -42,6 +43,12 @@ export class JobsController {
     return publicJob(await this.jobs.get(id, req.authUser));
   }
 
+  @Get(':id/output-hashes')
+  async outputHashes(@Param('id') id: string, @Req() req: AuthenticatedRequest) {
+    const user = await this.auth.requireUser(req);
+    return this.jobs.outputHashes(id, user);
+  }
+
   @Get(':id/download/:index')
   async download(
     @Param('id') id: string,
@@ -57,15 +64,17 @@ export class JobsController {
   }
 
   @Get(':id/preview/:index')
-  async preview(@Param('id') id: string, @Param('index') index: string, @Req() req: AuthenticatedRequest, @Res() res: Response) {
+  async preview(@Param('id') id: string, @Param('index') index: string, @Query('variant') variant: string | undefined, @Req() req: AuthenticatedRequest, @Res() res: Response) {
     const user = await this.auth.requireUser(req);
     const file = await this.jobs.downloadOutput(id, Number(index), user);
-    res.setHeader('Content-Type', file.mimeType);
+    const thumbnail = variant === 'thumbnail';
+    const body = thumbnail ? await sharp(file.body, { limitInputPixels: 32_000_000 }).resize({ width: 360, height: 360, fit: 'inside', withoutEnlargement: true }).webp({ quality: 72 }).toBuffer() : file.body;
+    res.setHeader('Content-Type', thumbnail ? 'image/webp' : file.mimeType);
     // Output objects are immutable; keep them in the user's browser cache while
     // the ownership check above still protects every request.
     res.setHeader('Cache-Control', 'private, max-age=86400, immutable');
     res.setHeader('X-Content-Type-Options', 'nosniff');
-    res.send(file.body);
+    res.send(body);
   }
 
   @Delete(':id')

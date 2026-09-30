@@ -1,5 +1,7 @@
 'use client';
 
+import { thumbnailUrl } from '@/lib/thumbnail';
+
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { ArrowDown, Pencil, Wand2, X, ArrowUp } from 'lucide-react';
@@ -96,7 +98,7 @@ export function Conversation({ job, loading, error, children, onUpload: _onUploa
   const conversationJobs = [...(parents.data ?? []), ...(job ? [job] : [])];
   const conversationImages = conversationJobs.flatMap(message => [
     ...message.inputFiles.map((file, index) => ({
-      url: file.url,
+      url: file.url, thumbnailUrl: thumbnailUrl(file),
       label: `参考图 ${index + 1}`,
       alt: `${message.prompt || '本轮任务'}的参考图 ${index + 1}`,
       meta: `${message.id}:input:${file.id}`
@@ -104,7 +106,7 @@ export function Conversation({ job, loading, error, children, onUpload: _onUploa
     ...message.outputImages.map((output, index) => {
       const slotIndex = message.outputProgress?.findIndex(slot => slot.outputIndex === index) ?? -1;
       return {
-        url: output.url,
+        url: output.url, thumbnailUrl: thumbnailUrl(output),
         label: `结果 ${slotIndex >= 0 ? slotIndex + 1 : index + 1}`,
         alt: message.prompt || `结果 ${index + 1}`,
         meta: `${message.id}:output:${index}`,
@@ -133,7 +135,7 @@ export function Conversation({ job, loading, error, children, onUpload: _onUploa
         <div className="chat-prior-images">{message.outputImages.map((output, index) => {
           const meta = `${message.id}:output:${index}`;
           const globalIndex = conversationImages.findIndex(image => image.meta === meta);
-          return <div className="chat-prior-image" key={meta}><button onClick={() => onOpen(conversationImages, globalIndex >= 0 ? globalIndex : 0)} title="预览此版本"><img src={output.url} alt={message.prompt} /></button><button type="button" className="chat-prior-image-edit" onClick={() => onContinue(message, index)} disabled={continuing} aria-label={`继续编辑结果 ${index + 1}`} title="继续编辑"><Pencil size={14} /></button></div>;
+          return <div className="chat-prior-image" key={meta}><button onClick={() => onOpen(conversationImages, globalIndex >= 0 ? globalIndex : 0)} title="预览此版本"><img src={thumbnailUrl(output)} alt={message.prompt} /></button><button type="button" className="chat-prior-image-edit" onClick={() => onContinue(message, index)} disabled={continuing} aria-label={`继续编辑结果 ${index + 1}`} title="继续编辑"><Pencil size={14} /></button></div>;
         })}</div>
         <JobResultDetails job={message} />
         {message.textOutputs.length > 0 && <div className="chat-text-outputs">{message.textOutputs.map((text, index) => <p key={`${message.id}-text-${index}`}>{text}</p>)}</div>}
@@ -170,7 +172,7 @@ function InlineMessageEditor({ job, onCancel, onSubmit }: { job: ImageJobRecord;
     catch (cause) { setError(cause instanceof Error ? cause.message : '发送失败，请重试'); }
     finally { sending.current = false; setPending(false); }
   }}>
-    <div className="chat-inline-editor-files">{job.inputFiles.map((file, index) => <img key={file.id} src={file.url} alt={`参考图 ${index + 1}`} />)}</div>
+    <div className="chat-inline-editor-files">{job.inputFiles.map((file, index) => <img key={file.id} src={thumbnailUrl(file)} alt={`参考图 ${index + 1}`} />)}</div>
     <textarea ref={textarea} disabled={pending} value={value} onChange={event => setValue(event.target.value)} aria-label="编辑消息" rows={3} maxLength={4000} />
     {error && <p className="studio-error" role="alert">{error}</p>}
     <div className="chat-inline-editor-actions"><button type="button" className="chat-inline-cancel" disabled={pending} onClick={onCancel}><X size={15} />取消</button><button type="submit" className="chat-inline-send" disabled={pending || !value.trim()}><ArrowUp size={16} />{pending ? '发送中…' : '发送'}</button></div>

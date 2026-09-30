@@ -50,9 +50,9 @@ export const authorizeWechatProfile = () => request<{ authorization_url: string;
 export const syncWechatProfile = () => request<{ status: string }>('/api/auth/wechat/profile/sync', { method: 'POST' });
 
 export type StudioPreferences = { theme: 'system' | 'light' | 'dark'; quality: '1K' | '2K' | '4K'; aspectRatio: string; provider: string; model: string };
-export const displayFile = (file: UploadedFileRecord): UploadedFileRecord => ({ ...file, url: `/api/files/${encodeURIComponent(file.id)}/content` });
-const displayJob = (job: ImageJobRecord): ImageJobRecord => ({ ...job, inputFiles: job.inputFiles.map(displayFile), outputImages: job.outputImages.map((image, index) => ({ ...image, url: `/api/image/jobs/${encodeURIComponent(job.id)}/preview/${index}` })) });
-export type StudioAsset = { key: string; fileId: string | null; jobId: string | null; subjectId?: string; index: number; url: string; title: string; kind: string; createdAt: string };
+export const displayFile = (file: UploadedFileRecord): UploadedFileRecord => { const url = `/api/files/${encodeURIComponent(file.id)}/content`; return { ...file, url, thumbnailUrl: `${url}?variant=thumbnail` }; };
+const displayJob = (job: ImageJobRecord): ImageJobRecord => ({ ...job, inputFiles: job.inputFiles.map(displayFile), outputImages: job.outputImages.map((image, index) => { const url = `/api/image/jobs/${encodeURIComponent(job.id)}/preview/${index}`; return { ...image, url, thumbnailUrl: `${url}?variant=thumbnail` }; }) });
+export type StudioAsset = { key: string; fileId: string | null; jobId: string | null; subjectId?: string; index: number; url: string; thumbnailUrl?: string; title: string; kind: string; createdAt: string };
 export const listStudioSubjects = async (q = '', offset = 0) => {
   const result = await request<{ items: StudioSubject[]; next: number | null }>(`/api/studio/subjects?${new URLSearchParams({ q, offset: String(offset) })}`);
   return { ...result, items: result.items.map(subject => ({ ...subject, file: displayFile(subject.file) })) };
@@ -66,7 +66,7 @@ export const getStudioPreferences = () => request<Partial<StudioPreferences>>('/
 export const saveStudioPreferences = (input: Partial<StudioPreferences>) => request<Partial<StudioPreferences>>('/api/studio/preferences', { method: 'PATCH', body: JSON.stringify(input) });
 export const listStudioAssets = async (q: string, kind: string, offset: number) => {
   const result = await request<{ items: StudioAsset[]; next: number | null }>(`/api/studio/assets?${new URLSearchParams({ q, kind, offset: String(offset) })}`);
-  return { ...result, items: result.items.map(asset => ({ ...asset, url: asset.fileId ? `/api/files/${encodeURIComponent(asset.fileId)}/content` : `/api/image/jobs/${encodeURIComponent(asset.jobId!)}/preview/${asset.index}` })) };
+  return { ...result, items: result.items.map(asset => { const url = asset.fileId ? `/api/files/${encodeURIComponent(asset.fileId)}/content` : `/api/image/jobs/${encodeURIComponent(asset.jobId!)}/preview/${asset.index}`; return { ...asset, url, thumbnailUrl: `${url}?variant=thumbnail` }; }) };
 };
 export const listStudioConversations = (q: string, offset: number, archived = false) => request<{ items: StudioConversation[]; next: number | null }>(`/api/studio/conversations?${new URLSearchParams({ q, offset: String(offset), archived: String(archived) })}`);
 export const updateStudioConversation = (rootJobId: string, action: 'archive' | 'restore') => request<{ ok: boolean; rootJobId: string; archived: boolean }>(`/api/studio/conversations/${encodeURIComponent(rootJobId)}`, { method: 'PATCH', body: JSON.stringify({ action }) });
@@ -131,6 +131,10 @@ export async function createImageJob(input: ImageJobCreateRequest) {
 
 export async function getImageJob(id: string) {
   return request<ImageJobRecord>(`/api/image/jobs/${id}`, undefined, 30_000).then(displayJob);
+}
+
+export function getOutputHashes(id: string, signal?: AbortSignal) {
+  return request<string[]>(`/api/image/jobs/${encodeURIComponent(id)}/output-hashes`, { signal });
 }
 
 export async function listImageJobs(options: { cursor?: string; q?: string; status?: string } = {}) {

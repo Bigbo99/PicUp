@@ -1,5 +1,7 @@
 'use client';
 
+import { thumbnailUrl } from '@/lib/thumbnail';
+
 import Link from 'next/link';
 import dynamic from 'next/dynamic';
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
@@ -378,7 +380,7 @@ export function Studio() {
           <div className="composer-writing">
           <div className="composer-reference-stack" data-filled={draft.files.length > 0}>
             {draft.files.length > 0 && <button className="reference-stack-preview" title="管理参考图" aria-label={`管理参考图，共 ${draft.files.length} 张`} aria-haspopup="dialog" onClick={() => navigate({ view: 'references' })}>
-              {draft.files.slice(0, 3).map((file, index) => <img key={file.id} src={file.url} alt="" style={{ transform: `translate(${index * 4}px, ${index * -3}px) rotate(${(index - 1) * 8}deg)`, zIndex: index }} />)}
+              {draft.files.slice(0, 3).map((file, index) => <img key={file.id} src={thumbnailUrl(file)} alt="" style={{ transform: `translate(${index * 4}px, ${index * -3}px) rotate(${(index - 1) * 8}deg)`, zIndex: index }} />)}
               <span className="reference-stack-count">{draft.files.length}</span>
             </button>}
             <button className="composer-add-image" title={draft.files.length >= limit ? `最多添加 ${limit} 张参考图` : '添加参考图'} aria-label="添加参考图" disabled={upload.isPending || draft.files.length >= limit} onClick={() => input.current?.click()}>{upload.isPending ? <Loader2 size={20} className="animate-spin" /> : <Plus size={22} strokeWidth={1.5} />}</button>
@@ -389,7 +391,7 @@ export function Studio() {
             onPreview={(fileId, label) => {
               const index = draft.files.findIndex(file => file.id === fileId);
               if (index < 0) { setError('引用图片已不可用，请重新添加'); return; }
-              setLightbox({ images: draft.files.map((file, i) => ({ url: file.url, label: file.id === fileId ? label : `参考图 ${i + 1}`, alt: `参考图 ${i + 1}` })), index, mode: 'references' });
+              setLightbox({ images: draft.files.map((file, i) => ({ url: file.url, thumbnailUrl: thumbnailUrl(file), label: file.id === fileId ? label : `参考图 ${i + 1}`, alt: `参考图 ${i + 1}` })), index, mode: 'references' });
             }}
             onBlur={() => setSkillsDismissed(true)} canAdd={file => { if (!draft.files.some(item => item.id === file.id) && draft.files.length >= limit) { setError(`当前模型最多支持 ${limit} 张参考图`); return false; } return true; }}
             onChange={(text, parts, file) => { patchDraft({ prompt: text, promptParts: parts.some(part => part.type === 'image') ? parts : undefined, ...(file && !draft.files.some(item => item.id === file.id) ? { files: [...draft.files, file] } : {}) }); setSkillIndex(0); setSkillsDismissed(false); }} onKeyDown={event => {
@@ -423,8 +425,8 @@ export function Studio() {
     {location.view === 'references' && <Dialog title="参考图片" onClose={closeDialog}><div className="reference-manager">
       {error && <p className="studio-error" role="alert">{error}</p>}
       <div className="reference-tray">{draft.files.map((file, index) => <div key={file.id} className={index >= limit ? 'reference-over-limit' : undefined}>
-        <button className="reference-preview" aria-label={`预览参考图 ${index + 1}${index >= limit ? '，超出当前模型上限' : ''}`} onClick={() => setLightbox({ images: draft.files.map((item, i) => ({ url: item.url, label: `参考图 ${i + 1}`, alt: `参考图 ${i + 1}` })), index, mode: 'references' })}><img src={file.url} alt={`参考图 ${index + 1}`} /></button>
-        <button className="reference-edit" aria-label={`编辑参考图 ${index + 1}`} title="编辑图片" onClick={() => setLightbox({ images: draft.files.map((item, i) => ({ url: item.url, label: `参考图 ${i + 1}`, alt: `参考图 ${i + 1}` })), index, mode: 'references' })}><Pencil size={16} /></button>
+        <button className="reference-preview" aria-label={`预览参考图 ${index + 1}${index >= limit ? '，超出当前模型上限' : ''}`} onClick={() => setLightbox({ images: draft.files.map((item, i) => ({ url: item.url, thumbnailUrl: thumbnailUrl(item), label: `参考图 ${i + 1}`, alt: `参考图 ${i + 1}` })), index, mode: 'references' })}><img src={thumbnailUrl(file)} alt={`参考图 ${index + 1}`} /></button>
+        <button className="reference-edit" aria-label={`编辑参考图 ${index + 1}`} title="编辑图片" onClick={() => setLightbox({ images: draft.files.map((item, i) => ({ url: item.url, thumbnailUrl: thumbnailUrl(item), label: `参考图 ${i + 1}`, alt: `参考图 ${i + 1}` })), index, mode: 'references' })}><Pencil size={16} /></button>
         <button className="reference-remove" aria-label={`移除参考图 ${index + 1}`} title="移除参考图" onClick={() => { const parts = draft.promptParts?.filter(part => part.type === 'text' || part.fileId !== file.id); patchDraft({ files: draft.files.filter(item => item.id !== file.id), parentJobId: undefined, ...(parts ? { prompt: promptPartsText(parts), promptParts: parts } : {}) }); }}><Trash2 size={16} /></button>
       </div>)}</div>
       {!draft.files.length && <p className="studio-empty">还没有参考图片</p>}
@@ -456,6 +458,7 @@ export function Studio() {
     {location.view === 'history' && <NavigationPage mobile={mobile} title="图库" onClose={closeDialog}><AssetLibrary mobilePage onPreview={(asset, collection) => {
       const images = collection.map(item => ({
         url: item.url,
+        thumbnailUrl: thumbnailUrl(item),
         label: item.title,
         alt: item.title,
         meta: item.key,
@@ -469,7 +472,7 @@ export function Studio() {
         patchDraft({ files: [file], parentJobId: asset.jobId });
         navigate({ job: asset.jobId, view: null });
       } else if (asset.fileId) {
-        patchDraft({ files: [{ id: asset.fileId, url: asset.url, mimeType: '', size: 0, createdAt: asset.createdAt }], parentJobId: activeParentJobId });
+        patchDraft({ files: [{ id: asset.fileId, url: asset.url, thumbnailUrl: thumbnailUrl(asset), mimeType: '', size: 0, createdAt: asset.createdAt }], parentJobId: activeParentJobId });
         // Return to creation while preserving the currently open conversation.
         navigate({ view: null });
       }

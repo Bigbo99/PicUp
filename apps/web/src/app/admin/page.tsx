@@ -643,7 +643,7 @@ function JobsTab() {
 }
 
 function JobRow({ job, onOpen }: { job: ImageJobRecord; onOpen: () => void }) {
-  const thumbnail = job.outputImages[0]?.url ?? job.inputFiles[0]?.url;
+  const thumbnail = job.outputImages[0]?.thumbnailUrl ?? job.inputFiles[0]?.thumbnailUrl ?? job.outputImages[0]?.url ?? job.inputFiles[0]?.url;
   const route = job.providerRoute ?? [];
   const routeLabel = route.length > 1 ? `回退：${route.map(item => labelFor(item.provider)).join(' → ')}` : (job.previewOperation ? '系统自动匹配' : labelFor(job.selectedProvider));
   return <tr><td><button className="admin-job-summary" onClick={onOpen}>{thumbnail ? <img src={thumbnail} alt="任务缩略图" /> : <FileImage size={24} />}<span><strong>{job.prompt || '图片编辑'}</strong><small>{job.id}</small></span></button></td><td><Badge value={job.status} /></td><td>{job.selectedModel}<small className="block text-slate-500">{routeLabel}</small></td><td>{job.paymentMode === 'credits' ? job.creditsReserved : 0}</td><td>{formatDate(job.createdAt)}</td><td><button className="admin-icon-button" aria-label={`查看任务 ${job.id}`} title="查看任务" onClick={onOpen}><ArrowRight size={18} /></button></td></tr>;
@@ -672,9 +672,9 @@ function JobDetailDialog({
     return () => element.close();
   }, []);
   const galleryImages = [
-    ...job.inputFiles.map((file, fileIndex) => ({ url: file.url, label: file.id === job.guideFileId ? '系统标记指引' : job.previewOperation ? '编辑原图' : `用户参考图 ${fileIndex + 1}`, meta: file.mimeType })),
+    ...job.inputFiles.map((file, fileIndex) => ({ url: file.url, thumbnailUrl: file.thumbnailUrl, label: file.id === job.guideFileId ? '系统标记指引' : job.previewOperation ? '编辑原图' : `用户参考图 ${fileIndex + 1}`, meta: file.mimeType })),
     ...(job.maskFile ? [{ url: job.maskFile.url, label: '系统蒙版', meta: job.maskFile.mimeType }] : []),
-    ...job.outputImages.map((image, imageIndex) => ({ url: image.url, label: `结果图 ${imageIndex + 1}`, meta: `结果 ${imageIndex + 1}` }))
+    ...job.outputImages.map((image, imageIndex) => ({ url: image.url, thumbnailUrl: image.thumbnailUrl, label: `结果图 ${imageIndex + 1}`, meta: `结果 ${imageIndex + 1}` }))
   ];
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
   const lightboxImage = lightboxIndex !== null ? galleryImages[lightboxIndex] : null;
@@ -760,7 +760,7 @@ function ImageGallery({
 }: {
   title: string;
   empty: string;
-  images: Array<{ url: string; label: string; meta?: string }>;
+  images: Array<{ url: string; thumbnailUrl?: string; label: string; meta?: string }>;
   onOpen: (index: number) => void;
 }) {
   return (
@@ -780,7 +780,7 @@ function ImageGallery({
               onClick={() => onOpen(imageIndex)}
               className="admin-image-tile group"
             >
-              <img src={image.url} alt={image.label} className="aspect-square w-full object-contain transition-transform group-hover:scale-105" />
+              <img src={image.thumbnailUrl ?? image.url} alt={image.label} className="aspect-square w-full object-contain transition-transform group-hover:scale-105" />
               <p className="border-t border-slate-200 px-2 py-1 text-xs font-bold text-slate-500">{image.label}</p>
             </button>
           ))}

@@ -1,5 +1,7 @@
 'use client';
 
+import { thumbnailUrl } from '@/lib/thumbnail';
+
 import { useEffect, useState } from 'react';
 import { Download, ImagePlus, Loader2, RefreshCw, CheckCircle2, AlertCircle, Pencil } from 'lucide-react';
 import type { ImageJobRecord, UploadedFileRecord } from '@picup/shared';
@@ -51,7 +53,7 @@ export function Canvas({ job, files, loading, error, onUpload, onPreview, onCont
   const working = isWorking(job?.status) || loading;
   useEffect(() => { setIndex(0); }, [job?.id]);
   const inputPreviews = inputs.map((file, i) => ({
-    url: file.url,
+    url: file.url, thumbnailUrl: thumbnailUrl(file),
     label: `参考图 ${i + 1}`,
     alt: `${job?.prompt || '本轮任务'}的参考图 ${i + 1}`,
     meta: `${job?.id ?? 'draft'}:input:${file.id}`
@@ -59,7 +61,7 @@ export function Canvas({ job, files, loading, error, onUpload, onPreview, onCont
   const outputPreviews = outputs.map((image, i) => {
     const slotIndex = job?.outputProgress?.findIndex(slot => slot.outputIndex === i) ?? -1;
     return {
-      url: image.url, label: `结果 ${slotIndex >= 0 ? slotIndex + 1 : i + 1}`, alt: job?.prompt || `结果 ${i + 1}`,
+      url: image.url, thumbnailUrl: thumbnailUrl(image), label: `结果 ${slotIndex >= 0 ? slotIndex + 1 : i + 1}`, alt: job?.prompt || `结果 ${i + 1}`,
       meta: `${job?.id}:output:${i}`,
       downloadUrl: `/api/image/jobs/${job!.id}/download/${i}`
     };
@@ -79,13 +81,13 @@ export function Canvas({ job, files, loading, error, onUpload, onPreview, onCont
       <div className="canvas-batch-grid" data-count={job.count}>
         {slots.map(({ output, outputIndex, status }, i) => <div key={`${job.id}-${i}`} className="canvas-batch-slot" data-status={status} aria-label={`第 ${i + 1} 张图片`} aria-busy={status === 'queued' || status === 'running'}>
           {output && outputIndex !== undefined ? <>
-            <button type="button" className="canvas-batch-preview" aria-label={`预览结果 ${i + 1}`} onClick={() => onPreview(previews, inputPreviews.length + outputIndex)}><img src={output.url} alt={`${job.prompt}，结果 ${i + 1}`} draggable={false} /></button>
+            <button type="button" className="canvas-batch-preview" aria-label={`预览结果 ${i + 1}`} onClick={() => onPreview(previews, inputPreviews.length + outputIndex)}><img src={thumbnailUrl(output)} alt={`${job.prompt}，结果 ${i + 1}`} draggable={false} /></button>
             <div className="canvas-batch-actions">
               <a className="studio-icon" href={`/api/image/jobs/${job.id}/download/${outputIndex}`} download aria-label={`下载结果 ${i + 1}`} title="下载图片"><Download size={16} /></a>
               <button type="button" className="studio-icon" aria-label={`继续编辑结果 ${i + 1}`} title={working ? '整批完成后继续编辑' : '继续编辑'} disabled={continuing || working} onClick={() => onContinue(outputIndex)}><Pencil size={16} /></button>
             </div>
           </> : <>
-            {job.inputFiles[0] && <img className="canvas-batch-reference" src={job.inputFiles[0].url} alt="" aria-hidden="true" />}
+            {job.inputFiles[0] && <img className="canvas-batch-reference" src={thumbnailUrl(job.inputFiles[0])} alt="" aria-hidden="true" />}
             <div className="canvas-batch-mask" role="status">
               {status === 'failed' ? <AlertCircle size={22} /> : <Loader2 size={22} className="animate-spin" />}
               <span>{status === 'failed' ? '生成失败' : status === 'queued' ? '排队中' : '生成中'}</span>
@@ -105,7 +107,7 @@ export function Canvas({ job, files, loading, error, onUpload, onPreview, onCont
     </div>}
     <div className="canvas-stage">
       {current ? <div className="canvas-image-space" onClick={() => previews.length && onPreview(previews, currentPreviewIndex)} role="button" tabIndex={0} onKeyDown={event => { if ((event.key === 'Enter' || event.key === ' ') && previews.length) onPreview(previews, currentPreviewIndex); }}>
-        <img src={current.url} alt={job?.prompt || '参考图'} draggable={false} />
+        <img src={thumbnailUrl(current)} alt={job?.prompt || '参考图'} draggable={false} />
         {result && <a className="canvas-download" href={`/api/image/jobs/${job!.id}/download/${index}`} download title="下载图片" aria-label="下载图片" onClick={event => event.stopPropagation()}><Download size={17} /></a>}
       </div> : <div className="canvas-empty">
         <button className="empty-upload" onClick={onUpload} aria-label="添加参考图"><ImagePlus size={36} strokeWidth={1.4} /></button>
@@ -122,7 +124,7 @@ export function Canvas({ job, files, loading, error, onUpload, onPreview, onCont
     {outputs.length > 1 && <div className="canvas-thumbnails">
       {outputs.map((image, i) => <div className="canvas-thumbnail" key={`${image.url}-${i}`}>
         <button className={index === i ? 'selected' : ''} aria-label={`选择结果 ${i + 1}`} aria-pressed={index === i} onClick={() => setIndex(i)}>
-          <img src={image.url} alt="" loading="lazy" />
+          <img src={thumbnailUrl(image)} alt="" loading="lazy" />
         </button>
         <button className="canvas-thumbnail-edit" type="button" aria-label={`继续编辑结果 ${i + 1}`} title="继续编辑" onClick={() => onContinue(i)} disabled={continuing}><Pencil size={14} /></button>
       </div>)}

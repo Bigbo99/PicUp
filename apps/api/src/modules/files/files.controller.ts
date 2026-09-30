@@ -5,6 +5,7 @@ import type { Response } from 'express';
 import { FilesService, allowedUploadMimeTypes, maxUploadFileSize } from './files.service';
 import { AuthGuard } from '../auth/auth.guard';
 import type { AuthenticatedRequest } from '../auth/auth.types';
+import sharp from 'sharp';
 
 @Controller('api/files')
 @UseGuards(AuthGuard)
@@ -25,12 +26,14 @@ export class FilesController {
   }
 
   @Get(':id/content')
-  async content(@Param('id') id: string, @Req() req: AuthenticatedRequest, @Res() res: Response) {
+  async content(@Param('id') id: string, @Query('variant') variant: string | undefined, @Req() req: AuthenticatedRequest, @Res() res: Response) {
     const file = await this.files.readForUser(id, req.authUser);
-    res.setHeader('Content-Type', file.mimeType);
-    res.setHeader('Cache-Control', 'private, no-store');
+    const thumbnail = variant === 'thumbnail';
+    const body = thumbnail ? await sharp(file.body, { limitInputPixels: 32_000_000 }).resize({ width: 360, height: 360, fit: 'inside', withoutEnlargement: true }).webp({ quality: 72 }).toBuffer() : file.body;
+    res.setHeader('Content-Type', thumbnail ? 'image/webp' : file.mimeType);
+    res.setHeader('Cache-Control', thumbnail ? 'private, max-age=86400, immutable' : 'private, no-store');
     res.setHeader('X-Content-Type-Options', 'nosniff');
-    res.send(file.body);
+    res.send(body);
   }
 }
 

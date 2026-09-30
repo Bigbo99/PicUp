@@ -24,6 +24,7 @@ export interface UploadedFileRecord {
   userId?: string;
   hash?: string;
   url: string;
+  thumbnailUrl?: string;
   mimeType: string;
   size: number;
   width?: number;
@@ -33,6 +34,7 @@ export interface UploadedFileRecord {
 
 export interface OutputImage {
   url: string;
+  thumbnailUrl?: string;
   mimeType: string;
   width?: number;
   height?: number;

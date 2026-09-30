@@ -1,5 +1,7 @@
 'use client';
 
+import { thumbnailUrl } from '@/lib/thumbnail';
+
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react';
 import { Download, Trash2, X, Pencil, MessageCirclePlus, Scan, Eraser, Scaling, ArrowUp, Loader2, ChevronDown } from 'lucide-react';
 import { PreviewMarkup, type MarkupTool, type PreviewComment } from './preview-markup';
@@ -7,11 +9,48 @@ import { exportPreviewGuide, exportPreviewMask } from './preview-export';
 import { usePreviewDraft } from './preview-draft';
 import type { ImageJobCreateRequest } from '@picup/shared';
 
-export type PreviewImage = { url: string; label: string; alt: string; meta?: string; downloadUrl?: string };
+export type PreviewImage = { url: string; thumbnailUrl?: string; label: string; alt: string; meta?: string; downloadUrl?: string };
 export type ImagePreviewMode = 'conversation' | 'gallery' | 'references';
+type PreviewOperation = NonNullable<ImageJobCreateRequest['previewOperation']>;
+type DraftOperation = PreviewOperation | '';
 type Point = { x: number; y: number };
 type View = Point & { zoom: number };
 const fit: View = { zoom: 1, x: 0, y: 0 };
+
+function RatioMenu({ value, options, label, placeholder = '调整尺寸', disabled = false, onChange }: {
+  value?: string;
+  options: string[];
+  label: string;
+  placeholder?: string;
+  disabled?: boolean;
+  onChange: (value: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const root = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const closeOnOutside = (event: PointerEvent) => { if (!root.current?.contains(event.target as Node)) setOpen(false); };
+    const closeOnEscape = (event: KeyboardEvent) => { if (event.key === 'Escape') setOpen(false); };
+    document.addEventListener('pointerdown', closeOnOutside);
+    document.addEventListener('keydown', closeOnEscape);
+    return () => { document.removeEventListener('pointerdown', closeOnOutside); document.removeEventListener('keydown', closeOnEscape); };
+  }, [open]);
+  return <div ref={root} className="ratio-menu">
+    <button type="button" className="ratio-menu-trigger" aria-label={label} aria-haspopup="listbox" aria-expanded={open} disabled={disabled || !options.length} onClick={() => setOpen(value => !value)}>
+      <span>{value || placeholder}</span><ChevronDown size={15} aria-hidden="true" />
+    </button>
+    {open && <div className="ratio-menu-popover" role="listbox" aria-label={label}>
+      {options.map(ratio => {
+        const [width, height] = ratio.split(':').map(Number);
+        const scale = 22 / Math.max(width, height);
+        return <button key={ratio} type="button" role="option" aria-selected={ratio === value} className="ratio-menu-option" onClick={() => { setOpen(false); onChange(ratio); }}>
+          <span className="ratio-menu-icon" aria-hidden="true"><span className="ratio-menu-shape" style={{ '--ratio-width': `${width * scale}px`, '--ratio-height': `${height * scale}px` } as CSSProperties} /></span>
+          <span>{ratio}</span>
+        </button>;
+      })}
+    </div>}
+  </div>;
+}
 
 export type PreviewEdit = { prompt: string; operation: NonNullable<ImageJobCreateRequest['previewOperation']>; comments: NonNullable<ImageJobCreateRequest['editComments']>; guide?: File; mask?: File; original?: File; aspectRatio?: string; onProgress?: (message: string) => void };
 export function ImageLightbox({ title, mode = 'conversation', images, index, onIndexChange, onClose, onDelete, onSubmitEdit, ratios = ['1:1', '4:3', '3:4', '16:9', '9:16', '2:3', '3:2'], draftScope = 'local' }: {
@@ -34,7 +73,7 @@ export function ImageLightbox({ title, mode = 'conversation', images, index, onI
   const [editError, setEditError] = useState('');
   const description = useRef<HTMLTextAreaElement>(null);
   const imageKey = `${draftScope}:${image?.url ?? ''}`;
-  const [operation, setOperation] = usePreviewDraft(`operation:${imageKey}`, '');
+  const [operation, setOperation] = usePreviewDraft<DraftOperation>(`operation:${imageKey}`, '');
   const [savedRatio, setRatio] = usePreviewDraft(`ratio:${imageKey}`, '1:1');
   const ratioChoices = ratios.filter(ratio => ratio !== 'auto');
   const aspectRatio = ratioChoices.includes(savedRatio) ? savedRatio : ratioChoices[0];
@@ -84,7 +123,8 @@ export function ImageLightbox({ title, mode = 'conversation', images, index, onI
     window.addEventListener('resize', resize); window.addEventListener('keydown', key);
     return () => { window.removeEventListener('resize', resize); window.removeEventListener('keydown', key); };
   }, [index, images.length, moveIndex]);
-  function choose(action: string) {
+  function choose(action: DraftOperation) {
+    if (!action) return;
     if (action === 'background') { void removeBackground(); return; }
     setComments(comments.filter(comment => comment.text.trim()));
     if (operation === action) {
@@ -119,16 +159,19 @@ export function ImageLightbox({ title, mode = 'conversation', images, index, onI
     catch (error) { setEditError(error instanceof Error ? error.message : '去除背景提交失败，请重试'); }
     finally { sendingRef.current = false; setSending(false); }
   }
-  async function sendEdit() {
-    if (!onSubmitEdit || !canSend || sendingRef.current || !picture.current?.naturalWidth) return;
+  async function sendEdit(forced?: { operation: PreviewOperation; aspectRatio?: string }) {
+    const selectedOperation: PreviewOperation = forced?.operation ?? (operation || 'describe');
+    const selectedAspectRatio = forced?.aspectRatio ?? aspectRatio;
+    const allowed = forced ? !sending && !failed && Boolean(onSubmitEdit) : canSend;
+    if (!onSubmitEdit || !allowed || sendingRef.current || !picture.current?.naturalWidth) return;
     const overlay = stage.current?.querySelector<SVGSVGElement>('.preview-markup-layer');
     sendingRef.current = true; setSending(true); setEditError(''); setProgress('正在导出标记…');
     try {
-      if (operation === 'resize' && !aspectRatio) throw new Error('当前模型不支持指定画面比例');
-      const selection = overlay && operation === 'remove' ? await exportPreviewMask(picture.current, overlay) : undefined;
-      if (operation === 'remove' && !selection) throw new Error('请先标记要移除的区域');
-      const guide = overlay && ['annotate', 'comment'].includes(operation) ? await exportPreviewGuide(picture.current, overlay) : undefined;
-      const next = await onSubmitEdit(image, { onProgress: setProgress, prompt: editPrompt.trim(), operation: (operation || 'describe') as PreviewEdit['operation'], comments: operation === 'comment' ? comments.map(item => ({ x: item.x / 10, y: Math.max(0, Math.min(100, item.y / (10 * picture.current!.naturalHeight / picture.current!.naturalWidth))), text: item.text })) : [], aspectRatio: operation === 'resize' ? aspectRatio : undefined, guide, mask: selection?.mask, original: selection?.original });
+      if (selectedOperation === 'resize' && !selectedAspectRatio) throw new Error('当前模型不支持指定画面比例');
+      const selection = overlay && selectedOperation === 'remove' ? await exportPreviewMask(picture.current, overlay) : undefined;
+      if (selectedOperation === 'remove' && !selection) throw new Error('请先标记要移除的区域');
+      const guide = overlay && ['annotate', 'comment'].includes(selectedOperation) ? await exportPreviewGuide(picture.current, overlay) : undefined;
+      const next = await onSubmitEdit(image, { onProgress: setProgress, prompt: editPrompt.trim(), operation: selectedOperation, comments: selectedOperation === 'comment' ? comments.map(item => ({ x: item.x / 10, y: Math.max(0, Math.min(100, item.y / (10 * picture.current!.naturalHeight / picture.current!.naturalWidth))), text: item.text })) : [], aspectRatio: selectedOperation === 'resize' ? selectedAspectRatio : undefined, guide, mask: selection?.mask, original: selection?.original });
       if (next === null) return;
       if (!next.length) throw new Error('任务未返回图片，请重试');
       setResults(next); setResultIndex(0); setCompare(false);
@@ -141,23 +184,16 @@ export function ImageLightbox({ title, mode = 'conversation', images, index, onI
     <header><span>{shown.label}</span><div className="image-viewer-actions">{onDelete && !results.length && <button type="button" className="preview-delete" disabled={sending} onClick={() => void onDelete(image)} title="删除图片" aria-label="删除图片"><Trash2 size={20} /></button>}<a href={shown.downloadUrl ?? shown.url} download title="下载图片" aria-label="下载图片"><Download size={20} /></a><button disabled={sending} onClick={onClose} title="关闭预览" aria-label="关闭预览"><X size={22} /></button></div>
       <div className="preview-home-row" hidden={contextual}><div className="preview-action-tools" role="toolbar" aria-label="图片操作">
         {([['annotate', '标注', Pencil], ['comment', '评论', MessageCirclePlus], ['background', '去除背景', Scan], ['remove', '消除', Eraser]] as const).map(([action, label, Icon]) => <button key={action} title={label} aria-label={label} aria-pressed={action === 'background' ? undefined : operation === action} disabled={sending || failed} onClick={() => choose(action)}><Icon size={19} /><span>{label}</span></button>)}
-        <label className="preview-resize-control" data-active={operation === 'resize'} title={ratioChoices.length ? '调整尺寸' : '当前模型不支持指定画面比例'}>
+        <div className="preview-resize-control" data-active={operation === 'resize'} title={ratioChoices.length ? '调整尺寸' : '当前模型不支持指定画面比例'}>
           <Scaling size={19} aria-hidden="true" />
-          <select aria-label="调整尺寸" value={operation === 'resize' ? aspectRatio ?? '' : ''} disabled={sending || failed || !ratioChoices.length} onChange={event => { setRatio(event.target.value); if (operation !== 'resize') choose('resize'); }}>
-            <option value="" disabled hidden>调整尺寸</option>
-            {ratioChoices.map(ratio => {
-              const [width, height] = ratio.split(':').map(Number);
-              const scale = 23 / Math.max(width, height);
-              return <option key={ratio} value={ratio} style={{ '--ratio-width': `${width * scale}px`, '--ratio-height': `${height * scale}px` } as CSSProperties}>{ratio}</option>;
-            })}
-          </select>
-        </label>
+          <RatioMenu label="调整尺寸" value={operation === 'resize' ? aspectRatio : undefined} options={ratioChoices} disabled={sending || failed} onChange={value => { setRatio(value); if (operation !== 'resize') setOperation('resize'); void sendEdit({ operation: 'resize', aspectRatio: value }); }} />
+        </div>
       </div></div>
       <div className="preview-context-row" hidden={!contextual}>
         <div className="preview-context-bar" role="group" aria-label="当前操作">
           <div ref={setToolbar} className="preview-markup-toolbar" hidden={!['annotate', 'remove'].includes(operation)} />
           {operation === 'comment' && <div className="preview-context-label"><MessageCirclePlus size={19} /><span>{comments.some(item => item.text.trim()) ? `${comments.filter(item => item.text.trim()).length} 条评论` : '评论'}</span></div>}
-          {operation === 'resize' && <label className="preview-context-ratio"><Scaling size={19} /><select aria-label="目标画面比例" value={aspectRatio} disabled={sending} onChange={event => setRatio(event.target.value)}>{ratioChoices.map(ratio => <option key={ratio} value={ratio}>{ratio}</option>)}</select></label>}
+          {operation === 'resize' && <div className="preview-context-ratio"><Scaling size={19} /><RatioMenu label="目标画面比例" value={aspectRatio} options={ratioChoices} disabled={sending} onChange={value => { setRatio(value); void sendEdit({ operation: 'resize', aspectRatio: value }); }} /></div>}
           {!['annotate', 'remove'].includes(operation) && <button className="preview-description-toggle" title="补充描述" aria-label="补充描述" aria-pressed={extraDescription} disabled={sending} onClick={() => setExtraDescription(value => !value)}><Pencil size={17} /></button>}
           <div className="preview-context-actions">{operation !== 'annotate' && sendButton}<span className="preview-tool-divider" /><button title="退出当前工具" aria-label="退出当前工具" disabled={sending} onClick={() => choose(operation)}><X size={20} /></button></div>
         </div>
@@ -199,7 +235,7 @@ export function ImageLightbox({ title, mode = 'conversation', images, index, onI
       {!failed && !compare && <PreviewMarkup picture={picture} toolbar={toolbar} imageKey={imageKey} mode={operation} disabled={sending} activeComment={activeComment} onSelectComment={selectComment} onUpdateComment={(i, text) => { setComments(comments.map((item, n) => n === i ? { ...item, text } : item)); setActiveComment(null); }} onDeleteComment={i => { setComments(comments.filter((_, n) => n !== i)); setActiveComment(null); }} tool={tool} onTool={setTool} comments={comments} onComment={addComment} transformKey={`${view.zoom}:${view.x}:${view.y}:${retry}`} onActive={() => { pointers.current.clear(); gesture.current = null; start.current = null; }} />}
     </div>
     <footer className="preview-editor-footer">
-      {images.length > 1 && !contextual && <aside className="preview-editor-thumbs" aria-label="图片缩略图">{images.map((item, itemIndex) => <button type="button" disabled={sending} key={`${item.url}-${itemIndex}`} className={itemIndex === index ? 'selected' : ''} onClick={() => onIndexChange(itemIndex)} aria-label={`预览${item.label}`}><img src={item.url} alt="" /></button>)}</aside>}
+      {images.length > 1 && !contextual && <aside className="preview-editor-thumbs" aria-label="图片缩略图">{images.map((item, itemIndex) => <button type="button" disabled={sending} key={`${item.url}-${itemIndex}`} className={itemIndex === index ? 'selected' : ''} onClick={() => onIndexChange(itemIndex)} aria-label={`预览${item.label}`}><img src={thumbnailUrl(item)} alt="" /></button>)}</aside>}
       {composerVisible && <form className="preview-edit-composer" onSubmit={event => { event.preventDefault(); void sendEdit(); }}>
         <textarea ref={description} aria-label="描述编辑" placeholder={operation === 'annotate' ? '描述标记处的修改' : '描述编辑'} maxLength={3500} rows={1} value={editPrompt} disabled={sending || compare} onChange={event => setEditPrompt(event.target.value)} />
         <div className="preview-edit-submit">{contextual && operation !== 'annotate' ? <button type="button" title="收起描述" aria-label="收起描述" onClick={() => setExtraDescription(false)}><ChevronDown size={20} /></button> : <button type="submit" className="preview-edit-send" title="提交编辑" aria-label="提交编辑" disabled={!canSend}>{sending ? <Loader2 size={20} className="animate-spin" /> : <ArrowUp size={20} />}</button>}</div>

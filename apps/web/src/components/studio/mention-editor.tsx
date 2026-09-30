@@ -1,5 +1,7 @@
 'use client';
 
+import { thumbnailUrl } from '@/lib/thumbnail';
+
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Node, type JSONContent } from '@tiptap/core';
@@ -171,7 +173,7 @@ export const MentionEditor = forwardRef<MentionEditorHandle, Props>(function Men
     }}>
       <label className="search-field"><Search size={16} /><input aria-label="搜索图片或主体" placeholder="搜索图片或主体" value={search} onChange={event => { setSearch(event.target.value); setSelected(0); }} /></label>
       <div role="listbox" aria-label="图片与主体选项"><button type="button" role="option" aria-selected={selected === 0} className="mention-option" onPointerDown={event => event.preventDefault()} onClick={() => setCreating(true)}><Plus size={20} /><span>创建主体</span></button>
-      {choices.map((choice, index) => <div key={choice.subjectId ?? choice.file.id}>{(index === 0 || Boolean(choice.subjectId) !== Boolean(choices[index - 1].subjectId)) && <div className="mention-group-label">{choice.subjectId ? '我的主体' : '参考图片'}</div>}<button type="button" role="option" className="mention-option" aria-selected={selected === index + 1} onPointerDown={event => event.preventDefault()} onClick={() => insert(choice)}><img src={choice.file.url} alt="" /><span>{choice.label}</span>{choice.subjectId && <small>主体</small>}</button></div>)}
+      {choices.map((choice, index) => <div key={choice.subjectId ?? choice.file.id}>{(index === 0 || Boolean(choice.subjectId) !== Boolean(choices[index - 1].subjectId)) && <div className="mention-group-label">{choice.subjectId ? '我的主体' : '参考图片'}</div>}<button type="button" role="option" className="mention-option" aria-selected={selected === index + 1} onPointerDown={event => event.preventDefault()} onClick={() => insert(choice)}><img src={thumbnailUrl(choice.file)} alt="" /><span>{choice.label}</span>{choice.subjectId && <small>主体</small>}</button></div>)}
       </div>
       {subjects.isPending && <p className="mention-group-label">正在加载主体</p>}{subjects.isError && <button type="button" className="studio-text-button" onClick={() => subjects.refetch()}>主体加载失败，重试</button>}
       {subjects.hasNextPage && <button type="button" className="studio-text-button" disabled={subjects.isFetchingNextPage} onClick={() => subjects.fetchNextPage()}>更多主体</button>}

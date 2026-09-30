@@ -181,6 +181,14 @@ export class JobsService {
     return job;
   }
 
+  async outputHashes(id: string, user: AuthUser) {
+    const job = await this.get(id, user);
+    return Promise.all(job.outputImages.map(async image => {
+      const body = await this.objectStorage.readByUrl(image.url);
+      return createHash('sha256').update(body).digest('hex');
+    }));
+  }
+
   async downloadOutput(id: string, outputIndex: number, user: AuthUser) {
     const job = await this.storage.getJob(id, user.id, false);
     if (!job) throw new NotFoundException('任务不存在');

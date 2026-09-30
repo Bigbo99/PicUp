@@ -1,5 +1,7 @@
 'use client';
 
+import { thumbnailUrl } from '@/lib/thumbnail';
+
 import { useRef, useState } from 'react';
 import { useInfiniteQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { AtSign, Archive, ArchiveRestore, Check, Download, ImagePlus, Loader2, MoreHorizontal, Pencil, Plus, Search, Trash2, MessageSquare } from 'lucide-react';
@@ -136,7 +138,7 @@ export function AssetLibrary({ mobilePage = false, onUse: _onUse, onPreview, onS
     {query.isPending && <p className="studio-empty">正在加载图片</p>}{query.isError && <button className="studio-secondary" onClick={() => query.refetch()}>加载失败，重试</button>}
     {query.data?.pages[0].items.length === 0 && <p className="studio-empty">{q || kind ? '没有匹配的图片' : '图库为空'}</p>}
     <div className="asset-grid">{assets.map(asset => <article className={`asset-item ${selected.has(asset.key) ? 'is-selected' : ''}`} key={asset.key}>
-      <div className="asset-media"><button className="asset-image" disabled={removing} aria-pressed={selecting ? selected.has(asset.key) : undefined} aria-label={`${selecting ? '选择图片' : '预览图片'}：${asset.title}`} onClick={() => selecting ? toggleSelected(asset.key) : onPreview(asset, assets)} title={selecting ? '选择图片' : '预览图片'}><img src={asset.url} alt={asset.title} loading="lazy" />{selecting && <span className="asset-selection-mark" data-selected={selected.has(asset.key)} aria-hidden="true">{selected.has(asset.key) && <Check size={15} />}</span>}</button><div className={`asset-actions ${selecting ? 'is-multi-select-hidden' : ''}`} aria-label={`图片操作：${asset.title}`}>
+      <div className="asset-media"><button className="asset-image" disabled={removing} aria-pressed={selecting ? selected.has(asset.key) : undefined} aria-label={`${selecting ? '选择图片' : '预览图片'}：${asset.title}`} onClick={() => selecting ? toggleSelected(asset.key) : onPreview(asset, assets)} title={selecting ? '选择图片' : '预览图片'}><img src={thumbnailUrl(asset)} alt={asset.title} loading="lazy" />{selecting && <span className="asset-selection-mark" data-selected={selected.has(asset.key)} aria-hidden="true">{selected.has(asset.key) && <Check size={15} />}</span>}</button><div className={`asset-actions ${selecting ? 'is-multi-select-hidden' : ''}`} aria-label={`图片操作：${asset.title}`}>
         <a className="studio-icon" href={asset.jobId ? `/api/image/jobs/${asset.jobId}/download/${asset.index}` : asset.url} download title="下载图片" aria-label="下载图片"><Download size={17} /></a>
         {asset.subjectId && asset.fileId && <button className="studio-icon" title="引用主体" aria-label={`引用主体：${asset.title}`} onClick={() => onSubject({ id: asset.subjectId!, name: asset.title, description: '', createdAt: asset.createdAt, file: { id: asset.fileId!, url: asset.url, mimeType: 'image/png', size: 0, createdAt: asset.createdAt } })}><AtSign size={17} /></button>}
         <button className="studio-icon is-danger" title="从图库移除" aria-label={`从图库移除：${asset.title}`} disabled={change.isPending} onClick={() => void removeAsset(asset)}><Trash2 size={17} /></button>
