@@ -37,14 +37,30 @@ async function bootstrap() {
     : 4;
   console.log(`PicUp image worker concurrency=${concurrency}`);
 
+  // Hard ceiling per job slot — prevents a hung provider call from
+  // blocking a worker slot indefinitely. Set to 1.5× the longest
+  // expected provider timeout (default 10 min) via IMAGE_WORKER_JOB_TIMEOUT_MS.
+  const jobHardTimeoutMs = Number(process.env.IMAGE_WORKER_JOB_TIMEOUT_MS ?? 10 * 60 * 1000);
+
   await Promise.all(Array.from({ length: concurrency }, async (_, index) => {
     while (true) {
+      let timeoutHandle: NodeJS.Timeout | undefined;
       try {
-        const processed = await jobs.processNext();
+        const processed = await Promise.race([
+          jobs.processNext(),
+          new Promise<never>((_, reject) => {
+            timeoutHandle = setTimeout(
+              () => reject(new Error(`[worker ${index + 1}] job hard timeout after ${jobHardTimeoutMs}ms`)),
+              jobHardTimeoutMs
+            );
+          })
+        ]);
+        if (timeoutHandle) clearTimeout(timeoutHandle);
         if (processed) {
           console.log(`Worker ${index + 1} processed job ${processed.id}: ${processed.status}`);
         }
       } catch (error) {
+        if (timeoutHandle) clearTimeout(timeoutHandle);
         console.error(error);
       }
     }

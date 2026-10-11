@@ -102,7 +102,7 @@ export class StorageService {
   async readDb(): Promise<LocalDbSnapshot> {
     const [files, jobs, users] = await Promise.all([
       this.prisma.fileRecord.findMany({ orderBy: { createdAt: 'desc' } }),
-      this.prisma.imageJob.findMany({ orderBy: { createdAt: 'desc' } }),
+      this.prisma.imageJob.findMany({ where: { deletedAt: null }, orderBy: { createdAt: 'desc' } }),
       this.prisma.user.findMany({ orderBy: { createdAt: 'desc' } })
     ]);
     return {
@@ -214,7 +214,7 @@ export class StorageService {
   }
 
   async getJobByIdempotency(userId: string, idempotencyKey: string) {
-    const job = await this.prisma.imageJob.findFirst({ where: { userId, idempotencyKey } });
+    const job = await this.prisma.imageJob.findFirst({ where: { userId, idempotencyKey, deletedAt: null } });
     return job ? this.toImageJob(job) : null;
   }
 
@@ -352,7 +352,7 @@ export class StorageService {
   async createJobWithReservation(job: ImageJobRecord, freeUnlimited = false) {
     return this.serializable(async (tx) => {
       if (job.userId && job.idempotencyKey) {
-        const existing = await tx.imageJob.findFirst({ where: { userId: job.userId, idempotencyKey: job.idempotencyKey } });
+        const existing = await tx.imageJob.findFirst({ where: { userId: job.userId, idempotencyKey: job.idempotencyKey, deletedAt: null } });
         if (existing) return { job: this.toImageJob(existing), created: false };
       }
 
@@ -414,7 +414,7 @@ export class StorageService {
 
   async listRecoverableJobIds(take = 200) {
     const jobs = await this.prisma.imageJob.findMany({
-      where: { status: { in: ['queued', 'retrying'] } },
+      where: { status: { in: ['queued', 'retrying'] }, deletedAt: null },
       select: { id: true },
       orderBy: { createdAt: 'asc' },
       take: Math.max(1, Math.min(1000, Math.floor(take)))
@@ -428,6 +428,7 @@ export class StorageService {
       const expired = await tx.imageJob.findMany({
         where: {
           status: 'running',
+          deletedAt: null,
           OR: [{ leaseExpiresAt: null }, { leaseExpiresAt: { lt: now } }]
         },
         orderBy: { updatedAt: 'asc' },
@@ -527,7 +528,7 @@ export class StorageService {
 
   async getNextQueuedJob() {
     const job = await this.prisma.imageJob.findFirst({
-      where: { status: { in: ['queued', 'retrying'] } },
+      where: { status: { in: ['queued', 'retrying'] }, deletedAt: null },
       orderBy: { createdAt: 'asc' }
     });
     return job ? this.toImageJob(job) : null;

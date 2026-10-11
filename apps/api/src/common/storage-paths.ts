@@ -5,7 +5,6 @@ export interface StoragePaths {
   root: string;
   inputs: string;
   outputs: string;
-  db: string;
 }
 
 export async function ensureStorage(): Promise<StoragePaths> {
@@ -13,10 +12,9 @@ export async function ensureStorage(): Promise<StoragePaths> {
   const root = resolve(process.env.PICUP_ROOT ?? process.cwd(), configuredRoot);
   const inputs = resolve(root, 'inputs');
   const outputs = resolve(root, 'outputs');
-  const db = resolve(root, 'db.json');
   await mkdir(inputs, { recursive: true });
   await mkdir(outputs, { recursive: true });
-  return { root, inputs, outputs, db };
+  return { root, inputs, outputs };
 }
 
 export function publicMediaUrl(kind: 'inputs' | 'outputs', filename: string) {

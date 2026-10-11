@@ -873,7 +873,6 @@ html[data-studio-theme="dark"] .studio-wordmark { filter: invert(1) hue-rotate(1
   .studio-wordmark { width: 72px; height: 36px; }
   .balance-button { font-size: 14px; }
   .studio-header-actions .balance-button { margin-inline: 0; }
-  .studio-header-actions .header-new-conversation { display: none; }
   .studio-app[data-navigation-page="true"]:not([data-gallery-page="true"]) > .studio-header { display: none; }
   .studio-navigation-page { padding-top: env(safe-area-inset-top); }
   .library-header { gap: 12px; padding: 12px 16px 16px; }

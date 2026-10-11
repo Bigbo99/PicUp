@@ -2,9 +2,9 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Check, ExternalLink, Loader2, Pencil, Plus, Save, Search, X } from 'lucide-react';
-import { imageModelPreset, tokenRunSizeFor, type AdminAiConfigResponse, type AdminAiModelConfig, type AdminAiModelInput, type AdminAiProviderConfig, type AdminAiProviderInput, type AiProviderType, type ImageModelPreset } from '@picup/shared';
-import { createAdminAiProvider, deleteAdminAiModel, deleteAdminAiProvider, getAdminAiConfig, getAvailableAiModels, installAdminAiModels, updateAdminAiMock, updateAdminAiModel, updateAdminAiProvider, updateAdminAiRouting } from '@/lib/admin-api';
+import { Check, ExternalLink, Loader2, Pencil, Plus, RefreshCw, Save, Search, X } from 'lucide-react';
+import { imageModelPreset, tokenRunSizeFor, type AdminAiConfigResponse, type AdminAiModelConfig, type AdminAiModelInput, type AdminAiProviderConfig, type AdminAiProviderInput, type AiProviderType, type ImageModelPreset, type ImageQuality } from '@picup/shared';
+import { createAdminAiModel, createAdminAiProvider, deleteAdminAiModel, deleteAdminAiProvider, getAdminAiConfig, getAvailableAiModels, installAdminAiModels, updateAdminAiMock, updateAdminAiModel, updateAdminAiProvider, updateAdminAiRouting } from '@/lib/admin-api';
 import { useNotifications } from '@/components/notification-provider';
 import { providerPresets } from './ai-config-presets';
 import { EnabledSwitch, RefreshButton, RowActions } from './controls';
@@ -85,7 +85,7 @@ export function AiConfigPanel() {
             <td data-label="分辨率">{model.supportedQualities.join(' / ')}</td>
             <td data-label="积分 / 张">{model.costCredits}</td>
             <td data-label="启用"><EnabledSwitch label={'启用 ' + provider.displayName + ' / ' + model.displayName} checked={model.enabled} disabled={modelMutation.isPending} onChange={enabled => modelMutation.mutate({ providerId: provider.id, modelId: model.model, patch: { enabled } })} /></td>
-            <td><div className="admin-row-buttons"><button className="admin-icon-button" title="模型详情" aria-label={'查看 ' + model.displayName} onClick={() => setModelEditor({ provider, model })}><Pencil size={16} /></button><RowActions label={model.displayName + ' 更多操作'} disabled={actionPending} actions={[{ label: '删除模型', onSelect: () => void deleteItem('删除 ' + model.displayName + '？', () => deleteAdminAiModel(provider.id, model.model)) }]} /></div></td>
+            <td><div className="admin-row-buttons"><button className="admin-icon-button" title="模型详情" aria-label={'查看 ' + model.displayName} onClick={() => setModelEditor({ provider, model })}><Pencil size={16} /></button><RowActions label={model.displayName + ' 更多操作'} disabled={actionPending} actions={[{ label: '删除模型', onSelect: () => void deleteItem('删除 ' + model.displayName + '？', () => deleteAdminAiModel(provider.id, model.model)), danger: true }]} /></div></td>
           </tr>)}</tbody>
         </table></div>
         {!visibleModels.length && <div className="admin-config-empty">{config.providers.length ? '暂无匹配的模型' : '先连接一个渠道，再选择模型。'}{!config.providers.length && <button className="admin-primary-button" onClick={() => setProviderEditor({})}><Plus size={16} />连接渠道</button>}</div>}
@@ -98,7 +98,7 @@ export function AiConfigPanel() {
             <td data-label="模型"><button className="admin-text-button" onClick={() => { setProviderFilter(provider.id); setSearch(''); setView('models'); }}>{provider.models.length} 个</button></td>
             <td data-label="密钥"><span className={provider.apiKeyConfigured ? 'admin-key-status' : 'admin-key-status is-missing'}>{provider.apiKeyConfigured && <Check size={14} />}{provider.apiKeyConfigured ? '已配置' : '未配置'}</span></td>
             <td data-label="启用"><EnabledSwitch label={'启用渠道 ' + provider.displayName} checked={provider.enabled} disabled={quickProvider.isPending} onChange={enabled => quickProvider.mutate({ id: provider.id, enabled })} /></td>
-            <td><div className="admin-row-buttons"><button className="admin-icon-button" aria-label={'编辑渠道 ' + provider.displayName} title="编辑连接" onClick={() => setProviderEditor({ provider })}><Pencil size={16} /></button><RowActions label={provider.displayName + ' 更多操作'} disabled={actionPending} actions={[{ label: '选择模型', onSelect: () => setDiscoveryProvider(provider.id) }, { label: '删除渠道', onSelect: () => void deleteItem('删除 ' + provider.displayName + '？', () => deleteAdminAiProvider(provider.id)) }]} /></div></td>
+            <td><div className="admin-row-buttons"><button className="admin-icon-button" aria-label={'编辑渠道 ' + provider.displayName} title="编辑连接" onClick={() => setProviderEditor({ provider })}><Pencil size={16} /></button><RowActions label={provider.displayName + ' 更多操作'} disabled={actionPending} actions={[{ label: '选择模型', onSelect: () => setDiscoveryProvider(provider.id) }, { label: '删除渠道', onSelect: () => void deleteItem('删除 ' + provider.displayName + '？', () => deleteAdminAiProvider(provider.id)), danger: true }]} /></div></td>
           </tr>)}</tbody></table></div>
         {!config.providers.length && <div className="admin-config-empty">暂无渠道连接</div>}
       </>}
@@ -111,34 +111,60 @@ export function AiConfigPanel() {
 }
 
 function ModelDiscoveryDialog({ initialProvider, providers, onClose, onSaved }: { initialProvider: string; providers: AdminAiProviderConfig[]; onClose: () => void; onSaved: () => Promise<void> }) {
+  const [mode, setMode] = useState<'preset' | 'manual'>('preset');
   const [providerId, setProviderId] = useState(initialProvider);
   const [selected, setSelected] = useState<string[]>([]);
   const notifications = useNotifications();
-  const query = useQuery({ queryKey: ['admin', 'available-models', providerId], queryFn: () => getAvailableAiModels(providerId), retry: false });
+  const query = useQuery({ queryKey: ['admin', 'available-models', providerId], queryFn: () => getAvailableAiModels(providerId), retry: false, enabled: mode === 'preset' });
   const mutation = useMutation({
     mutationFn: () => installAdminAiModels(providerId, selected),
     onSuccess: async result => { await onSaved(); notifications.success('已添加 ' + result.installed + ' 个模型'); onClose(); },
     onError: error => notifications.error('添加失败', error.message)
   });
+
   return <ConfigDialog title="添加模型" onClose={() => { if (!mutation.isPending) onClose(); }}>
     <div className="admin-model-picker">
-      <ConfigSelect label="选择渠道" value={providerId} onChange={value => { if (!mutation.isPending) { setProviderId(value); setSelected([]); } }} options={providers.map(provider => ({ value: provider.id, label: provider.displayName }))} />
-      {query.isFetching && <p className="admin-inline-status" role="status"><Loader2 size={16} className="animate-spin" />正在读取渠道模型…</p>}
-      {query.error && <div className="admin-config-warning" role="alert">{query.error.message}<RefreshButton onClick={() => void query.refetch()} /></div>}
-      {query.data && <>
-        <p className="admin-capability-note">{query.data.message}</p>
-        <div className="admin-discovery-list">{query.data.models.map(item => {
-          const supported = Boolean(item.defaults && item.defaults.supportedRatios.length && item.defaults.supportedQualities.length && (query.data.source !== 'remote' || item.listed));
-          const disabled = item.installed || !supported || mutation.isPending;
-          return <div className={'admin-discovery-item' + (disabled ? ' is-unavailable' : '')} key={item.model}>
-            <label><input type="checkbox" disabled={disabled} checked={item.installed || selected.includes(item.model)} onChange={event => setSelected(current => event.target.checked ? [...current, item.model] : current.filter(id => id !== item.model))} /><span><strong>{item.preset?.displayName ?? item.model}</strong><small>{item.model}</small></span><span className="admin-discovery-state">{item.installed ? '已添加' : supported ? '可添加' : '待核对参数'}</span></label>
-            {item.preset && <div className="admin-discovery-meta"><span>{item.defaults?.supportedQualities.join(' / ')}</span><span>{item.defaults?.supportedRatios.length} 种比例</span><SourceLink preset={item.preset} /></div>}
-          </div>;
-        })}</div>
-        {!query.data.models.length && <p className="admin-config-empty">当前渠道未找到图像模型。</p>}
-        {query.data.omitted > 0 && <p className="admin-capability-note">已过滤 {query.data.omitted} 个非图像模型。</p>}
-      </>}
-      <div className="admin-dialog-footer"><span>已选 {selected.length} 个</span><button className="admin-secondary-button" disabled={mutation.isPending} onClick={onClose}>取消</button><button className="admin-primary-button" disabled={!selected.length || mutation.isPending || query.isFetching || Boolean(query.error)} onClick={() => mutation.mutate()}>{mutation.isPending ? <Loader2 size={16} className="animate-spin" /> : <Plus size={16} />}添加所选模型</button></div>
+      <div className="flex gap-3">
+        <div className="flex-1">
+          <ConfigSelect label="选择渠道" value={providerId} onChange={value => { if (!mutation.isPending) { setProviderId(value); setSelected([]); } }} options={providers.map(provider => ({ value: provider.id, label: provider.displayName }))} />
+        </div>
+        {mode === 'preset' && (
+          <button
+            type="button"
+            className="admin-secondary-button h-10 self-end"
+            disabled={query.isFetching}
+            onClick={() => void query.refetch()}
+            title="重新获取模型列表"
+          >
+            <RefreshCw size={16} className={query.isFetching ? 'animate-spin' : ''} />
+            获取模型
+          </button>
+        )}
+      </div>
+
+      <div className="flex gap-2 border-b border-slate-200">
+        <button type="button" className={'px-4 py-2 text-sm font-semibold transition-colors ' + (mode === 'preset' ? 'border-b-2 border-teal-600 text-teal-600' : 'text-slate-600 hover:text-slate-900')} onClick={() => setMode('preset')}>从预设选择</button>
+        <button type="button" className={'px-4 py-2 text-sm font-semibold transition-colors ' + (mode === 'manual' ? 'border-b-2 border-teal-600 text-teal-600' : 'text-slate-600 hover:text-slate-900')} onClick={() => setMode('manual')}>手动添加</button>
+      </div>
+
+      {mode === 'preset' ? <>
+        {query.isFetching && <p className="admin-inline-status" role="status"><Loader2 size={16} className="animate-spin" />正在读取渠道模型…</p>}
+        {query.error && <div className="admin-config-warning" role="alert">{query.error.message}<button className="admin-secondary-button" onClick={() => void query.refetch()}><RefreshCw size={16} />重试</button></div>}
+        {query.data && <>
+          <p className="admin-capability-note">{query.data.message}</p>
+          <div className="admin-discovery-list">{query.data.models.map(item => {
+            const supported = Boolean(item.defaults && item.defaults.supportedRatios.length && item.defaults.supportedQualities.length);
+            const disabled = item.installed || !supported || mutation.isPending;
+            return <div className={'admin-discovery-item' + (disabled ? ' is-unavailable' : '')} key={item.model}>
+              <label><input type="checkbox" disabled={disabled} checked={item.installed || selected.includes(item.model)} onChange={event => setSelected(current => event.target.checked ? [...current, item.model] : current.filter(id => id !== item.model))} /><span><strong>{item.preset?.displayName ?? item.model}</strong><small>{item.model}</small></span><span className="admin-discovery-state">{item.installed ? '已添加' : supported ? item.preset ? '有文档预设' : '使用通用配置' : '缺少配置'}</span></label>
+              {item.defaults && <div className="admin-discovery-meta"><span>{item.defaults.supportedQualities.join(' / ')}</span><span>{item.defaults.supportedRatios.length} 种比例</span>{item.preset && <SourceLink preset={item.preset} />}</div>}
+            </div>;
+          })}</div>
+          {!query.data.models.length && <p className="admin-config-empty">当前渠道未找到图像模型。</p>}
+          {query.data.omitted > 0 && <p className="admin-capability-note">已过滤 {query.data.omitted} 个非图像模型。</p>}
+        </>}
+        <div className="admin-dialog-footer"><span>已选 {selected.length} 个</span><button className="admin-secondary-button" disabled={mutation.isPending} onClick={onClose}>取消</button><button className="admin-primary-button" disabled={!selected.length || mutation.isPending || query.isFetching || Boolean(query.error)} onClick={() => mutation.mutate()}>{mutation.isPending ? <Loader2 size={16} className="animate-spin" /> : <Plus size={16} />}添加所选模型</button></div>
+      </> : <ManualModelForm providerId={providerId} onClose={onClose} onSaved={onSaved} />}
     </div>
   </ConfigDialog>;
 }
@@ -147,36 +173,215 @@ function SourceLink({ preset }: { preset: ImageModelPreset }) {
   return <a className="admin-source-link" href={preset.sourceUrl} target="_blank" rel="noreferrer">{preset.sourceLabel}<ExternalLink size={12} /></a>;
 }
 
+function ManualModelForm({ providerId, onClose, onSaved }: { providerId: string; onClose: () => void; onSaved: () => Promise<void> }) {
+  const notifications = useNotifications();
+  const [model, setModel] = useState('');
+  const [displayName, setDisplayName] = useState('');
+  const [qualities, setQualities] = useState<ImageQuality[]>(['1K', '2K', '4K']);
+  const [ratios, setRatios] = useState<string[]>(['auto', '1:1', '16:9', '9:16']);
+  const [maxInputImages, setMaxInputImages] = useState('6');
+  const [costCredits, setCostCredits] = useState('1');
+  const [error, setError] = useState('');
+  const [pending, setPending] = useState(false);
+
+  const availableQualities: ImageQuality[] = ['512', '1K', '2K', '4K'];
+  const availableRatios = ['auto', '1:1', '2:3', '3:2', '3:4', '4:3', '4:5', '5:4', '16:9', '9:16', '21:9', '1:4', '4:1', '1:8', '8:1'];
+
+  return <form className="grid gap-4" onSubmit={async event => {
+    event.preventDefault();
+    setError('');
+    if (!model.trim() || !displayName.trim()) {
+      setError('请填写模型 ID 和显示名称');
+      return;
+    }
+    if (!qualities.length || !ratios.length) {
+      setError('请至少选择一个分辨率和一个比例');
+      return;
+    }
+    const maxImages = Number(maxInputImages);
+    const credits = Number(costCredits);
+    if (!Number.isInteger(maxImages) || maxImages < 0 || !Number.isInteger(credits) || credits < 0) {
+      setError('参考图上限和积分须为非负整数');
+      return;
+    }
+
+    setPending(true);
+    try {
+      await createAdminAiModel(providerId, {
+        model: model.trim(),
+        displayName: displayName.trim(),
+        description: '',
+        enabled: true,
+        priority: 100,
+        maxInputImages: maxImages,
+        supportedRatios: ratios,
+        supportedQualities: qualities,
+        costCredits: credits
+      });
+      await onSaved();
+      notifications.success('模型已添加');
+      onClose();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '添加失败');
+    } finally {
+      setPending(false);
+    }
+  }}>
+    <p className="text-sm text-slate-600">手动添加自定义模型,适合渠道新上线的模型或特殊模型配置。</p>
+
+    <div className="grid gap-3 sm:grid-cols-2">
+      <TextField label="模型 ID" value={model} onChange={setModel} placeholder="例如 gpt-image-3" />
+      <TextField label="显示名称" value={displayName} onChange={setDisplayName} placeholder="例如 GPT Image 3" />
+    </div>
+
+    <fieldset className="grid gap-2">
+      <legend className="text-sm font-bold text-slate-700">支持的分辨率</legend>
+      <div className="flex flex-wrap gap-2">
+        {availableQualities.map(quality => <label key={quality} className="admin-check-label">
+          <input type="checkbox" checked={qualities.includes(quality)} onChange={event => setQualities(current => event.target.checked ? [...current, quality] : current.filter(q => q !== quality))} />
+          {quality}
+        </label>)}
+      </div>
+    </fieldset>
+
+    <fieldset className="grid gap-2">
+      <legend className="text-sm font-bold text-slate-700">支持的宽高比</legend>
+      <div className="flex flex-wrap gap-2">
+        {availableRatios.map(ratio => <label key={ratio} className="admin-check-label">
+          <input type="checkbox" checked={ratios.includes(ratio)} onChange={event => setRatios(current => event.target.checked ? [...current, ratio] : current.filter(r => r !== ratio))} />
+          {ratio === 'auto' ? '自动' : ratio}
+        </label>)}
+      </div>
+    </fieldset>
+
+    <div className="grid gap-3 sm:grid-cols-2">
+      <TextField label="参考图上限" value={maxInputImages} onChange={setMaxInputImages} inputMode="numeric" />
+      <TextField label="每张消耗积分" value={costCredits} onChange={setCostCredits} inputMode="numeric" />
+    </div>
+
+    {error && <p className="admin-config-warning" role="alert">{error}</p>}
+    <div className="admin-dialog-footer">
+      <button type="button" className="admin-secondary-button" disabled={pending} onClick={onClose}>取消</button>
+      <button type="submit" className="admin-primary-button" disabled={pending}>
+        {pending ? <Loader2 size={16} className="animate-spin" /> : <Plus size={16} />}
+        添加模型
+      </button>
+    </div>
+  </form>;
+}
+
 function ModelDetailsDialog({ provider, model, onClose, onSaved }: { provider: AdminAiProviderConfig; model: AdminAiModelConfig; onClose: () => void; onSaved: () => Promise<void> }) {
   const preset = imageModelPreset(provider.type, model.model);
+  const [displayName, setDisplayName] = useState(model.displayName);
+  const [qualities, setQualities] = useState<ImageQuality[]>([...model.supportedQualities]);
+  const [ratios, setRatios] = useState<string[]>([...model.supportedRatios]);
+  const [maxInputImages, setMaxInputImages] = useState(String(model.maxInputImages));
   const [credits, setCredits] = useState(String(model.costCredits));
   const [enabled, setEnabled] = useState(model.enabled);
   const [error, setError] = useState('');
   const [pending, setPending] = useState(false);
   const notifications = useNotifications();
+
+  const availableQualities: ImageQuality[] = ['512', '1K', '2K', '4K'];
+  const availableRatios = ['auto', '1:1', '2:3', '3:2', '3:4', '4:3', '4:5', '5:4', '16:9', '9:16', '21:9', '1:4', '4:1', '1:8', '8:1'];
+
   return <ConfigDialog title={model.displayName} onClose={() => { if (!pending) onClose(); }}>
     <p className="admin-editor-context">{provider.displayName} · {model.model}</p>
-    <dl className="admin-capability-grid"><dt>当前分辨率</dt><dd>{model.supportedQualities.join(' / ')}</dd><dt>当前比例</dt><dd>{model.supportedRatios.join(' · ')}</dd><dt>参考图上限</dt><dd>{model.maxInputImages} 张</dd>{preset && <><dt>文档分辨率</dt><dd>{preset.resolutions.join(' / ')}</dd><dt>参数来源</dt><dd><SourceLink preset={preset} /></dd></>}</dl>
-    <p className="admin-capability-note">{preset ? preset.sizeDescription : '此模型尚无核实过的预设，保留现有参数。'}{preset && ' 当前参数保留渠道已有的限制。'}</p>
-    {preset?.renderQualities && <><p className="admin-capability-note">官方渲染质量 quality：{preset.renderQualities.join(' / ')}。当前渠道：{provider.imageQuality ? '固定 ' + provider.imageQuality : '1K 使用 low，2K 使用 medium，4K 使用 high'}。渠道尺寸与编辑能力尚未实测。</p><PixelSizePreview model={model} preset={preset} /></>}
-    {preset && <button type="button" className="admin-secondary-button" disabled={pending} onClick={async () => {
-      setPending(true); setError('');
-      try {
-        await installAdminAiModels(provider.id, [model.model]);
-        await onSaved(); notifications.success('已应用文档预设，保留渠道现有限制'); onClose();
-      } catch (presetError) { setError(presetError instanceof Error ? presetError.message : '应用失败'); }
-      finally { setPending(false); }
-    }}>{pending && <Loader2 size={16} className="animate-spin" />}应用文档预设</button>}
+
     <form className="grid gap-4" onSubmit={async event => {
-      event.preventDefault(); setError('');
+      event.preventDefault();
+      setError('');
       const value = Number(credits);
-      if (!Number.isInteger(value) || value < 0) { setError('积分须为大于等于 0 的整数'); return; }
+      const maxImages = Number(maxInputImages);
+      if (!displayName.trim()) {
+        setError('显示名称不能为空');
+        return;
+      }
+      if (!qualities.length || !ratios.length) {
+        setError('请至少选择一个分辨率和一个比例');
+        return;
+      }
+      if (!Number.isInteger(value) || value < 0 || !Number.isInteger(maxImages) || maxImages < 0) {
+        setError('参考图上限和积分须为非负整数');
+        return;
+      }
       setPending(true);
-      try { await updateAdminAiModel(provider.id, model.model, { costCredits: value, enabled }); await onSaved(); notifications.success('模型已保存'); onClose(); }
-      catch (saveError) { setError(saveError instanceof Error ? saveError.message : '保存失败'); }
-      finally { setPending(false); }
+      try {
+        await updateAdminAiModel(provider.id, model.model, {
+          displayName: displayName.trim(),
+          supportedQualities: qualities,
+          supportedRatios: ratios,
+          maxInputImages: maxImages,
+          costCredits: value,
+          enabled
+        });
+        await onSaved();
+        notifications.success('模型已保存');
+        onClose();
+      } catch (saveError) {
+        setError(saveError instanceof Error ? saveError.message : '保存失败');
+      } finally {
+        setPending(false);
+      }
     }}>
-      <div className="admin-model-editable"><TextField label="每张消耗积分" value={credits} onChange={setCredits} inputMode="numeric" /><div className="admin-setting-row"><span>启用模型</span><EnabledSwitch label="启用此模型" checked={enabled} disabled={pending} onChange={setEnabled} /></div></div>
+      <TextField label="显示名称" value={displayName} onChange={setDisplayName} />
+
+      <fieldset className="grid gap-2">
+        <legend className="text-sm font-bold text-slate-700">支持的分辨率</legend>
+        <div className="flex flex-wrap gap-2">
+          {availableQualities.map(quality => <label key={quality} className="admin-check-label">
+            <input type="checkbox" checked={qualities.includes(quality)} onChange={event => setQualities(current => event.target.checked ? [...current, quality] : current.filter(q => q !== quality))} />
+            {quality}
+          </label>)}
+        </div>
+      </fieldset>
+
+      <fieldset className="grid gap-2">
+        <legend className="text-sm font-bold text-slate-700">支持的宽高比</legend>
+        <div className="flex flex-wrap gap-2">
+          {availableRatios.map(ratio => <label key={ratio} className="admin-check-label">
+            <input type="checkbox" checked={ratios.includes(ratio)} onChange={event => setRatios(current => event.target.checked ? [...current, ratio] : current.filter(r => r !== ratio))} />
+            {ratio === 'auto' ? '自动' : ratio}
+          </label>)}
+        </div>
+      </fieldset>
+
+      <div className="grid gap-3 sm:grid-cols-3">
+        <TextField label="参考图上限" value={maxInputImages} onChange={setMaxInputImages} inputMode="numeric" />
+        <TextField label="每张消耗积分" value={credits} onChange={setCredits} inputMode="numeric" />
+        <div className="admin-setting-row items-center">
+          <span className="text-sm font-bold text-slate-700">启用模型</span>
+          <EnabledSwitch label="启用此模型" checked={enabled} disabled={pending} onChange={setEnabled} />
+        </div>
+      </div>
+
+      {preset && <details className="border-t border-slate-200 pt-3">
+        <summary className="cursor-pointer text-sm font-semibold text-slate-600">官方文档参数</summary>
+        <dl className="admin-capability-grid mt-3">
+          <dt>文档分辨率</dt><dd>{preset.resolutions.join(' / ')}</dd>
+          <dt>文档比例</dt><dd>{preset.ratios.length} 种</dd>
+          <dt>参考图上限</dt><dd>{preset.referenceLimit} 张</dd>
+          <dt>参数来源</dt><dd><SourceLink preset={preset} /></dd>
+        </dl>
+        <p className="admin-capability-note mt-2">{preset.sizeDescription}</p>
+        {preset.renderQualities && <p className="admin-capability-note">官方渲染质量 quality:{preset.renderQualities.join(' / ')}。当前渠道:{provider.imageQuality ? '固定 ' + provider.imageQuality : '1K 使用 low,2K 使用 medium,4K 使用 high'}。</p>}
+        {preset.renderQualities && <PixelSizePreview model={model} preset={preset} />}
+        <button type="button" className="admin-secondary-button mt-2" disabled={pending} onClick={async () => {
+          setPending(true);
+          setError('');
+          try {
+            await installAdminAiModels(provider.id, [model.model]);
+            await onSaved();
+            notifications.success('已应用文档预设,保留渠道现有限制');
+            onClose();
+          } catch (presetError) {
+            setError(presetError instanceof Error ? presetError.message : '应用失败');
+          } finally {
+            setPending(false);
+          }
+        }}>{pending && <Loader2 size={16} className="animate-spin" />}应用文档预设</button>
+      </details>}
+
       {error && <p className="admin-config-warning" role="alert">{error}</p>}
       <DialogActions pending={pending} onClose={() => { if (!pending) onClose(); }} />
     </form>

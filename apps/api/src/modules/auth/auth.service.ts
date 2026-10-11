@@ -30,6 +30,7 @@ import type { WechatAuthCallbackDto } from './dto';
 
 interface SessionPayload {
   sub: string;
+  sid: string; // server-side session ID for revocation checks
   role: UserRole;
   iat: number;
   exp: number;
@@ -151,7 +152,7 @@ export class AuthService {
     await this.storage.addUser(user);
     const nextUser = req ? await this.touchUserVisit(user, req, true) : user;
     await this.transferGuestFiles(req, nextUser.id);
-    this.setSessionCookie(res, nextUser);
+    await this.setSessionCookie(res, nextUser);
     return this.withQuota(this.toPublicUser(nextUser));
   }
 
@@ -169,11 +170,19 @@ export class AuthService {
     const updatedUser = await this.storage.updateUser(nextUser);
     const visitedUser = req ? await this.touchUserVisit(updatedUser, req, true) : updatedUser;
     await this.transferGuestFiles(req, visitedUser.id);
-    this.setSessionCookie(res, visitedUser);
+    await this.setSessionCookie(res, visitedUser);
     return this.withQuota(this.toPublicUser(visitedUser));
   }
 
-  logout(res: Response) {
+  logout(res: Response, req?: AuthenticatedRequest) {
+    // Revoke the server-side session so the cookie cannot be replayed after logout.
+    const token = req ? this.readToken(req) : null;
+    const payload = token ? this.verifySessionSignature(token) : null;
+    if (payload?.sid) {
+      this.revokeSession(payload.sid).catch((err) =>
+        console.error('[auth] logout session revoke failed', err)
+      );
+    }
     res.cookie(sessionCookieName, '', {
       ...this.clearCookieOptions(),
       maxAge: 0,
@@ -280,7 +289,7 @@ export class AuthService {
       data: { consumedAt: new Date(), userId: user.id }
     });
     const visitedUser = req ? await this.touchUserVisit(user, req, true) : user;
-    this.setSessionCookie(res, visitedUser);
+    await this.setSessionCookie(res, visitedUser);
     return this.withQuota(this.toPublicUser(visitedUser));
   }
 
@@ -443,7 +452,7 @@ export class AuthService {
 
     const token = this.readToken(req);
     if (token) {
-      const payload = this.verifySession(token);
+      const payload = await this.verifySession(token);
       if (payload) {
         const stored = await this.storage.getUserById(payload.sub);
         if (stored?.status === 'active') {
@@ -470,14 +479,14 @@ export class AuthService {
       visitor: await this.visitorMetadata(req)
     });
     await this.storage.addUser(guest);
-    if (res) this.setSessionCookie(res, guest);
+    if (res) await this.setSessionCookie(res, guest);
     req.authUser = this.toPublicUser(guest);
     return req.authUser;
   }
 
   async requireUser(req: AuthenticatedRequest): Promise<AuthUser> {
     const token = this.readToken(req);
-    const payload = token ? this.verifySession(token) : null;
+    const payload = token ? await this.verifySession(token) : null;
     const stored = payload ? await this.storage.getUserById(payload.sub) : null;
     if (!stored || stored.status !== 'active') {
       throw new UnauthorizedException('Authentication required');
@@ -501,6 +510,7 @@ export class AuthService {
       if (existing && existing.id !== stored.id) throw new ConflictException('Email is already registered');
     }
 
+    const passwordChanged = Boolean(input.password);
     const updated = await this.storage.updateUser({
       ...stored,
       email: nextEmail,
@@ -508,7 +518,13 @@ export class AuthService {
       passwordHash: input.password ? this.hashPassword(input.password) : stored.passwordHash,
       updatedAt: new Date().toISOString()
     });
-    this.setSessionCookie(res, updated);
+
+    // Revoke all existing sessions when password changes so other devices are signed out.
+    if (passwordChanged) {
+      await this.revokeAllUserSessions(updated.id);
+    }
+
+    await this.createSession(res, updated);
     return this.withQuota(this.toPublicUser(updated));
   }
 
@@ -640,14 +656,45 @@ export class AuthService {
     return raw?.trim() || undefined;
   }
 
-  private setSessionCookie(res: Response, user: StoredUser) {
+  private setSessionCookie(res: Response, user: StoredUser): Promise<string> {
+    return this.createSession(res, user);
+  }
+
+  private async createSession(res: Response, user: StoredUser): Promise<string> {
+    const exp = Math.floor(Date.now() / 1000) + sessionTtlSeconds;
+    const session = await this.prisma.userSession.create({
+      data: {
+        userId: user.id,
+        expiresAt: new Date(exp * 1000)
+      }
+    });
     const token = this.signSession({
       sub: user.id,
+      sid: session.id,
       role: user.role,
       iat: Math.floor(Date.now() / 1000),
-      exp: Math.floor(Date.now() / 1000) + sessionTtlSeconds
+      exp
     });
     res.cookie(sessionCookieName, token, this.cookieOptions());
+    return session.id;
+  }
+
+  private async revokeSession(sid: string): Promise<void> {
+    await this.prisma.userSession.updateMany({
+      where: { id: sid, revokedAt: null },
+      data: { revokedAt: new Date() }
+    });
+  }
+
+  async revokeAllSessionsForUser(userId: string): Promise<void> {
+    await this.prisma.userSession.updateMany({
+      where: { userId, revokedAt: null },
+      data: { revokedAt: new Date() }
+    });
+  }
+
+  private async revokeAllUserSessions(userId: string): Promise<void> {
+    return this.revokeAllSessionsForUser(userId);
   }
 
   private cookieOptions() {
@@ -686,7 +733,7 @@ export class AuthService {
     return `${encodedPayload}.${signature}`;
   }
 
-  private verifySession(token: string): SessionPayload | null {
+  private verifySessionSignature(token: string): SessionPayload | null {
     const [encodedPayload, signature] = token.split('.');
     if (!encodedPayload || !signature || !this.safeEqual(signature, this.sign(encodedPayload))) return null;
     try {
@@ -696,6 +743,15 @@ export class AuthService {
     } catch {
       return null;
     }
+  }
+
+  private async verifySession(token: string): Promise<SessionPayload | null> {
+    const payload = this.verifySessionSignature(token);
+    if (!payload) return null;
+    if (!payload.sid) return payload; // legacy token without sid — allow during migration
+    const session = await this.prisma.userSession.findUnique({ where: { id: payload.sid } });
+    if (!session || session.revokedAt || session.expiresAt <= new Date()) return null;
+    return payload;
   }
 
   private sign(input: string) {
@@ -990,7 +1046,9 @@ export class AuthService {
   private async transferGuestFiles(req: AuthenticatedRequest | undefined, userId: string) {
     if (!req) return;
     const token = this.readToken(req);
-    const payload = token ? this.verifySession(token) : null;
+    // Use the synchronous signature check only — we don't need DB revocation here
+    // because guest file transfer is a best-effort migration, not a security gate.
+    const payload = token ? this.verifySessionSignature(token) : null;
     if (payload) await this.storage.transferGuestFiles(payload.sub, userId);
   }
 
@@ -1005,7 +1063,7 @@ export class AuthService {
       where: { state },
       data: { status: 'consumed', consumedAt: new Date() }
     });
-    this.setSessionCookie(res, stored);
+    await this.setSessionCookie(res, stored);
     const me = await this.withQuota(this.toPublicUser(stored));
     return { status: 'confirmed', user: me.user, quota: me.quota };
   }
@@ -1040,7 +1098,7 @@ export class AuthService {
     }
 
     const token = req ? this.readToken(req) : null;
-    const guestId = token ? this.verifySession(token)?.sub : undefined;
+    const guestId = token ? (this.verifySessionSignature(token))?.sub : undefined;
     const userId = await this.prisma.$transaction(async tx => {
       // Serialize first registration across API processes before creating an account.
       await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`wechat:${openId}`}, 0))::text`;

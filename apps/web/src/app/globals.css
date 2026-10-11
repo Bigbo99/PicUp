@@ -425,13 +425,11 @@ html[data-studio-theme="dark"] .admin-shell { --admin-warning: #e7b55f; --admin-
 .admin-search-box input { width: 100%; height: 40px; border: 1px solid var(--ui-line); border-radius: 6px; background: var(--ui-soft); padding: 0 11px 0 35px; color: var(--ui-text); font-size: 12px; font-weight: 500; outline: none; }
 .admin-search-box input:focus { border-color: var(--ui-accent); background: var(--ui-surface); }
 .admin-action-menu { position: relative; width: 40px; }
-.admin-action-menu summary { list-style: none; }
-.admin-action-menu summary::-webkit-details-marker { display: none; }
-.admin-action-menu[open] summary { background: var(--ui-hover); color: var(--ui-text); }
-.admin-action-menu > div { position: absolute; z-index: 30; top: calc(100% + 5px); right: 0; display: grid; width: 148px; padding: 5px; border: 1px solid var(--ui-line); border-radius: 8px; background: var(--ui-surface); box-shadow: var(--ui-shadow); }
-.admin-action-menu > div button { display: flex; min-height: 36px; align-items: center; gap: 8px; padding: 0 9px; border-radius: 5px; color: var(--ui-text); font-size: 12px; text-align: left; }
-.admin-action-menu > div button:hover { background: var(--ui-hover); }
-.admin-action-menu > div button.is-danger { color: var(--ui-error); }
+.admin-action-menu-dropdown { position: absolute; z-index: 30; top: calc(100% + 5px); right: 0; display: grid; width: 148px; padding: 5px; border: 1px solid var(--ui-line); border-radius: 8px; background: var(--ui-surface); box-shadow: 0 4px 12px rgb(0 0 0 / .12), 0 1px 3px rgb(0 0 0 / .08); }
+.admin-action-menu-dropdown button { display: flex; min-height: 36px; align-items: center; gap: 8px; padding: 0 9px; border-radius: 5px; color: var(--ui-text); font-size: 12px; text-align: left; transition: background-color 120ms ease; }
+.admin-action-menu-dropdown button:hover:not(:disabled) { background: var(--ui-hover); }
+.admin-action-menu-dropdown button.is-danger { color: var(--ui-error); }
+.admin-action-menu-dropdown button:disabled { cursor: not-allowed; opacity: 0.45; }
 .admin-pagination { display: flex; min-height: 44px; align-items: center; justify-content: flex-end; gap: 6px; margin-top: 8px; }
 .admin-pagination > span { margin-right: 4px; color: var(--ui-muted); font-size: 11px; }
 .admin-badge, .admin-config-status { display: inline-flex; min-height: 26px; align-items: center; border: 1px solid var(--ui-line); border-radius: 999px; padding: 0 9px; background: var(--ui-soft); color: var(--ui-muted); font-size: 11px; font-weight: 600; white-space: nowrap; }
