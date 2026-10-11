@@ -1,8 +1,8 @@
 name: CI and Deploy
 
+# Automatic deployment disabled - use SSH deployment instead
+# To manually trigger this workflow, use workflow_dispatch
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
 
 concurrency:
