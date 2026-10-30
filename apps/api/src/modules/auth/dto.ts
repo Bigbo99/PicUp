@@ -1,4 +1,4 @@
-import { IsBoolean, IsEmail, IsIn, IsObject, IsOptional, IsString, MinLength } from 'class-validator';
+import { IsBoolean, IsEmail, IsIn, IsObject, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
 import type { AuthProfileUpdateRequest, EmailAuthMode } from '@picup/shared';
 
 export class AuthCredentialsDto {
@@ -70,6 +70,7 @@ export class WechatAuthCallbackDto {
 export class AuthProfileUpdateDto implements AuthProfileUpdateRequest {
   @IsOptional()
   @IsString()
+  @MaxLength(120)
   displayName?: string;
 
   @IsOptional()

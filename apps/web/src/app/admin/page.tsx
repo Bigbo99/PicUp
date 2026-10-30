@@ -322,6 +322,7 @@ function UsersTab() {
     mutationFn: ({ id, input }: { id: string; input: AdminUserDraft }) => updateAdminUser(id, input),
     onSuccess: () => {
       notifications.success('用户信息已保存');
+      setSettingsUserId(null);
       queryClient.invalidateQueries({ queryKey: ['admin', 'users'] });
       queryClient.invalidateQueries({ queryKey: ['admin', 'overview'] });
       queryClient.invalidateQueries({ queryKey: ['admin', 'audit'] });
@@ -449,6 +450,7 @@ function UserSettingsDialog({
   const [status, setStatus] = useState<AuthUser['status']>(user.status);
   const [creditBalance, setCreditBalance] = useState(String(user.creditBalance));
   const [quotaUnlimited, setQuotaUnlimited] = useState(user.quotaUnlimited);
+  const [original] = useState(user);
   const title = user.displayName || user.email || user.id;
   const canSave = Number.isInteger(Number(creditBalance)) && Number(creditBalance) >= 0;
   const roleLocked = Boolean(user.isSuperAdmin || user.isGuest);
@@ -558,12 +560,12 @@ function UserSettingsDialog({
                   className="admin-primary-button w-full"
                   disabled={busy || !canSave}
                   onClick={() => onSave({
-                    displayName: displayName.trim() || null,
-                    email: email.trim() || null,
-                    role: user.isGuest ? undefined : role,
-                    status,
-                    creditBalance: Number(creditBalance),
-                    quotaUnlimited
+                    ...(displayName.trim() !== (original.displayName ?? '') ? { displayName: displayName.trim() || null } : {}),
+                    ...(email.trim().toLowerCase() !== (original.email ?? '') ? { email: email.trim().toLowerCase() || null } : {}),
+                    ...(!original.isGuest && role !== original.role ? { role } : {}),
+                    ...(status !== original.status ? { status } : {}),
+                    ...(Number(creditBalance) !== original.creditBalance ? { creditBalance: Number(creditBalance) } : {}),
+                    ...(quotaUnlimited !== original.quotaUnlimited ? { quotaUnlimited } : {})
                   })}
                 >
                   <Save size={16} aria-hidden />

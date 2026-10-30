@@ -88,11 +88,29 @@ describe('studio database consistency', { skip: !process.env.TEST_DATABASE_URL }
     userIds.push(record.id);
     return record;
   }
+  async function registeredAccount(auth: AuthService, response: Parameters<AuthService['verifyEmailAuth']>[1]) {
+    let code = '';
+    (auth as unknown as { deliverEmailCode(email: string, code: string): Promise<boolean> }).deliverEmailCode = async (_email, value) => {
+      code = value;
+      return true;
+    };
+    const challenge = await auth.startEmailAuth({ email: `${randomUUID()}@example.test`, password: 'test-password-123', mode: 'register', termsAccepted: true });
+    return auth.verifyEmailAuth({ challengeId: challenge.challengeId, code }, response);
+  }
+  it('profile writes preserve committed balance changes and cannot restore disabled accounts', async () => {
+    const record = await user(10);
+    await prisma.user.update({ where: { id: record.id }, data: { creditBalance: { decrement: 1 } } });
+    const saved = await storage.updateUser(record.id, { displayName: 'Changed nickname' });
+    assert.equal(saved.creditBalance, 9);
+    await prisma.user.update({ where: { id: record.id }, data: { status: 'disabled' } });
+    await assert.rejects(storage.updateUser(record.id, { displayName: 'Cannot save' }));
+    assert.equal((await prisma.user.findUniqueOrThrow({ where: { id: record.id } })).status, 'disabled');
+  });
   it('login transfers guest references without changing IDs, including duplicate images and subjects', async () => {
     const auth = new AuthService(storage, prisma);
     let token = '';
     const response = { cookie: (_name: string, value: string) => { token = value; } } as never;
-    const account = await auth.register({ email: `${randomUUID()}@example.test`, password: 'test-password-123', termsAccepted: true }, response);
+    const account = await registeredAccount(auth, response);
     userIds.push(account.user.id);
     const guest = await auth.ensureRequestUser({ headers: {}, socket: {} } as never, response);
     userIds.push(guest.id);
@@ -119,7 +137,7 @@ describe('studio database consistency', { skip: !process.env.TEST_DATABASE_URL }
   it('a forged guest cookie cannot transfer another guest uploads', async () => {
     const auth = new AuthService(storage, prisma);
     const response = { cookie: () => {} } as never;
-    const account = await auth.register({ email: `${randomUUID()}@example.test`, password: 'test-password-123', termsAccepted: true }, response);
+    const account = await registeredAccount(auth, response);
     userIds.push(account.user.id);
     const guest = await auth.ensureRequestUser({ headers: {}, socket: {} } as never, response);
     userIds.push(guest.id);

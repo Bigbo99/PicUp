@@ -100,7 +100,7 @@ export class AuthService {
   async authorizeWechatProfile(req: AuthenticatedRequest) {
     const { user, identity } = await this.profileIdentity(req);
     const grant = await this.requestWxmid<{ authorization_url: string; authorization_id: string; expires_at: string }>('/profile/authorize/', {
-      method: 'POST', body: JSON.stringify({ app_code: this.wxmidAppCode(), app_user_id: user.id, return_url: 'https://picup.ai-mendao.xyz/?view=account' })
+      method: 'POST', body: JSON.stringify({ app_code: this.wxmidAppCode(), app_user_id: user.id, return_url: new URL('/?view=account', process.env.WEB_PUBLIC_URL || 'http://localhost:3000').toString() })
     });
     await this.prisma.$transaction(async tx => {
       await tx.$queryRaw`SELECT id FROM external_identities WHERE id = ${identity.id}::uuid FOR UPDATE`;
@@ -130,30 +130,8 @@ export class AuthService {
     return { status: result.status };
   }
 
-  async register(input: AuthCredentials, res: Response, req?: AuthenticatedRequest): Promise<AuthMeResponse> {
-    if (input.termsAccepted !== true) {
-      throw new BadRequestException('注册前请先阅读并同意用户协议和隐私政策');
-    }
-
-    const email = this.normalizeEmail(input.email);
-    const existing = await this.storage.getUserByEmail(email);
-    if (existing && !existing.isGuest) {
-      throw new ConflictException('Email is already registered');
-    }
-
-    const user = this.storage.createStoredUser({
-      id: randomUUID(),
-      email,
-      role: 'user',
-      isGuest: false,
-      passwordHash: this.hashPassword(input.password),
-      emailVerifiedAt: new Date().toISOString()
-    });
-    await this.storage.addUser(user);
-    const nextUser = req ? await this.touchUserVisit(user, req, true) : user;
-    await this.transferGuestFiles(req, nextUser.id);
-    await this.setSessionCookie(res, nextUser);
-    return this.withQuota(this.toPublicUser(nextUser));
+  async register(_input: AuthCredentials, _res: Response, _req?: AuthenticatedRequest): Promise<AuthMeResponse> {
+    throw new BadRequestException('请通过邮箱验证码完成注册');
   }
 
   async login(input: AuthCredentials, res: Response, req?: AuthenticatedRequest): Promise<AuthMeResponse> {
@@ -166,9 +144,7 @@ export class AuthService {
       throw new UnauthorizedException('User is disabled');
     }
 
-    const nextUser = { ...user, updatedAt: new Date().toISOString() };
-    const updatedUser = await this.storage.updateUser(nextUser);
-    const visitedUser = req ? await this.touchUserVisit(updatedUser, req, true) : updatedUser;
+    const visitedUser = req ? await this.touchUserVisit(user, req, true) : user;
     await this.transferGuestFiles(req, visitedUser.id);
     await this.setSessionCookie(res, visitedUser);
     return this.withQuota(this.toPublicUser(visitedUser));
@@ -203,7 +179,10 @@ export class AuthService {
       if (!input.password || input.password.length < 8) {
         throw new BadRequestException('Password must be at least 8 characters');
       }
-      if (existing && !existing.isGuest && existing.status === 'active') {
+      if (existing && existing.status !== 'active') {
+        throw new UnauthorizedException('此账户暂时无法使用，请联系管理员');
+      }
+      if (existing && !existing.isGuest) {
         throw new ConflictException('Email is already registered');
       }
     }
@@ -256,18 +235,13 @@ export class AuthService {
     const existing = await this.storage.getUserByEmail(email);
     let user: StoredUser;
     if (challenge.mode === 'register') {
-      if (existing && !existing.isGuest && existing.status === 'active') {
+      if (existing && existing.status !== 'active') {
+        throw new UnauthorizedException('此账户暂时无法使用，请联系管理员');
+      }
+      if (existing && !existing.isGuest) {
         throw new ConflictException('Email is already registered');
       }
-      user = existing && !existing.isGuest
-        ? await this.storage.updateUser({
-          ...existing,
-          status: 'active',
-          isGuest: false,
-          passwordHash: challenge.passwordHash ?? existing.passwordHash,
-          emailVerifiedAt: new Date().toISOString()
-        })
-        : await this.storage.addUser(this.storage.createStoredUser({
+      user = await this.storage.addUser(this.storage.createStoredUser({
           id: randomUUID(),
           email,
           role: 'user',
@@ -511,12 +485,10 @@ export class AuthService {
     }
 
     const passwordChanged = Boolean(input.password);
-    const updated = await this.storage.updateUser({
-      ...stored,
-      email: nextEmail,
-      displayName: input.displayName?.trim() || null,
-      passwordHash: input.password ? this.hashPassword(input.password) : stored.passwordHash,
-      updatedAt: new Date().toISOString()
+    const updated = await this.storage.updateUser(stored.id, {
+      ...(nextEmail !== stored.email ? { email: nextEmail, emailVerifiedAt: null } : {}),
+      ...(input.displayName !== undefined ? { displayName: input.displayName?.trim() || null } : {}),
+      ...(input.password ? { passwordHash: this.hashPassword(input.password) } : {})
     });
 
     // Revoke all existing sessions when password changes so other devices are signed out.
@@ -1056,7 +1028,7 @@ export class AuthService {
     let stored = await this.storage.getUserById(userId);
     if (!stored || stored.status !== 'active') throw new UnauthorizedException('User is not active');
     if (stored.isGuest || stored.role === 'guest') {
-      stored = await this.storage.updateUser({ ...stored, isGuest: false, role: 'user' });
+      stored = await this.storage.updateUser(stored.id, { isGuest: false, role: 'user' });
     }
     await this.transferGuestFiles(req, stored.id);
     await this.prisma.wechatLoginSession.update({

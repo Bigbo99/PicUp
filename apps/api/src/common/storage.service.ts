@@ -13,6 +13,7 @@ import type {
   UserStatus
 } from '@picup/shared';
 import { Prisma, type FileRecord, type ImageJob, type ModelConfig as DbModelConfig, type PaymentOrder, type User } from '@prisma/client';
+import { redactAuditValue } from './audit-redaction';
 import { PrismaService } from './database/prisma.service';
 
 export interface StoredUser extends AuthUser {
@@ -559,44 +560,20 @@ export class StorageService {
     return this.toStoredUser(saved);
   }
 
-  async updateUser(user: StoredUser) {
-    const saved = await this.prisma.user.upsert({
-      where: { id: user.id },
-      update: {
-        email: user.email,
-        ...(user.displayName !== undefined ? { displayName: user.displayName } : {}),
-        passwordHash: user.passwordHash,
-        role: user.role,
-        status: user.status,
-        isGuest: user.isGuest,
-        quotaUnlimited: user.quotaUnlimited,
-        creditBalance: user.creditBalance,
-        lastIp: user.lastIp,
-        lastCountry: user.lastCountry,
-        lastRegion: user.lastRegion,
-        lastCity: user.lastCity,
-        lastSeenAt: user.lastSeenAt ? new Date(user.lastSeenAt) : null,
-        emailVerifiedAt: user.emailVerifiedAt ? new Date(user.emailVerifiedAt) : null,
-        updatedAt: new Date()
-      },
-      create: {
-        id: user.id,
-        email: user.email,
-        ...(user.displayName !== undefined ? { displayName: user.displayName } : {}),
-        passwordHash: user.passwordHash,
-        role: user.role,
-        status: user.status,
-        isGuest: user.isGuest,
-        quotaUnlimited: user.quotaUnlimited,
-        creditBalance: user.creditBalance,
-        lastIp: user.lastIp,
-        lastCountry: user.lastCountry,
-        lastRegion: user.lastRegion,
-        lastCity: user.lastCity,
-        lastSeenAt: user.lastSeenAt ? new Date(user.lastSeenAt) : undefined,
-        emailVerifiedAt: user.emailVerifiedAt ? new Date(user.emailVerifiedAt) : undefined,
-        createdAt: new Date(user.createdAt),
-        updatedAt: new Date(user.updatedAt)
+  async updateUser(id: string, patch: Partial<Pick<StoredUser,
+    'email' | 'displayName' | 'passwordHash' | 'isGuest' | 'role'
+  >> & { emailVerifiedAt?: string | null }) {
+    // Authentication updates must never write back a balance, status or quota
+    // read before a concurrent payment or administrator change.
+    const saved = await this.prisma.user.update({
+      where: { id, status: 'active' },
+      data: {
+        ...(patch.email !== undefined ? { email: patch.email } : {}),
+        ...(patch.displayName !== undefined ? { displayName: patch.displayName } : {}),
+        ...(patch.passwordHash !== undefined ? { passwordHash: patch.passwordHash } : {}),
+        ...(patch.emailVerifiedAt !== undefined ? { emailVerifiedAt: patch.emailVerifiedAt ? new Date(patch.emailVerifiedAt) : null } : {}),
+        ...(patch.isGuest !== undefined ? { isGuest: patch.isGuest } : {}),
+        ...(patch.role !== undefined ? { role: patch.role } : {})
       }
     });
     return this.toStoredUser(saved);
@@ -923,8 +900,8 @@ export class StorageService {
       actorId: log.actorId,
       action: log.action,
       target: log.target,
-      before: log.before,
-      after: log.after,
+      before: redactAuditValue(log.before),
+      after: redactAuditValue(log.after),
       createdAt: log.createdAt.toISOString()
     }));
   }
@@ -947,8 +924,8 @@ export class StorageService {
         actorId: log.actorId,
         action: log.action,
         target: log.target,
-        before: log.before,
-        after: log.after,
+        before: redactAuditValue(log.before),
+        after: redactAuditValue(log.after),
         ip: log.ip,
         userAgent: log.userAgent,
         requestId: log.requestId,
@@ -1223,8 +1200,8 @@ export class StorageService {
         actorId: input.actorId,
         action: input.action,
         target: input.target,
-        before: input.before ?? undefined,
-        after: input.after ?? undefined,
+        before: redactAuditValue(input.before) ?? undefined,
+        after: redactAuditValue(input.after) ?? undefined,
         ip: metadata?.ip,
         userAgent: metadata?.userAgent,
         requestId: metadata?.requestId

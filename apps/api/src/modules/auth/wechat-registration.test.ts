@@ -15,7 +15,7 @@ describe('WeChat registration', { skip: !process.env.TEST_DATABASE_URL }, () => 
   const internal = auth as unknown as {
     syncWechatFirstLogin(payload: { openid: string }, req?: unknown): Promise<string>;
     requestWxmid(): Promise<unknown>;
-    setSessionCookie(res: unknown, user: unknown): void;
+    setSessionCookie(res: unknown, user: unknown): Promise<string>;
     consumeConfirmedWechatSession(id: string, state: string, res: unknown): Promise<{ user?: { isGuest: boolean; role: string } }>;
   };
   let failSync = false;
@@ -29,7 +29,7 @@ describe('WeChat registration', { skip: !process.env.TEST_DATABASE_URL }, () => 
     const guest = await db.user.create({ data: {} });
     ids.push(guest.id);
     let cookie = '';
-    internal.setSessionCookie({ cookie: (_name: string, value: string) => { cookie = value; } }, guest);
+    await internal.setSessionCookie({ cookie: (_name: string, value: string) => { cookie = value; } }, guest);
     return { guest, req: { headers: { cookie: `picup_session=${cookie}` }, socket: {} } };
   }
   it('upgrades the guest in place and preserves uploaded files', async () => {

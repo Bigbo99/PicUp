@@ -35,6 +35,23 @@ describe('WeChat profile synchronization', () => {
     await assert.rejects(fixture(true).auth.authorizeWechatProfile(request), /请先登录/);
     await assert.rejects(fixture(false, false).auth.authorizeWechatProfile(request), /未绑定微信/);
   });
+  it('returns to the configured web domain after authorization', async () => {
+    const previous = process.env.WEB_PUBLIC_URL;
+    process.env.WEB_PUBLIC_URL = 'https://picup.example.com';
+    try {
+      const test = fixture();
+      let returnUrl = '';
+      (test.auth as unknown as { requestWxmid(path: string, init: RequestInit): Promise<unknown> }).requestWxmid = async (_path, init) => {
+        returnUrl = JSON.parse(init.body as string).return_url;
+        return { authorization_id: 'new-grant' };
+      };
+      await test.auth.authorizeWechatProfile(request);
+      assert.equal(returnUrl, 'https://picup.example.com/?view=account');
+    } finally {
+      if (previous === undefined) delete process.env.WEB_PUBLIC_URL;
+      else process.env.WEB_PUBLIC_URL = previous;
+    }
+  });
   it('does not change the account while authorization is pending or declined', async () => {
     const test = fixture();
     assert.deepEqual(await test.auth.syncWechatProfile(request), { status: 'pending' });

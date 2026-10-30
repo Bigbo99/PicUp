@@ -246,7 +246,7 @@ export class JobsService {
     return { ok: true, jobId: id };
   }
 
-  async processNext() {
+  async processNext(onStarted?: () => void) {
     const jobId = await this.queue.dequeueJob();
     if (!jobId) return null;
 
@@ -261,6 +261,7 @@ export class JobsService {
       return claimed;
     }
 
+    onStarted?.();
     try {
       return await this.process(claimed.id, leaseOwner);
     } catch (error) {

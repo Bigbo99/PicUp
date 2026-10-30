@@ -346,11 +346,7 @@ export class AiConfigService {
     const models = candidates.filter(id => imageModelPreset(provider.type, id) || provider.models.some(model => model.model === id) || /image|banana/i.test(id)).map(model => {
       const preset = imageModelPreset(provider.type, model);
       const existing = provider.models.find(item => item.model === model);
-      const defaults = preset ? imageModelDefaults(preset, model) : existing ? undefined : {
-        model, upstreamModel: model, displayName: model, description: '', enabled: true,
-        priority: 100, maxInputImages: 6, supportedRatios: ['auto', '1:1', '16:9', '9:16'],
-        supportedQualities: ['1K', '2K', '4K'] as ImageQuality[], costCredits: 1
-      };
+      const defaults = preset ? imageModelDefaults(preset, model) : undefined;
       // Existing restrictions may encode relay-specific limits; never broaden them on import.
       if (defaults && existing) {
         defaults.supportedRatios = defaults.supportedRatios.filter(value => existing.supportedRatios.includes(value));
@@ -361,7 +357,7 @@ export class AiConfigService {
     });
     return { providerId, checkedAt: new Date().toISOString(), source: remote ? 'remote' : 'configured', models,
       omitted: candidates.length - models.length,
-      message: remote ? '渠道已返回模型列表。没有文档预设的模型将使用通用配置,请在添加后自行调整参数。' : '依据接口文档提供预设;当前密钥的模型权限与出图能力尚未实测。' };
+      message: remote ? '渠道已返回模型列表。没有文档预设的模型需手动配置参数。' : '依据接口文档提供预设;当前密钥的模型权限与出图能力尚未实测。' };
   }
 
   async installModels(providerId: string, modelIds: string[]) {

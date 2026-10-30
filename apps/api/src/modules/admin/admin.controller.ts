@@ -105,6 +105,9 @@ export class AdminController {
       creditBalance: body.creditBalance
     }, req.authUser.id, this.auditMetadata(req));
     if (!user) throw new NotFoundException('用户不存在');
+    if (body.status && body.status !== 'active') {
+      await this.auth.revokeAllSessionsForUser(id);
+    }
     return this.auth.toPublicUser(user);
   }
 
@@ -137,7 +140,7 @@ export class AdminController {
     const user = await this.storage.updateUserStatus(id, body.status, req.authUser.id, body.reason, this.auditMetadata(req));
     if (!user) throw new NotFoundException('用户不存在');
     // Revoke all active sessions immediately when an account is disabled.
-    if (body.status === 'disabled') {
+    if (body.status !== 'active') {
       await this.auth.revokeAllSessionsForUser(id);
     }
     return this.auth.toPublicUser(user);
