@@ -67,7 +67,20 @@ export class WechatAuthCallbackDto {
   profile?: Record<string, unknown>;
 }
 
+export class ProfileEmailStartDto {
+  @IsEmail()
+  email!: string;
+}
+
 export class AuthProfileUpdateDto implements AuthProfileUpdateRequest {
+  @IsOptional()
+  @IsString()
+  emailChallengeId?: string;
+
+  @IsOptional()
+  @IsString()
+  emailCode?: string;
+
   @IsOptional()
   @IsString()
   @MaxLength(120)

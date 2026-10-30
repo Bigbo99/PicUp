@@ -220,16 +220,10 @@ export class AuthService {
     if (!challenge || challenge.consumedAt || challenge.expiresAt <= new Date()) {
       throw new BadRequestException('Verification code is invalid or expired');
     }
-    if (challenge.attempts >= 5) {
-      throw new BadRequestException('Too many verification attempts');
+    if (!['register', 'login'].includes(challenge.mode)) {
+      throw new BadRequestException('验证码用途不匹配');
     }
-    if (!this.safeEqual(this.hashOneTimeCode(input.code.trim()), challenge.codeHash)) {
-      await this.prisma.emailAuthChallenge.update({
-        where: { id: challenge.id },
-        data: { attempts: { increment: 1 } }
-      });
-      throw new BadRequestException('Verification code is invalid or expired');
-    }
+    await this.consumeEmailCode(challenge.id, input.code);
 
     const email = this.normalizeEmail(challenge.email);
     const existing = await this.storage.getUserByEmail(email);
@@ -258,10 +252,7 @@ export class AuthService {
     }
 
     await this.transferGuestFiles(req, user.id);
-    await this.prisma.emailAuthChallenge.update({
-      where: { id: challenge.id },
-      data: { consumedAt: new Date(), userId: user.id }
-    });
+    await this.prisma.emailAuthChallenge.update({ where: { id: challenge.id }, data: { userId: user.id } });
     const visitedUser = req ? await this.touchUserVisit(user, req, true) : user;
     await this.setSessionCookie(res, visitedUser);
     return this.withQuota(this.toPublicUser(visitedUser));
@@ -469,10 +460,43 @@ export class AuthService {
     return req.authUser;
   }
 
+  private async consumeEmailCode(id: string, code: string) {
+    // Reserve an attempt atomically, including successful attempts. Concurrent
+    // requests cannot all pass a stale attempts/consumedAt check.
+    const attempt = await this.prisma.emailAuthChallenge.updateMany({
+      where: { id, consumedAt: null, expiresAt: { gt: new Date() }, attempts: { lt: 5 } },
+      data: { attempts: { increment: 1 } }
+    });
+    if (attempt.count !== 1) throw new BadRequestException('验证码已使用、已过期或尝试次数过多，请重新获取');
+    const consumed = await this.prisma.emailAuthChallenge.updateMany({
+      where: { id, consumedAt: null, expiresAt: { gt: new Date() }, codeHash: this.hashOneTimeCode(code.trim()) },
+      data: { consumedAt: new Date() }
+    });
+    if (consumed.count !== 1) throw new BadRequestException('验证码错误或已使用，请重新获取');
+  }
+
+  async startProfileEmailChange(req: AuthenticatedRequest, input: { email: string }) {
+    const user = await this.requireUser(req);
+    if (user.isGuest) throw new UnauthorizedException('Authentication required');
+    const email = this.normalizeEmail(input.email);
+    const existing = await this.storage.getUserByEmail(email);
+    if (existing && existing.id !== user.id) throw new ConflictException('该邮箱已被使用');
+    const code = String(randomInt(100000, 1000000));
+    const expiresAt = new Date(Date.now() + emailChallengeTtlMs);
+    const challenge = await this.prisma.emailAuthChallenge.create({ data: {
+      email, mode: 'change-email', userId: user.id, codeHash: this.hashOneTimeCode(code), expiresAt
+    } });
+    const delivered = await this.deliverEmailCode(email, code, 'change-email');
+    return { challengeId: challenge.id, email, expiresAt: expiresAt.toISOString(),
+      ...(!delivered && process.env.APP_ENV !== 'production' ? { devCode: code } : {}) };
+  }
+
   async updateProfile(req: AuthenticatedRequest, input: {
     displayName?: string;
     email?: string;
     password?: string;
+    emailChallengeId?: string;
+    emailCode?: string;
   }, res: Response): Promise<AuthMeResponse> {
     const current = await this.requireUser(req);
     const stored = await this.storage.getUserById(current.id);
@@ -481,12 +505,18 @@ export class AuthService {
     const nextEmail = input.email?.trim() ? this.normalizeEmail(input.email) : stored.email;
     if (nextEmail && nextEmail !== stored.email) {
       const existing = await this.storage.getUserByEmail(nextEmail);
-      if (existing && existing.id !== stored.id) throw new ConflictException('Email is already registered');
+      if (existing && existing.id !== stored.id) throw new ConflictException('该邮箱已被使用');
+      const challenge = input.emailChallengeId
+        ? await this.prisma.emailAuthChallenge.findUnique({ where: { id: input.emailChallengeId } }) : null;
+      if (!challenge || challenge.mode !== 'change-email' || challenge.userId !== stored.id || challenge.email !== nextEmail || !input.emailCode) {
+        throw new BadRequestException('请先获取并填写新邮箱的验证码');
+      }
+      await this.consumeEmailCode(challenge.id, input.emailCode);
     }
 
     const passwordChanged = Boolean(input.password);
     const updated = await this.storage.updateUser(stored.id, {
-      ...(nextEmail !== stored.email ? { email: nextEmail, emailVerifiedAt: null } : {}),
+      ...(nextEmail !== stored.email ? { email: nextEmail, emailVerifiedAt: new Date().toISOString() } : {}),
       ...(input.displayName !== undefined ? { displayName: input.displayName?.trim() || null } : {}),
       ...(input.password ? { passwordHash: this.hashPassword(input.password) } : {})
     });
@@ -813,7 +843,7 @@ export class AuthService {
     const secure = this.envFlag('SMTP_SECURE', port === 465);
     const requireTLS = this.envFlag('SMTP_REQUIRE_TLS', port === 587 && !secure);
     const authMethod = process.env.SMTP_AUTH_METHOD?.trim();
-    const actionText = mode === 'register' ? '注册' : '登录';
+    const actionText = mode === 'change-email' ? '修改邮箱' : mode === 'register' ? '注册' : '登录';
     const expiresInMinutes = Math.floor(emailChallengeTtlMs / 60_000);
     const message = {
       from,
@@ -944,7 +974,7 @@ export class AuthService {
       }
     });
 
-    const actionText = mode === 'register' ? '注册' : '登录';
+    const actionText = mode === 'change-email' ? '修改邮箱' : mode === 'register' ? '注册' : '登录';
     const expiresInMinutes = Math.floor(emailChallengeTtlMs / 60_000);
     await transporter.sendMail({
       from,

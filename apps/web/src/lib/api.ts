@@ -218,6 +218,10 @@ export async function logout() {
   });
 }
 
+export const startProfileEmailChange = (email: string) => request<{ challengeId: string; email: string; devCode?: string }>(
+  '/api/auth/profile/email/start', { method: 'POST', body: JSON.stringify({ email }) }
+);
+
 export async function updateProfile(input: AuthProfileUpdateRequest) {
   return request<AuthMeResponse>('/api/auth/profile', {
     method: 'PATCH',

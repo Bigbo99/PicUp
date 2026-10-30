@@ -1,4 +1,4 @@
-import { ArrayMaxSize, ArrayMinSize, ArrayUnique, IsArray, IsBoolean, IsEmail, IsIn, IsInt, IsObject, IsOptional, IsString, Max, Min } from 'class-validator';
+import { ArrayMaxSize, ArrayMinSize, ArrayUnique, IsArray, IsBoolean, IsEmail, IsIn, IsInt, IsObject, IsOptional, IsString, Max, MaxLength, Min } from 'class-validator';
 import type { AiProviderType, AiRequestPaths, AiRoutingTarget, ImageQuality } from '@picup/shared';
 
 export class InstallAiModelsDto {
@@ -327,6 +327,7 @@ export class UpdateUserCreditsDto {
 export class UpdateUserDto {
   @IsOptional()
   @IsString()
+  @MaxLength(120)
   displayName?: string | null;
 
   @IsOptional()

@@ -1,4 +1,4 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { ConflictException, Inject, Injectable } from '@nestjs/common';
 import type {
   AuthUser,
   ImageJobRecord,
@@ -575,6 +575,11 @@ export class StorageService {
         ...(patch.isGuest !== undefined ? { isGuest: patch.isGuest } : {}),
         ...(patch.role !== undefined ? { role: patch.role } : {})
       }
+    }).catch((error: unknown) => {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+        throw new ConflictException('该邮箱已被使用，请更换邮箱');
+      }
+      throw error;
     });
     return this.toStoredUser(saved);
   }
@@ -659,11 +664,12 @@ export class StorageService {
   async adjustUserCredits(id: string, delta: number, actorId?: string, reason?: string, metadata?: AuditMetadata) {
     const before = await this.prisma.user.findUnique({ where: { id } });
     if (!before) return null;
-    if (before.creditBalance + delta < 0) return null;
-    const after = await this.prisma.user.update({
-      where: { id },
+    const updated = await this.prisma.user.updateMany({
+      where: { id, ...(delta < 0 ? { creditBalance: { gte: -delta } } : {}) },
       data: { creditBalance: { increment: delta } }
     });
+    if (updated.count !== 1) return null;
+    const after = await this.prisma.user.findUniqueOrThrow({ where: { id } });
     await this.addAuditLog({
       actorId,
       action: 'user.credits.adjust',
@@ -764,6 +770,11 @@ export class StorageService {
         ...(typeof input.quotaUnlimited === 'boolean' ? { quotaUnlimited: input.quotaUnlimited } : {}),
         ...(typeof input.creditBalance === 'number' ? { creditBalance: input.creditBalance } : {})
       }
+    }).catch((error: unknown) => {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+        throw new ConflictException('该邮箱已被使用，请更换邮箱');
+      }
+      throw error;
     });
     await this.addAuditLog({
       actorId,

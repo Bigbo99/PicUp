@@ -6,7 +6,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { LogOut, Save } from 'lucide-react';
 import QRCode from 'qrcode';
 import type { AuthMeResponse, PaymentOrderResponse, ModelsResponse } from '@picup/shared';
-import { createRechargeOrder, getAccountActivity, getPaymentOrder, logout, updateProfile } from '@/lib/api';
+import { createRechargeOrder, getAccountActivity, getPaymentOrder, logout, startProfileEmailChange, updateProfile } from '@/lib/api';
 import { PreferenceFields, usePreferences } from './preferences';
 import { WechatProfile } from './wechat-profile';
 import { ProfileAvatar } from './profile-avatar';
@@ -18,21 +18,30 @@ export function Account({ me, onPayment: _onPayment, onLogout, onLogin, onRechar
   const [email, setEmail] = useState(me?.user.email ?? '');
   const [password, setPassword] = useState('');
   const [saved, setSaved] = useState(false);
+  const [emailCode, setEmailCode] = useState('');
+  const changingEmail = Boolean(email.trim() && email.trim().toLowerCase() !== (me?.user.email ?? '').toLowerCase());
+  const emailVerification = useMutation({ mutationFn: startProfileEmailChange });
   const guest = !me || me.user.isGuest;
   const synced = useCallback(() => { setSaved(true); }, []);
   useEffect(() => { setName(me?.user.displayName ?? ''); }, [me?.user.displayName]);
   useEffect(() => { setEmail(me?.user.email ?? ''); }, [me?.user.email]);
   const profile = useMutation({ mutationFn: updateProfile, onSuccess: async () => {
-    setPassword(''); setSaved(true); await client.invalidateQueries({ queryKey: ['me'] });
+    setPassword(''); setEmailCode(''); emailVerification.reset(); setSaved(true); await client.invalidateQueries({ queryKey: ['me'] });
   } });
   const signOut = useMutation({ mutationFn: logout, onSuccess: onLogout });
   return <div className="account-content">
     <div className="account-identity"><span className="account-avatar"><ProfileAvatar url={me?.user.avatarUrl} /></span><div><div className="account-name-row"><h3>{me?.user.displayName || me?.user.email || (guest ? '访客' : `注册用户 ${me?.user.id.slice(0, 8)}`)}</h3>{!guest && me.user.wechatBound && <WechatProfile userId={me.user.id} onSynced={synced} />}</div><p>{guest ? '未登录' : me?.user.email || '微信账户'}</p>{!guest && <button className="account-credit" onClick={onRecharge}>{me.credits.balance} 积分 · 充值</button>}</div></div>
     {guest ? <button className="studio-primary" onClick={onLogin}>登录 / 注册</button> : <>
       <PreferenceFields value={preferences} onChange={patch => save.mutate(patch)} pending={save.isPending} error={save.error?.message} models={models} />
-      <section className="account-section"><h3>账户资料</h3><form className="studio-form" onSubmit={event => { event.preventDefault(); setSaved(false); profile.mutate({ displayName: name, ...(email.trim() ? { email: email.trim() } : {}), ...(password ? { password } : {}) }); }}>
+      <section className="account-section"><h3>账户资料</h3><form className="studio-form" onSubmit={event => { event.preventDefault(); setSaved(false); profile.mutate({ displayName: name, ...(email.trim() ? { email: email.trim() } : {}), ...(password ? { password } : {}), ...(changingEmail ? { emailChallengeId: emailVerification.data?.email === email.trim().toLowerCase() ? emailVerification.data.challengeId : undefined, emailCode } : {}) }); }}>
         <label>昵称<input value={name} onChange={event => setName(event.target.value)} autoComplete="nickname" /></label>
-        <label>邮箱<input type="email" value={email} onChange={event => setEmail(event.target.value)} autoComplete="email" placeholder="可选" /></label>
+        <label>邮箱<input type="email" value={email} onChange={event => { setEmail(event.target.value); setEmailCode(''); setSaved(false); }} autoComplete="email" placeholder="可选" /></label>
+        {changingEmail && <>
+          <button className="studio-secondary" type="button" disabled={emailVerification.isPending} onClick={() => { setSaved(false); setEmailCode(''); emailVerification.mutate(email.trim()); }}>{emailVerification.isPending ? '发送中…' : '获取新邮箱验证码'}</button>
+          <label>邮箱验证码<input required value={emailCode} onChange={event => setEmailCode(event.target.value)} inputMode="numeric" autoComplete="one-time-code" /></label>
+          {emailVerification.data?.email === email.trim().toLowerCase() && <p role="status">验证码已发送，请验证后保存。{emailVerification.data.devCode && ` 开发验证码：${emailVerification.data.devCode}`}</p>}
+          {emailVerification.error && <p role="alert" className="studio-error">{emailVerification.error.message}</p>}
+        </>}
         <label>新密码<input type="password" minLength={8} value={password} onChange={event => setPassword(event.target.value)} autoComplete="new-password" placeholder="留空则保持不变" /></label>
         {profile.error && <p role="alert" className="studio-error">{profile.error.message}</p>}
         {saved && <p role="status" className="text-teal-700">账户已更新</p>}

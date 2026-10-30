@@ -360,6 +360,8 @@ export interface CreateRechargeOrderRequest {
 }
 
 export interface AuthProfileUpdateRequest {
+  emailChallengeId?: string;
+  emailCode?: string;
   displayName?: string;
   email?: string;
   password?: string;

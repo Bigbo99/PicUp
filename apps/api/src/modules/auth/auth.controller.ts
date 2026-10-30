@@ -1,7 +1,7 @@
 import { Body, Controller, Get, Headers, Inject, Patch, Post, Query, Req, Res, UseGuards } from '@nestjs/common';
 import type { Response } from 'express';
 import { AuthService } from './auth.service';
-import { AuthCredentialsDto, AuthProfileUpdateDto, EmailAuthStartDto, EmailAuthVerifyDto, WechatAuthCallbackDto } from './dto';
+import { AuthCredentialsDto, AuthProfileUpdateDto, ProfileEmailStartDto, EmailAuthStartDto, EmailAuthVerifyDto, WechatAuthCallbackDto } from './dto';
 import { AuthGuard } from './auth.guard';
 import type { AuthenticatedRequest } from './auth.types';
 
@@ -38,6 +38,12 @@ export class AuthController {
   @Post('logout')
   logout(@Req() req: AuthenticatedRequest, @Res({ passthrough: true }) res: Response) {
     return this.auth.logout(res, req);
+  }
+
+  @Post('profile/email/start')
+  @UseGuards(AuthGuard)
+  startProfileEmail(@Body() body: ProfileEmailStartDto, @Req() req: AuthenticatedRequest) {
+    return this.auth.startProfileEmailChange(req, body);
   }
 
   @Patch('profile')

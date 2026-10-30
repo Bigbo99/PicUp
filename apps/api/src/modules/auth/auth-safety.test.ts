@@ -36,7 +36,15 @@ function fixture() {
         challenge = { ...data, id: randomUUID(), consumedAt: null, attempts: 0 };
         return challenge;
       },
-      findUnique: async () => challenge,
+      findUnique: async () => ({ ...challenge }),
+      updateMany: async ({ where, data }: { where: any; data: any }) => {
+        if (challenge.consumedAt || Number(challenge.expiresAt) <= Date.now() ||
+          (where.attempts && Number(challenge.attempts) >= where.attempts.lt) ||
+          (where.codeHash && challenge.codeHash !== where.codeHash)) return { count: 0 };
+        if (data.attempts) challenge.attempts = Number(challenge.attempts) + 1;
+        if (data.consumedAt) challenge.consumedAt = data.consumedAt;
+        return { count: 1 };
+      },
       update: async ({ data }: { data: object }) => Object.assign(challenge, data)
     }
   };
@@ -62,13 +70,17 @@ it('nickname saves preserve a concurrent debit and do not write account permissi
   assert.equal(test.row.displayName, 'Changed');
 });
 
-it('partial profile updates preserve omitted fields and clear verification on email change', async () => {
+it('partial profile updates preserve omitted fields and require proof of the new email', async () => {
   const test = fixture();
   await test.auth.updateProfile({} as never, {}, {} as never);
   assert.equal(test.row.displayName, 'Original');
   test.storage.getUserByEmail = async () => null;
-  await test.auth.updateProfile({} as never, { email: 'changed@example.test' }, {} as never);
-  assert.equal(test.row.emailVerifiedAt, null);
+  await assert.rejects(test.auth.updateProfile({} as never, { email: 'changed@example.test' }, {} as never), /验证码/);
+  assert.equal(test.row.email, 'review@example.test');
+  const challenge = await test.auth.startProfileEmailChange({} as never, { email: 'changed@example.test' });
+  await test.auth.updateProfile({} as never, { email: challenge.email, emailChallengeId: challenge.challengeId, emailCode: test.code() }, {} as never);
+  assert.equal(test.row.email, 'changed@example.test');
+  assert.ok(test.row.emailVerifiedAt);
 });
 
 it('a profile save cannot reactivate an account disabled after it was read', async () => {
